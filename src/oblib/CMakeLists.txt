@@ -31,7 +31,7 @@ target_include_directories(
   # The Rust SQL/NIO header is a core-owned FFI surface.  Keep it on the
   # oblib/core interface instead of a directory-wide include path so plugin
   # targets cannot inherit a core source-tree include by accident.
-  ${RUST_INCLUDE_DIR}
+  ${SQL_NIO_INCLUDE_DIR}
   # Private source-only numerical algorithms shared with the GIS plugin.
   # This adds no core source-tree path to plugin targets.
   ${CMAKE_SOURCE_DIR}/include
