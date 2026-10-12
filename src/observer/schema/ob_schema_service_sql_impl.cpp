@@ -3206,6 +3206,16 @@ int ObSchemaServiceSQLImpl::get_batch_mock_fk_parent_tables(
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail");
   }
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (OB_FAIL(ret)) { return ret; }
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_mock_fk_parent_tables(schema_version, mock_fk_parent_table_schema_array,
+                                               &mock_fk_parent_table_ids);
+    });
+  }
   lib::ob_sort(mock_fk_parent_table_ids.begin(), mock_fk_parent_table_ids.end());
   // split large query into bounded batches
   int64_t begin = 0;
@@ -3875,7 +3885,45 @@ FETCH_SCHEMAS_FUNC_DEFINE(outline, ObSimpleOutlineSchema, OB_ALL_OUTLINE_HISTORY
 FETCH_SCHEMAS_FUNC_DEFINE(package, ObSimplePackageSchema, OB_ALL_PACKAGE_HISTORY_TNAME);
 FETCH_SCHEMAS_FUNC_DEFINE(routine, ObSimpleRoutineSchema, OB_ALL_ROUTINE_HISTORY_TNAME);
 FETCH_SCHEMAS_FUNC_DEFINE(trigger, ObSimpleTriggerSchema, OB_ALL_TRIGGER_HISTORY_TNAME);
-FETCH_SCHEMAS_FUNC_DEFINE(mock_fk_parent_table, ObSimpleMockFKParentTableSchema, OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME);
+int ObSchemaServiceSQLImpl::fetch_mock_fk_parent_tables(
+    ObISQLClient &sql_client, const ObRefreshSchemaStatus &schema_status,
+    const int64_t schema_version, ObIArray<ObSimpleMockFKParentTableSchema> &schema_array,
+    const SchemaKey *schema_keys, const int64_t schema_key_size)
+{
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (schema_version <= 0 || schema_key_size < 0) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  const bool selected = schema_keys != nullptr && schema_key_size > 0;
+  if (!lifecycle->is_bootstrapping()) {
+    ObArray<uint64_t> ids;
+    for (int64_t i = 0; OB_SUCC(ret) && selected && i < schema_key_size; ++i) {
+      ret = ids.push_back(schema_keys[i].mock_fk_parent_table_id_);
+    }
+    if (OB_SUCC(ret)) {
+      ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.get_simple_mock_fk_parent_tables(schema_version, schema_array, selected ? &ids : nullptr);
+      });
+    }
+  } else {
+    // Before the Namespace directory exists, keep the initialization reader.
+    ObSqlString sql;
+    ObMySQLProxy::MySQLResult result;
+    ret = sql.append_fmt("SELECT * FROM %s WHERE schema_version<=%ld",
+                         OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME, schema_version);
+    if (OB_SUCC(ret) && selected) {
+      ret = sql.append(" AND mock_fk_parent_table_id in");
+      if (OB_SUCC(ret)) { ret = SQL_APPEND_SCHEMA_ID(mock_fk_parent_table, schema_keys, schema_key_size, sql); }
+    }
+    if (OB_SUCC(ret)) { ret = sql.append(" ORDER BY mock_fk_parent_table_id desc, schema_version desc"); }
+    if (OB_SUCC(ret)) { ret = sql_client.read(result, sql.ptr()); }
+    if (OB_SUCC(ret) && result.get_result() == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::retrieve_mock_fk_parent_table_schema(*result.get_result(), schema_array); }
+  }
+  return ret;
+}
+
 int ObSchemaServiceSQLImpl::fetch_all_mock_fk_parent_table_info(
       const ObRefreshSchemaStatus &schema_status,
       const int64_t schema_version,

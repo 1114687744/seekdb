@@ -712,6 +712,113 @@ int find_named_relation(NativeSchemaCatalog &catalog, uint64_t database, const O
 }
 
 template<typename Table>
+int read_foreign_keys(NativeSchemaCatalog &catalog, int64_t version, bool history, Table &definition)
+{
+  Table *table = &definition;
+  const uint64_t table_id = table->get_table_id();
+  ObObj id;
+  id.set_int(table_id);
+  const ObRowkey prefix(&id, 1);
+  auto open = [&](CatalogRows &rows, uint64_t current_id, uint64_t history_id,
+      const ObRowkey &key, bool reverse, int64_t minimum, bool latest, CatalogRows::Filter filter = {}) {
+    return rows.open(catalog, history ? history_id : current_id, key, version,
+                     reverse, history ? minimum : 0, history && latest, std::move(filter), history);
+  };
+  int ret = OB_SUCCESS;
+  {
+    std::set<uint64_t> ids;
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(catalog, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_CHILD_TID_TID
+                                              : OB_ALL_FOREIGN_KEY_IDX_FK_CHILD_TID_TID,
+                                prefix, version, "foreign_key_id", ids);
+    }
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(catalog, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_PARENT_TID_TID
+                                              : OB_ALL_FOREIGN_KEY_IDX_FK_PARENT_TID_TID,
+                                prefix, version, "foreign_key_id", ids);
+    }
+    for (const uint64_t related : ids) {
+      if (OB_FAIL(ret)) { break; }
+      ObObj key;
+      key.set_int(related);
+      CatalogRows rows;
+      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_TID, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(&key, 1),
+                                true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
+        int64_t child = 0, parent = 0, deleted = 0;
+        int rc = row.get_int("is_deleted", deleted);
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("child_table_id", child); }
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("parent_table_id", parent); }
+        accept = !deleted && (child == table_id || parent == table_id);
+        return rc;
+      }))) {
+      } else { ret = ObSchemaRetrieveUtils::retrieve_foreign_key_info(rows, *table); }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < table->get_foreign_key_infos().count(); ++i) {
+      auto &foreign_key = table->get_foreign_key_infos().at(i);
+      ObObj fk;
+      fk.set_int(foreign_key.foreign_key_id_);
+      CatalogRows rows;
+      struct Column {
+        int64_t position, child, parent;
+        TO_STRING_KV(K(position), K(child), K(parent));
+      };
+      ObSEArray<Column, 8> columns;
+      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_COLUMN_TID, OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID,
+                            ObRowkey(&fk, 1), true, 0, true))) {
+      } else {
+        while (OB_SUCC(ret = rows.next())) {
+          bool deleted = false;
+          Column column{};
+          if (OB_FAIL(ObSchemaRetrieveUtils::fill_foreign_key_column_info(
+                          rows, column.child, column.parent, deleted))) { break; }
+          if (!deleted) {
+            if (OB_FAIL(rows.get_int("position", column.position))) { break; }
+            if (OB_FAIL(columns.push_back(column))) { break; }
+          }
+        }
+        if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+        lib::ob_sort(columns.begin(), columns.end(),
+            [](const Column &a, const Column &b) { return a.position < b.position; });
+        for (int64_t j = 0; OB_SUCC(ret) && j < columns.count(); ++j) {
+          if (OB_FAIL(foreign_key.child_column_ids_.push_back(columns.at(j).child))) {
+          } else { ret = foreign_key.parent_column_ids_.push_back(columns.at(j).parent); }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+template<typename Table>
+int read_mock_parent_rows(NativeSchemaCatalog &catalog, int64_t version, ObIArray<Table> &out,
+    const ObIArray<uint64_t> *table_ids)
+{
+  if (version <= 0) { return OB_INVALID_ARGUMENT; }
+  auto read = [&](const ObRowkey &prefix) {
+    CatalogRows rows;
+    const int rc = rows.open(catalog, OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TID,
+                            prefix, version, true, 0, true);
+    return rc == OB_SUCCESS ? ObSchemaRetrieveUtils::retrieve_mock_fk_parent_table_schema(rows, out) : rc;
+  };
+  if (table_ids == nullptr) { return read(ObRowkey()); }
+  std::set<uint64_t, std::greater<uint64_t>> ids;
+  for (int64_t i = 0; i < table_ids->count(); ++i) {
+    if (table_ids->at(i) == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+    ids.insert(table_ids->at(i));
+  }
+  int ret = OB_SUCCESS;
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ObObj key;
+    key.set_int(id);
+    ret = read(ObRowkey(&key, 1));
+  }
+  return ret;
+}
+
+template<typename Table>
 int read_partitions(NativeSchemaCatalog &catalog, int64_t version, bool history, Table &definition)
 {
   Table *table = &definition;
@@ -842,69 +949,7 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
       }
     }
   }
-  {
-    std::set<uint64_t> ids;
-    if (OB_SUCC(ret)) {
-      ret = collect_related_ids(*this, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_CHILD_TID_TID
-                                              : OB_ALL_FOREIGN_KEY_IDX_FK_CHILD_TID_TID,
-                                prefix, version, "foreign_key_id", ids);
-    }
-    if (OB_SUCC(ret)) {
-      ret = collect_related_ids(*this, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_PARENT_TID_TID
-                                              : OB_ALL_FOREIGN_KEY_IDX_FK_PARENT_TID_TID,
-                                prefix, version, "foreign_key_id", ids);
-    }
-    for (const uint64_t related : ids) {
-      if (OB_FAIL(ret)) { break; }
-      ObObj key;
-      key.set_int(related);
-      CatalogRows rows;
-      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_TID, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(&key, 1),
-                                true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
-        int64_t child = 0, parent = 0, deleted = 0;
-        int rc = row.get_int("is_deleted", deleted);
-        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("child_table_id", child); }
-        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("parent_table_id", parent); }
-        accept = !deleted && (child == table_id || parent == table_id);
-        return rc;
-      }))) {
-      } else { ret = ObSchemaRetrieveUtils::retrieve_foreign_key_info(rows, *table); }
-    }
-  }
-  if (OB_SUCC(ret)) {
-    for (int64_t i = 0; OB_SUCC(ret) && i < table->get_foreign_key_infos().count(); ++i) {
-      auto &foreign_key = table->get_foreign_key_infos().at(i);
-      ObObj fk;
-      fk.set_int(foreign_key.foreign_key_id_);
-      CatalogRows rows;
-      struct Column {
-        int64_t position, child, parent;
-        TO_STRING_KV(K(position), K(child), K(parent));
-      };
-      ObSEArray<Column, 8> columns;
-      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_COLUMN_TID, OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID,
-                            ObRowkey(&fk, 1), true, 0, true))) {
-      } else {
-        while (OB_SUCC(ret = rows.next())) {
-          bool deleted = false;
-          Column column{};
-          if (OB_FAIL(ObSchemaRetrieveUtils::fill_foreign_key_column_info(
-                          rows, column.child, column.parent, deleted))) { break; }
-          if (!deleted) {
-            if (OB_FAIL(rows.get_int("position", column.position))) { break; }
-            if (OB_FAIL(columns.push_back(column))) { break; }
-          }
-        }
-        if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
-        lib::ob_sort(columns.begin(), columns.end(),
-            [](const Column &a, const Column &b) { return a.position < b.position; });
-        for (int64_t j = 0; OB_SUCC(ret) && j < columns.count(); ++j) {
-          if (OB_FAIL(foreign_key.child_column_ids_.push_back(columns.at(j).child))) {
-          } else { ret = foreign_key.parent_column_ids_.push_back(columns.at(j).parent); }
-        }
-      }
-    }
-  }
+  if (OB_SUCC(ret)) { ret = read_foreign_keys(*this, version, history, *table); }
   {
     std::set<uint64_t> ids;
     if (OB_SUCC(ret)) {
@@ -1334,6 +1379,40 @@ int NativeSchemaCatalog::get_mock_fk_parent_table_schema_versions(const ObIArray
     } else if (OB_FAIL(rows.get_int("schema_version", version))) {
     } else if (OB_FAIL(pair.init(id, version))) {
     } else { ret = out.push_back(pair); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_simple_mock_fk_parent_tables(int64_t version,
+    ObIArray<ObSimpleMockFKParentTableSchema> &out, const ObIArray<uint64_t> *table_ids)
+{
+  return read_mock_parent_rows(*this, version, out, table_ids);
+}
+
+int NativeSchemaCatalog::get_mock_fk_parent_tables(int64_t version,
+    ObIArray<ObMockFKParentTableSchema> &out, const ObIArray<uint64_t> *table_ids)
+{
+  const int64_t begin = out.count();
+  int ret = read_mock_parent_rows(*this, version, out, table_ids);
+  for (int64_t i = begin; OB_SUCC(ret) && i < out.count(); ++i) {
+    auto &table = out.at(i);
+    ObObj key;
+    key.set_int(table.get_table_id());
+    {
+      CatalogRows rows;
+      if (OB_FAIL(rows.open(*this, OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TID,
+                           ObRowkey(&key, 1), version, true, 0, true))) {
+      } else { ret = ObSchemaRetrieveUtils::retrieve_mock_fk_parent_table_schema_column(rows, table); }
+    }
+    // Reverse history scans select the newest row of each column. Restore
+    // the ascending column-ID order expected by existing schema consumers.
+    ObMockFKParentTableColumnArray columns;
+    if (OB_SUCC(ret)) { ret = columns.assign(table.get_column_array()); }
+    if (OB_SUCC(ret)) {
+      lib::ob_sort(columns.begin(), columns.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+      ret = table.set_column_array(columns);
+    }
+    if (OB_SUCC(ret)) { ret = read_foreign_keys(*this, version, true, table); }
   }
   return ret;
 }

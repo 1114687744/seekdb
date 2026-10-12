@@ -31,6 +31,10 @@ def run(binary, selected=None):
              "CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(id)", '', (2, 0, 0, 0, 1, 0)),
             ('mock_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
              "CONSTRAINT fk FOREIGN KEY(id) REFERENCES missing_parent(id)", '', (2, 0, 0, 0, 1, 0)),
+            ('mock_fk_multi', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
+             "CONSTRAINT fk FOREIGN KEY(v,id) REFERENCES missing_parent(b,a)", '', (2, 0, 1, 0, 1, 0)),
+            ('old_mock_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "CONSTRAINT fk FOREIGN KEY(id) REFERENCES missing_parent(id)", '', (2, 0, 0, 0, 1, 0)),
             ('self_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', parent_id INT, "
              "KEY parent_idx(parent_id), CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES t(id)",
              '', (3, 0, 1, 0, 1, 0)),
@@ -49,18 +53,19 @@ def run(binary, selected=None):
             if selected and label not in selected:
                 continue
             database = f'native_catalog_{label}'
+            mock_case = label in ('mock_fk', 'mock_fk_multi', 'old_mock_fk')
             experiment.sql(f'CREATE DATABASE {database}')
             if label in ('fk', 'drop_fk', 'old_fk'):
                 experiment.sql(f'CREATE TABLE {database}.parent(id INT PRIMARY KEY)')
                 columns = columns.replace('REFERENCES parent', f'REFERENCES {database}.parent')
             if label == 'self_fk':
                 columns = columns.replace('REFERENCES t', f'REFERENCES {database}.t')
-            if label == 'mock_fk':
+            if mock_case:
                 columns = columns.replace('REFERENCES missing_parent', f'REFERENCES {database}.missing_parent')
                 experiment.sql(f'USE {database}')
                 experiment.sql('SET SESSION foreign_key_checks=0')
             experiment.sql(f'CREATE TABLE {database}.t({columns}){options}')
-            if label == 'mock_fk':
+            if mock_case:
                 experiment.sql('SET SESSION foreign_key_checks=1')
             table_id = experiment.sql("SELECT t.table_id FROM oceanbase.__all_table t JOIN oceanbase.__all_database d "
                                       f"ON t.database_id=d.database_id WHERE d.database_name='{database}' "
@@ -73,10 +78,12 @@ def run(binary, selected=None):
                 requested_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table '
                                                    f'WHERE table_id={table_id}')[0][0]
                 experiment.sql(f'ALTER TABLE {database}.t ADD n INT DEFAULT 17')
-            elif label in ('drop_fk', 'old_fk'):
-                if label == 'old_fk':
+            elif label in ('drop_fk', 'old_fk', 'old_mock_fk'):
+                if label in ('old_fk', 'old_mock_fk'):
                     requested_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table '
                                                        f'WHERE table_id={table_id}')[0][0]
+                    if label == 'old_mock_fk':
+                        requested_version = experiment.sql('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation')[0][0]
                 experiment.sql(f'ALTER TABLE {database}.t DROP FOREIGN KEY fk')
             elif label == 'drop_index':
                 experiment.sql(f'ALTER TABLE {database}.t DROP INDEX ix')
@@ -104,10 +111,19 @@ def run(binary, selected=None):
                 f'WHERE a.data_table_id={table_id} AND a.is_deleted=0 '
                 'AND a.schema_version=(SELECT MAX(b.schema_version) FROM oceanbase.__all_table_history b '
                 f'WHERE b.table_id=a.table_id AND b.schema_version<={requested_version}) ORDER BY a.table_id')
-            if label == 'mock_fk':
+            if mock_case:
                 mock_id, mock_version = experiment.sql('SELECT mock_fk_parent_table_id, schema_version '
-                    'FROM oceanbase.__all_mock_fk_parent_table '
-                    f'WHERE database_id=(SELECT database_id FROM oceanbase.__all_table WHERE table_id={table_id})')[0]
+                    'FROM oceanbase.__all_mock_fk_parent_table_history '
+                    f'WHERE database_id=(SELECT database_id FROM oceanbase.__all_table WHERE table_id={table_id}) '
+                    f'AND schema_version<={requested_version} ORDER BY schema_version DESC LIMIT 1')[0]
+                mock_columns = experiment.sql('SELECT c.parent_column_id,c.parent_column_name '
+                    'FROM oceanbase.__all_mock_fk_parent_table_column_history c '
+                    f'WHERE c.mock_fk_parent_table_id={mock_id} AND c.is_deleted=0 '
+                    'AND c.schema_version=(SELECT MAX(h.schema_version) '
+                    'FROM oceanbase.__all_mock_fk_parent_table_column_history h '
+                    'WHERE h.mock_fk_parent_table_id=c.mock_fk_parent_table_id '
+                    f'AND h.parent_column_id=c.parent_column_id AND h.schema_version<={requested_version}) '
+                    'ORDER BY c.parent_column_id')
             if label == 'plain':
                 core_self = experiment.sql("SELECT table_id, schema_version FROM oceanbase.__all_virtual_core_all_table WHERE table_name='__all_core_table'")
                 core_tables = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_all_table '
@@ -138,9 +154,15 @@ def run(binary, selected=None):
             for aux_id, aux_type, index_type in auxiliary:
                 assert (f'NATIVE_SCHEMA_CATALOG_AUX_ROW namespace={child_id} id={aux_id} '
                         f'type={aux_type} index_type={index_type}') in trace, auxiliary
-            if label == 'mock_fk':
-                assert (f'NATIVE_SCHEMA_CATALOG_MOCK_PARENT namespace={child_id} id={mock_id} '
-                        f'version={mock_version} ret=0') in trace, trace[-2000:]
+            if mock_case:
+                assert (f'NATIVE_SCHEMA_CATALOG_MOCK_FULL namespace={child_id} id={mock_id} '
+                        f'version={mock_version} columns={len(mock_columns)} ret=0') in trace, trace[-2000:]
+                for column_id, column_name in mock_columns:
+                    assert (f'NATIVE_SCHEMA_CATALOG_MOCK_COLUMN namespace={child_id} id={column_id} '
+                            f'name={column_name}') in trace, mock_columns
+                if label != 'old_mock_fk':
+                    assert (f'NATIVE_SCHEMA_CATALOG_MOCK_PARENT namespace={child_id} id={mock_id} '
+                            f'version={mock_version} ret=0') in trace, trace[-2000:]
             for index_id, index_name, version, index_type in current_indexes:
                 assert (f'NATIVE_SCHEMA_CATALOG_INDEX_INFO namespace={child_id} id={index_id} name={index_name} '
                         f'version={version} type={index_type}') in trace, current_indexes
@@ -177,7 +199,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

@@ -106,6 +106,12 @@ public:
   int get_mock_fk_parent_table_id(uint64_t database_id, const common::ObString &, uint64_t &);
   int get_mock_fk_parent_table_schema_versions(const common::ObIArray<uint64_t> &,
       common::ObIArray<share::schema::ObSchemaIdVersion> &);
+  int get_simple_mock_fk_parent_tables(int64_t schema_version,
+      common::ObIArray<share::schema::ObSimpleMockFKParentTableSchema> &,
+      const common::ObIArray<uint64_t> *table_ids = nullptr);
+  int get_mock_fk_parent_tables(int64_t schema_version,
+      common::ObIArray<share::schema::ObMockFKParentTableSchema> &,
+      const common::ObIArray<uint64_t> *table_ids = nullptr);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.

@@ -65,6 +65,16 @@ with connect(42035) as root,connect(42036) as standby:
   sync(root,standby)
   wait(lambda:read_ns('replica_seed','select id,extra from replica_ns.t order by id'),((1,7),(3,7)))
   record('child_ddl_refresh')
+  sql(child,'USE replica_ns')
+  sql(child,'SET SESSION foreign_key_checks=0')
+  sql(child,'CREATE TABLE replica_ns.mock_child(id INT PRIMARY KEY,v INT,KEY ix(v),'
+            'CONSTRAINT fk_mock FOREIGN KEY(v) REFERENCES missing_parent(id))')
+  sql(child,'SET SESSION foreign_key_checks=1')
+  sync(root,standby)
+  wait(lambda:read_ns('replica_seed',"SELECT mock_fk_parent_table_name FROM oceanbase.__all_mock_fk_parent_table "
+                     "WHERE mock_fk_parent_table_name='missing_parent'"),(('missing_parent',),))
+  wait(lambda:read_ns('replica_seed','SELECT COUNT(*) FROM replica_ns.mock_child'),((0,),))
+  record('mock_parent_schema_replay')
  sql(root,'truncate table replica_ns.t')
  sql(root,"insert into replica_ns.t values(9,90,'new parent')")
  sql(root,'drop table replica_ns.t')
@@ -87,6 +97,13 @@ with connect(42035) as root,connect(42036) as standby:
  with connect(42036,'replica_seed') as child:
   sql(child,"insert into replica_ns.t values(4,40,'promoted child',8)")
   assert sql(child,'select id,v,extra from replica_ns.t order by id')==((1,10,7),(3,30,7),(4,40,8))
+  sql(child,'CREATE TABLE replica_ns.missing_parent(id INT PRIMARY KEY)')
+  sql(child,'INSERT INTO replica_ns.missing_parent VALUES(1)')
+  sql(child,'INSERT INTO replica_ns.mock_child VALUES(1,1)')
+  assert sql(child,'SELECT id,v FROM replica_ns.mock_child')==((1,1),)
+  assert sql(child,"SELECT COUNT(*) FROM oceanbase.__all_mock_fk_parent_table "
+                   "WHERE mock_fk_parent_table_name='missing_parent'")==((0,),)
+  record('mock_parent_resolution_after_promotion')
  sql(standby,'FORK NAMESPACE replica_promoted FROM replica_seed')
  with connect(42036,'replica_cold') as cold:
   sql(cold,"insert into replica_ns.t values(5,50,'promoted cold')")

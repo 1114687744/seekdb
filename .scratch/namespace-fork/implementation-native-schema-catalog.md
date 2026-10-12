@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`。名称、辅助表及 DDL 发布定义读取也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。mock FK 父表定义装载和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -187,3 +187,17 @@
 - `NamespaceSchemaPublication` 在 DDL owner 中持有一个原生目录操作，读取已发布版本的 history 和本次事务的 current；不存在/已删除的表不加入对应定义集合。完整定义已包含 LOB 辅助关系，移除发布过程原有的 SQL 存在性检查和重复辅助表读取。
 - 四件套既有冷读取用例增加 SQL 历史查询对照辅助表 ID/类型/索引类型，增加外键/约束名称大小写及已删除外键名称断言。`/tmp/native-schema-catalog-names-aux-build1.log` 编译通过；`names-aux-probe1.log` 的 typed/plain/part/drop_index/fk/mock_fk/drop_fk/old_fk 全部通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_nfdf4hie`。八个孩子服务槽位均保持 0，包含自身事务与独立读隔离、回滚以及临时表/隐藏表/索引/LOB 名称选择。
 - `/tmp/native-schema-catalog-names-aux-production-build1.log` 移除测试钩子后生产编译通过；`names-aux-production-ddl1.log` 的实际 DDL、LOB、父子隔离、SQL 索引读取及崩溃重启通过。Namespace 主备回归通过（121.63 秒），结果见 `gate-results/native-schema-catalog/native-names-aux-standby/results.json`；涵盖刷新与回放竞争、孩子 DDL、父 TRUNCATE/DROP 后历史来源、删除准入以及提升后的恢复、写入和再次 fork。
+
+### 缺失外键父表定义装载
+
+- 名称、辅助表和发布定义读取已提交并推送 `4c517d04d`。
+- `get_mock_fk_parent_tables/get_simple_mock_fk_parent_tables` 从 Namespace 的固定 history 内表读取定义，支持全量、指定 ID、重复/不存在 ID 和显式空集合。完整定义在同一操作中读取列及外键关系；普通表与 mock 父表共用外键读取实现。
+- 完整批量装载和简单定义刷新接入原生目录；目录建立前仍使用既有初始化读取。列历史选择最新可见版本后恢复既有列 ID 升序。
+- 冷读取用例增加多列 mock FK、删除后读取历史定义及最新视图排除已删除定义；列 ID/名称逐项与客户端 SQL 对照。实际 DDL 用例增加父子独立解析缺失父表、同一父表两条外键及重启后创建真实父表。主备用例增加占位父表回放和提升后创建真实父表，均随既有脚本进入四件套。
+- `/tmp/native-schema-catalog-mock-build1.log` 编译通过；`mock-probe1.log` 的 part/fk/mock_fk/mock_fk_multi/old_mock_fk/self_fk/drop_fk/old_fk 八个冷用例通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_5an7zo59`。历史 mock 用例以删除前已提交的 DDL 版本为上限，包含同一 DDL 创建的父表占位记录；不能假定子表那一行的 schema_version 就是整个 DDL 的最终版本。生产编译及运行验证继续进行。
+- `/tmp/native-schema-catalog-mock-production-build1.log` 移除测试钩子后编译通过；`mock-production-ddl1.log` 的实际 DDL、父子独立解析同一缺失父表、同一父表两条外键、崩溃恢复和恢复后创建真实父表/写入数据通过。Namespace 主备回归通过（125.69 秒），结果见 `gate-results/native-schema-catalog/native-mock-standby/results.json`，日志包含 `mock_parent_schema_replay` 和 `mock_parent_resolution_after_promotion`，验证了新增读取的备库刷新及提升后 DDL 回读。
+
+### 下一阶段：完整 DDL 写入
+
+- 现有 `SchemaCatalogRow::finish` 用固定默认值补齐插入行；不能直接拿它替换 SQL 的部分字段 UPDATE，否则未指定字段会被覆盖。需在同一 owner 的行锁下保留旧值，只覆盖提供的字段，并据新旧行维护索引。LOB 更新复用存储协议，核对未修改 LOB 的处理。
+- 首先接表/列更新与删除，再接分区、约束、外键和 mock 父表等关系写入，包括直接 `sql_client.write` 的批量/范围操作、history 和发布。现有 SQL 写入继续存在，不能把读取接入完成当作整个目标完成。

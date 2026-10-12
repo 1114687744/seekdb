@@ -15,6 +15,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       &expected_foreign_keys, &expected_default_length, &requested_version);
   fclose(input);
   if (fields < 3 || name != selected) { return OB_SUCCESS; }
+  const bool old_mock_fk = name.find("_old_mock_fk") != std::string::npos;
   ns::NamespaceRuntime *runtime = nullptr;
   if (!ns::namespace_registry().get(namespace_id, runtime) || runtime == nullptr) {
     return OB_ERR_UNEXPECTED;
@@ -398,6 +399,63 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       }
       if (parent != nullptr) { parent->~ObTableSchema(); }
     }
+    if (ret == OB_SUCCESS && name.find("_mock_fk") != std::string::npos) {
+      const auto &fk = definition->get_foreign_key_infos().at(0);
+      ObArray<uint64_t> ids;
+      ObArray<ObMockFKParentTableSchema> full;
+      ObArray<ObSimpleMockFKParentTableSchema> simple;
+      ret = ids.push_back(fk.parent_table_id_);
+      if (ret == OB_SUCCESS) { ret = ids.push_back(fk.parent_table_id_); }
+      if (ret == OB_SUCCESS) { ret = ids.push_back(1000000000); }
+      if (ret == OB_SUCCESS) { ret = catalog.get_mock_fk_parent_tables(requested_version, full, &ids); }
+      if (ret == OB_SUCCESS && (full.count() != 1 || full.at(0).get_table_id() != fk.parent_table_id_
+          || full.at(0).get_database_id() != definition->get_database_id()
+          || full.at(0).get_table_name_str() != ObString::make_string("missing_parent")
+          || full.at(0).get_foreign_key_infos().count() != 1
+          || full.at(0).get_foreign_key_infos().at(0).foreign_key_id_ != fk.foreign_key_id_
+          || full.at(0).get_column_array().count() != fk.parent_column_ids_.count())) { ret = OB_ERR_UNEXPECTED; }
+      int64_t mock_version = 0;
+      if (ret == OB_SUCCESS) { mock_version = full.at(0).get_schema_version(); }
+      for (int64_t i = 0; ret == OB_SUCCESS && i < full.at(0).get_column_array().count(); ++i) {
+        const auto &column = full.at(0).get_column_array().at(i);
+        if (i > 0 && full.at(0).get_column_array().at(i - 1).first >= column.first) { ret = OB_ERR_UNEXPECTED; }
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_MOCK_COLUMN namespace=%lu id=%lu name=%.*s\n",
+            namespace_id, column.first, column.second.length(), column.second.ptr());
+      }
+      for (int64_t i = 0; ret == OB_SUCCESS && i < fk.parent_column_ids_.count(); ++i) {
+        ObString column;
+        bool found = false;
+        full.at(0).get_column_name_by_column_id(fk.parent_column_ids_.at(i), column, found);
+        const char *expected = fk.parent_column_ids_.count() == 1 ? "id" : i == 0 ? "b" : "a";
+        const auto &parent_fk = full.at(0).get_foreign_key_infos().at(0);
+        if (!found || column != ObString::make_string(expected)
+            || parent_fk.parent_column_ids_.count() != fk.parent_column_ids_.count()
+            || parent_fk.parent_column_ids_.at(i) != fk.parent_column_ids_.at(i)
+            || parent_fk.child_column_ids_.at(i) != fk.child_column_ids_.at(i)) { ret = OB_ERR_UNEXPECTED; }
+      }
+      if (ret == OB_SUCCESS) { ret = catalog.get_simple_mock_fk_parent_tables(requested_version, simple, &ids); }
+      if (ret == OB_SUCCESS && (simple.count() != 1 || simple.at(0).get_table_id() != fk.parent_table_id_
+          || simple.at(0).get_schema_version() != mock_version)) { ret = OB_ERR_UNEXPECTED; }
+      simple.reset();
+      if (ret == OB_SUCCESS) { ret = catalog.get_simple_mock_fk_parent_tables(requested_version, simple); }
+      bool found = false;
+      for (int64_t i = 0; ret == OB_SUCCESS && i < simple.count(); ++i) {
+        if (simple.at(i).get_table_id() == fk.parent_table_id_) { found = true; }
+      }
+      if (ret == OB_SUCCESS && !found) { ret = OB_ERR_UNEXPECTED; }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_MOCK_FULL namespace=%lu id=%lu version=%ld columns=%ld ret=%d\n",
+          namespace_id, fk.parent_table_id_, mock_version, full.empty() ? 0 : full.at(0).get_column_array().count(), ret);
+      full.reset(); simple.reset();
+      if (ret == OB_SUCCESS && old_mock_fk) {
+        ret = catalog.get_mock_fk_parent_tables(INT64_MAX, full, &ids);
+        if (ret == OB_SUCCESS) { ret = catalog.get_simple_mock_fk_parent_tables(INT64_MAX, simple, &ids); }
+        if (ret == OB_SUCCESS && (!full.empty() || !simple.empty())) { ret = OB_ERR_UNEXPECTED; }
+      }
+      full.reset(); simple.reset(); ids.reset();
+      if (ret == OB_SUCCESS) { ret = catalog.get_mock_fk_parent_tables(requested_version, full, &ids); }
+      if (ret == OB_SUCCESS) { ret = catalog.get_simple_mock_fk_parent_tables(requested_version, simple, &ids); }
+      if (ret == OB_SUCCESS && (!full.empty() || !simple.empty())) { ret = OB_ERR_UNEXPECTED; }
+    }
     if (ret == OB_SUCCESS) {
       ObArray<ObAuxTableMetaInfo> auxiliary;
       ret = catalog.get_aux_tables(table_id, requested_version, auxiliary);
@@ -414,7 +472,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
           observer::NativeSchemaCatalog::TableSource::CURRENT);
       const int64_t current_columns = expected_columns
           + (name.find("_history") != std::string::npos ? 1 : 0);
-      const int64_t current_fks = name.find("_old_fk") != std::string::npos ? 0 : expected_foreign_keys;
+      const int64_t current_fks = name.find("_old_fk") != std::string::npos || old_mock_fk ? 0 : expected_foreign_keys;
       if (ret == OB_SUCCESS && (definition->get_column_count() != current_columns
           || definition->get_partition_num() != expected_parts
           || definition->get_index_tid_count() != expected_indexes
@@ -478,7 +536,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
         if (ret == OB_SUCCESS) { ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("FK"), found); }
         if (ret == OB_SUCCESS && found != fk.foreign_key_id_) { ret = OB_ERR_UNEXPECTED; }
       }
-      if (ret == OB_SUCCESS && (name.find("_drop_fk") != std::string::npos || name.find("_old_fk") != std::string::npos)) {
+      if (ret == OB_SUCCESS && (name.find("_drop_fk") != std::string::npos || name.find("_old_fk") != std::string::npos || old_mock_fk)) {
         ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("fk"), found);
         if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
       }
@@ -486,7 +544,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
       if (ret == OB_SUCCESS) { ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("__absent_fk"), found); }
       if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
-      if (ret == OB_SUCCESS && name.find("_mock_fk") != std::string::npos) {
+      if (ret == OB_SUCCESS && name.find("_mock_fk") != std::string::npos && !old_mock_fk) {
         uint64_t mock_id = OB_INVALID_ID;
         ret = catalog.get_mock_fk_parent_table_id(definition->get_database_id(), ObString::make_string("missing_parent"), mock_id);
         if (ret == OB_SUCCESS && (definition->get_foreign_key_infos().empty()
