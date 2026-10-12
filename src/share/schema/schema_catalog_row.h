@@ -36,6 +36,9 @@ public:
   int add_gmt_modified(int64_t value = -1) { return add_time("gmt_modified", value); }
   // The completed row, including all bytes, is owned until this sink dies.
   int finish(common::ObNewRow &);
+  // Require the complete primary key, but do not fill omitted values. Only
+  // returned non-key column IDs participate in the update. Bytes remain owned.
+  int finish_update(common::ObNewRow &, common::ObIArray<uint64_t> &column_ids);
 private:
   int set(const char *, const common::ObObj &);
   int set(int64_t position, const common::ObObj &);

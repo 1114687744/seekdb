@@ -201,3 +201,14 @@
 
 - 现有 `SchemaCatalogRow::finish` 用固定默认值补齐插入行；不能直接拿它替换 SQL 的部分字段 UPDATE，否则未指定字段会被覆盖。需在同一 owner 的行锁下保留旧值，只覆盖提供的字段，并据新旧行维护索引。LOB 更新复用存储协议，核对未修改 LOB 的处理。
 - 首先接表/列更新与删除，再接分区、约束、外键和 mock 父表等关系写入，包括直接 `sql_client.write` 的批量/范围操作、history 和发布。现有 SQL 写入继续存在，不能把读取接入完成当作整个目标完成。
+
+### 部分字段更新与表/列更新（实施中）
+
+- `SchemaCatalogRow::finish_update` 要求完整主键，只输出明确提供的非主键列；不补插入默认值。`NativeSchemaCatalog::update_fields` 在 owner 的行锁下保留旧字段，根据合并后的新旧行维护内表索引；不存在的行返回成功且 matched=false。
+- `NativeInnerTable` 增加带更新列清单的更新，内部读取当前存储行并保留未指定的值；原有整行更新入口保留。存储形式读取保留 LOB locator，未指定的 LOB 列不读取正文、不列入 LOB 更新；没有增加常驻缓存或跨操作状态。
+- 生产 `update_single_column/update_table_attribute/inner_update_table_options_` 的正常非核心表路径接入原生更新，复用原有字段映射及同一个 DDL owner，history 和日志继续走各自既有入口。完整表字段映射明确提供的 LOB 仍按更新字段处理；不能把“未指定 LOB 不重写”扩大成自动判定所有 LOB 正文是否改变。
+- 四件套增加部分字段更新时的索引旧键移除/新键可见、未修改 90KB LOB 保留、120KB LOB 单列更新、不存在记录，以及旧快照事务保留其他事务新提交字段的断言；生产脚本增加继承表列改名/默认值修改、表改名、内表 FORCE INDEX 对照与重启校验。`/tmp/native-schema-catalog-partial-build1.log` 编译中，尚未计为通过。
+- `/tmp/native-schema-catalog-partial-build1.log` 编译通过；`partial-probe1.log` 的 typed/indexed/part/history/dropped/lob 六个冷用例通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_8be2hza0`。`PARTIAL`、`LOB_RETAIN`、`PARTIAL_LATEST` 标记均为 ret=0，直接验证了 locator 字节未变和旧快照事务没有覆盖其他事务新提交的字段。
+- 继续接入 `update_table_schema_version/update_data_table_schema_version/update_index_status/update_index_type`。通过局部模板编码器共用初始化 SQL 与正常原生字段映射；更新字段清单不包含 LOB。显式维护原先由 SQL `ON UPDATE` 提供的表 gmt_modified，并增加实际 DDL 后时间戳前进的断言。`partial-production-build1.log` 生产编译中，后接入入口尚未完成运行验证。
+
+- `/tmp/native-schema-catalog-partial-production-build1.log` 移除测试钩子后编译通过；`partial-production-ddl1.log` 退出 0，覆盖实际列改名、默认值更新、表改名、gmt_modified 前进、强制内表索引、父子隔离、崩溃重启与重启后解析缺失外键父表。Namespace 主备回归正在运行，尚未计为通过。

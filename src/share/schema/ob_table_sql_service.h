@@ -467,6 +467,9 @@ private:
                   const char *table_name,
                   share::ObDMLSqlSplicer &dml,
                   int64_t &affected_rows);
+  template<class FieldEncoder>
+  int update_table_fields_(common::ObISQLClient &, uint64_t table_id,
+                           const FieldEncoder &, int64_t &affected_rows);
   int exec_insert(common::ObISQLClient &sql_client,
                   const uint64_t table_id,
                   const char *table_name,

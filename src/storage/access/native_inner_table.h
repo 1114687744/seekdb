@@ -160,6 +160,10 @@ public:
   // moving read is valid (e.g. immutable objects protected against GC).
   int get_current(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
   int get_for_update(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
+  // Storage-form rows retain LOB locators for updates/index projections and
+  // avoid reading unchanged LOB bodies. The transaction keeps the row locked.
+  int get_storage_row_for_update(Transaction &, const Table &, const common::ObRowkey &,
+                                common::ObIAllocator &, common::ObNewRow &);
   // Both endpoints have one cell per key column; MIN/MAX cells express open
   // prefix bounds. The range's table_id is ignored: bind selects the target.
   int scan(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool reverse = false,
@@ -170,6 +174,10 @@ public:
   // Replace the stored values of an existing row without changing its key.
   // Supports LOB columns through the storage engine's update protocol.
   int update(Transaction &, const Table &, const common::ObNewRow &);
+  // Row uses fixed column order. Only the specified non-key columns are read
+  // from it; all others retain the locked old row, including LOB locators.
+  int update(Transaction &, const Table &, const common::ObNewRow &,
+             const common::ObIArray<uint64_t> &column_ids);
   // Blind upsert uses put_rows, which does not support LOB columns. Callers
   // storing LOBs select insert/update within their owning transaction.
   int put(Transaction &, const Table &, const common::ObNewRow &);
@@ -190,7 +198,9 @@ private:
                 const ReadSource *source = nullptr);
   int open_scan_impl(Transaction &, const Table &, const common::ObNewRange &, Cursor &, bool latest, bool reverse,
                      const ReadSource *source = nullptr, bool raw_lob = false);
-  int write(Transaction &, const Table &, const common::ObNewRow &, Write, const common::ObNewRow *old_row = nullptr);
+  int write(Transaction &, const Table &, const common::ObNewRow &, Write,
+            const common::ObNewRow *old_row = nullptr, const common::ObIArray<uint64_t> *column_ids = nullptr);
+  int update_impl(Transaction &, const Table &, const common::ObNewRow &, const common::ObIArray<uint64_t> *);
   int lock_and_read(Transaction &, const Table &, const common::ObRowkey &,
                      common::ObIAllocator &, common::ObNewRow &, bool raw_lob);
   int begin_impl(Transaction &, int64_t deadline, bool read_only,

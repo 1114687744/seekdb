@@ -35,14 +35,18 @@ def run(binary):
         experiment.sql(f'CREATE TABLE native_ddl.local_table({definition})', child)
         experiment.sql("INSERT INTO native_ddl.local_table(id,body) VALUES(2,REPEAT('b',120000))", child)
         experiment.sql('ALTER TABLE native_ddl.t ADD extra INT DEFAULT 17', child)
+        experiment.sql("ALTER TABLE native_ddl.t CHANGE COLUMN v title VARCHAR(120) DEFAULT '新默认'", child)
+        experiment.sql("INSERT INTO native_ddl.t(id,body) VALUES(3,'new child')", child)
+        experiment.sql('RENAME TABLE native_ddl.local_table TO native_ddl.local_renamed', child)
         experiment.sql('TRUNCATE TABLE native_ddl.p', child)
         experiment.sql('DROP TABLE native_ddl.p', child)
 
         def verify():
             assert experiment.sql('SELECT id,v,u,n,e,c,LENGTH(body) FROM native_ddl.t') == (
                 (1, '初始', 18446744073709551615, None, '', 'b', 90000),)
-            assert experiment.sql('SELECT id,extra,LENGTH(body) FROM native_ddl.t', child) == ((1, 17, 90000),)
-            assert experiment.sql('SELECT id,LENGTH(body) FROM native_ddl.local_table', child) == ((2, 120000),)
+            assert experiment.sql('SELECT id,title,extra,LENGTH(body) FROM native_ddl.t ORDER BY id', child) == (
+                (1, '初始', 17, 90000), (3, '新默认', 17, 9))
+            assert experiment.sql('SELECT id,LENGTH(body) FROM native_ddl.local_renamed', child) == ((2, 120000),)
             assert experiment.sql('SELECT COUNT(*) FROM native_ddl.p') == ((0,),)
             for connection, expected_comment in ((None, 'parent changed'), (child, '')):
                 db_id = experiment.sql("SELECT database_id FROM oceanbase.__all_database "
@@ -59,10 +63,19 @@ def run(binary):
                                       "AND table_name='t'", connection)
                 assert len(rows) == 1 and rows[0][1:] == ('t', expected_comment), rows
                 tid = rows[0][0]
+                assert experiment.sql('SELECT gmt_modified>gmt_create FROM oceanbase.__all_table '
+                                      f'WHERE table_id={tid}', connection) == ((1,),)
+                column_name, default = ('v', '初始') if connection is None else ('title', '新默认')
                 columns = experiment.sql('SELECT column_name,cur_default_value_v2 FROM oceanbase.__all_column '
                                          f'FORCE INDEX (idx_tb_column_name) WHERE table_id={tid} '
-                                         "AND column_name='v'", connection)
-                assert columns == (('v', '初始'.encode('utf-8')),), columns
+                                         f"AND column_name='{column_name}'", connection)
+                assert columns == ((column_name, default.encode('utf-8')),), columns
+                if connection is not None:
+                    assert experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_column FORCE INDEX (idx_tb_column_name) '
+                                          f"WHERE table_id={tid} AND column_name='v'", connection) == ((0,),)
+                    assert experiment.sql('SELECT table_name FROM oceanbase.__all_table FORCE INDEX (idx_db_tb_name) '
+                                          f"WHERE database_id={db_id} AND table_name IN ('local_table','local_renamed')",
+                                          connection) == (('local_renamed',),)
                 latest = experiment.sql('SELECT table_name,comment FROM oceanbase.__all_table_history '
                                         f'WHERE table_id={tid} ORDER BY schema_version DESC LIMIT 1', connection)
                 assert latest == (('t', expected_comment),), latest

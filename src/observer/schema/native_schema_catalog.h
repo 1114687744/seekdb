@@ -18,6 +18,7 @@ class ObSimpleTableSchemaV2;
 class ObTableLatestSchemaVersion;
 class ObSchemaIdVersion;
 class ObIndexSchemaInfo;
+class SchemaCatalogRow;
 struct VersionHisVal;
 } }
 namespace storage { class ObAccessService; }
@@ -117,6 +118,12 @@ public:
   // Physical secondary indexes are maintained in the same transaction.
   int insert(uint64_t inner_table_id, const common::ObNewRow &);
   int update(uint64_t inner_table_id, const common::ObNewRow &);
+  // Point UPDATE: require the full key, retain omitted fields, and report a
+  // missing row as success with matched=false. Index changes share this owner.
+  using FieldWriter = std::function<int(share::schema::SchemaCatalogRow &)>;
+  int update_fields(uint64_t inner_table_id, const FieldWriter &, bool &matched);
+  int update_table(const share::schema::ObTableSchema &, bool update_object_status_ignore_version = false);
+  int update_column(const share::schema::ObColumnSchemaV2 &);
   int erase(uint64_t inner_table_id, const common::ObRowkey &, bool &existed);
   int insert_table(const share::schema::ObTableSchema &, bool history,
                    bool update_object_status_ignore_version = false);
@@ -129,7 +136,8 @@ private:
   struct TableState;
   int prepare_write(uint64_t inner_table_id, TableState *&);
   enum class Mutation { INSERT, UPDATE, ERASE };
-  int mutate(uint64_t inner_table_id, const common::ObNewRow &, Mutation, bool &existed);
+  int mutate(uint64_t inner_table_id, const common::ObNewRow &, Mutation, bool &existed,
+             const common::ObIArray<uint64_t> *column_ids = nullptr);
   int prepare_scan(uint64_t inner_table_id, Cursor &);
   int start_scan(const common::ObNewRange &, Cursor &, bool reverse);
   std::shared_ptr<State> state_;

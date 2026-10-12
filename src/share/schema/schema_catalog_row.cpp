@@ -99,6 +99,21 @@ int SchemaCatalogRow::finish(ObNewRow &row)
   return ret;
 }
 
+int SchemaCatalogRow::finish_update(ObNewRow &row, ObIArray<uint64_t> &column_ids)
+{
+  row.reset();
+  column_ids.reset();
+  if (schema_ == nullptr) { return OB_NOT_INIT; }
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < columns_.count(); ++i) {
+    if (i < schema_->get_rowkey_column_num()) {
+      if (!provided_.at(i)) { ret = OB_INVALID_ARGUMENT; }
+    } else if (provided_.at(i)) { ret = column_ids.push_back(columns_.at(i).col_id_); }
+  }
+  if (OB_SUCC(ret)) { row.assign(cells_.get_data(), cells_.count()); }
+  return ret;
+}
+
 } // namespace schema
 } // namespace share
 } // namespace oceanbase

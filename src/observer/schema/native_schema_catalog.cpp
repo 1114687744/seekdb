@@ -1477,6 +1477,41 @@ int NativeSchemaCatalog::update(uint64_t inner_table_id, const ObNewRow &row)
   return mutate(inner_table_id, row, Mutation::UPDATE, existed);
 }
 
+int NativeSchemaCatalog::update_fields(uint64_t inner_table_id, const FieldWriter &fill, bool &matched)
+{
+  matched = false;
+  if (!fill) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = prepare_write(inner_table_id, target);
+  SchemaCatalogRow fields;
+  ObNewRow row;
+  ObSEArray<uint64_t, 16> columns;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = fill(fields); }
+  if (OB_SUCC(ret)) { ret = fields.finish_update(row, columns); }
+  if (OB_SUCC(ret)) { ret = mutate(inner_table_id, row, Mutation::UPDATE, matched, &columns); }
+  return ret;
+}
+
+int NativeSchemaCatalog::update_table(const ObTableSchema &table, bool update_object_status_ignore_version)
+{
+  bool matched = false;
+  return update_fields(OB_ALL_TABLE_TID, [&](SchemaCatalogRow &fields) {
+    int ret = SchemaCatalogFields::table(table, update_object_status_ignore_version, fields, false);
+    // SQL supplied this column's ON UPDATE timestamp implicitly.
+    if (OB_SUCC(ret)) { ret = fields.add_gmt_modified(); }
+    return ret;
+  }, matched);
+}
+
+int NativeSchemaCatalog::update_column(const ObColumnSchemaV2 &column)
+{
+  bool matched = false;
+  return update_fields(OB_ALL_COLUMN_TID, [&](SchemaCatalogRow &fields) {
+    return SchemaCatalogFields::column(column, fields, false);
+  }, matched);
+}
+
 int NativeSchemaCatalog::erase(uint64_t inner_table_id, const ObRowkey &key, bool &existed)
 {
   ObNewRow row;
@@ -1484,10 +1519,11 @@ int NativeSchemaCatalog::erase(uint64_t inner_table_id, const ObRowkey &key, boo
   return mutate(inner_table_id, row, Mutation::ERASE, existed);
 }
 
-int NativeSchemaCatalog::mutate(uint64_t inner_table_id, const ObNewRow &row,
-    Mutation operation, bool &existed)
+int NativeSchemaCatalog::mutate(uint64_t inner_table_id, const ObNewRow &input,
+    Mutation operation, bool &existed, const ObIArray<uint64_t> *column_ids)
 {
   existed = false;
+  ObNewRow row = input;
   auto &s = *state_;
   TableState *base = nullptr;
   int ret = prepare_write(inner_table_id, base);
@@ -1512,13 +1548,27 @@ int NativeSchemaCatalog::mutate(uint64_t inner_table_id, const ObNewRow &row,
   ObNewRow old;
   if (OB_SUCC(ret) && operation != Mutation::INSERT) {
     const ObRowkey key(row.cells_, base->schema.get_rowkey_column_num());
-    ret = s.native.get_for_update(s.transaction, base->table, key, allocator, old);
+    ret = s.native.get_storage_row_for_update(s.transaction, base->table, key, allocator, old);
     existed = ret == OB_SUCCESS;
-    if (ret == OB_ENTRY_NOT_EXIST && operation == Mutation::ERASE) { return OB_SUCCESS; }
+    if (ret == OB_ENTRY_NOT_EXIST && (operation == Mutation::ERASE || column_ids != nullptr)) { return OB_SUCCESS; }
+  }
+  ObSEArray<ObObj, 16> merged;
+  if (OB_SUCC(ret) && column_ids != nullptr) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < old.count_; ++i) {
+      bool provided = false;
+      for (int64_t j = 0; j < column_ids->count(); ++j) {
+        if (base->columns.at(i).col_id_ == column_ids->at(j)) { provided = true; break; }
+      }
+      ret = merged.push_back(provided ? input.cells_[i] : old.cells_[i]);
+    }
+    row.assign(merged.get_data(), merged.count());
   }
   if (OB_SUCC(ret)) {
     if (operation == Mutation::INSERT) { ret = s.native.insert(s.transaction, base->table, row); }
-    else if (operation == Mutation::UPDATE) { ret = s.native.update(s.transaction, base->table, row); }
+    else if (operation == Mutation::UPDATE) {
+      ret = column_ids == nullptr ? s.native.update(s.transaction, base->table, row)
+                                 : s.native.update(s.transaction, base->table, row, *column_ids);
+    }
     else {
       ret = s.native.erase(s.transaction, base->table,
           ObRowkey(row.cells_, base->schema.get_rowkey_column_num()), existed);

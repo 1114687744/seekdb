@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_table_sql_service.h"
 #include "share/schema/schema_catalog_fields.h"
+#include "share/schema/schema_catalog_row.h"
 #include "observer/schema/native_schema_catalog.h"
 #include "share/ob_server_struct.h"
 #include "observer/namespace_worker_protocol_prototype.h"
@@ -55,6 +56,29 @@ int ObTableSqlService::exec_update(
     ObDMLExecHelper exec(sql_client);
     if (OB_FAIL(exec.exec_update(table_name, dml, affected_rows))) {
     }
+  }
+  return ret;
+}
+
+template<class FieldEncoder>
+int ObTableSqlService::update_table_fields_(ObISQLClient &sql_client, uint64_t table_id,
+    const FieldEncoder &encode, int64_t &affected_rows)
+{
+  affected_rows = 0;
+  int ret = OB_SUCCESS;
+  if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
+    bool matched = false;
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.update_fields(OB_ALL_TABLE_TID, encode, matched);
+    });
+    if (OB_SUCC(ret)) { affected_rows = matched ? 1 : 0; }
+  } else {
+    ObDMLSqlSplicer dml;
+    const char *table_name = nullptr;
+    if (OB_FAIL(encode(dml))) {
+    } else if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
+    } else { ret = exec_update(sql_client, table_id, table_name, dml, affected_rows); }
   }
   return ret;
 }
@@ -967,6 +991,9 @@ int ObTableSqlService::update_single_column(
 
   ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
+  } else if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_column(new_column_schema); });
   } else if (OB_FAIL(gen_column_dml(new_column_schema, dml))) {
   } else if (!is_core_table(table_id)) {
     int64_t affected_rows = 0;
@@ -2328,23 +2355,16 @@ int ObTableSqlService::update_index_status(
   } else if (OB_FAIL(update_data_table_schema_version(sql_client, data_table_id,
                      data_table_schema.get_in_offline_ddl_white_list()))) {
   } else {
-    ObDMLSqlSplicer dml;
-    if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                 index_table_id)))
-        || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-        || OB_FAIL(dml.add_column("index_status", status))
-        || OB_FAIL(dml.add_gmt_modified())) {
-      LOG_WARN("add column failed", K(ret));
-    } else {
-      int64_t affected_rows = 0;
-      const char *table_name = NULL;
-      if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-      } else if (OB_FAIL(exec_update(sql_client, index_table_id, table_name, dml, affected_rows))) {
-      } else if (affected_rows > 1) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected error", K(affected_rows), K(ret));
-      }
-    }
+    int64_t affected_rows = 0;
+    ret = update_table_fields_(sql_client, index_table_id, [&](auto &dml) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(index_table_id)))
+          || OB_FAIL(dml.add_column("schema_version", new_schema_version))
+          || OB_FAIL(dml.add_column("index_status", status))
+          || OB_FAIL(dml.add_gmt_modified())) {}
+      return ret;
+    }, affected_rows);
+    if (OB_SUCC(ret) && affected_rows > 1) { ret = OB_ERR_UNEXPECTED; }
   }
 
   if (OB_SUCC(ret)) {
@@ -2387,24 +2407,22 @@ int ObTableSqlService::update_index_type(const ObTableSchema &data_table_schema,
   int ret = OB_SUCCESS;
   
   
-  ObDMLSqlSplicer dml;
   int64_t affected_rows = 0;
-  const char *table_name = NULL;
 
   if (OB_INVALID_ID == index_table_id) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), K(index_table_id));
   } else if (OB_FAIL(check_ddl_allowed(data_table_schema))) {
-  } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                    index_table_id)))
-            || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-            || OB_FAIL(dml.add_column("index_type", index_type))) {
-    LOG_WARN("add column failed", K(ret));
-  } else if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-  } else if (OB_FAIL(exec_update(sql_client, index_table_id, table_name, dml, affected_rows))) {
-  } else if (affected_rows != 1) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("unexpected error", K(affected_rows), K(ret));
+  } else {
+    ret = update_table_fields_(sql_client, index_table_id, [&](auto &dml) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(index_table_id)))
+          || OB_FAIL(dml.add_column("schema_version", new_schema_version))
+          || OB_FAIL(dml.add_column("index_type", index_type))
+          || OB_FAIL(dml.add_gmt_modified())) {}
+      return ret;
+    }, affected_rows);
+    if (OB_SUCC(ret) && affected_rows != 1) { ret = OB_ERR_UNEXPECTED; }
   }
 
   if (OB_SUCC(ret)) {
@@ -2478,13 +2496,22 @@ int ObTableSqlService::update_table_attribute(ObISQLClient &sql_client,
   int ret = OB_SUCCESS;
   
   const uint64_t table_id = new_table_schema.get_table_id();
+  const bool native_update = !is_core_table(table_id) && !GCTX.in_bootstrap_;
   
   ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
+  } else if (native_update) {
+    if (OB_FAIL(check_table_options(new_table_schema))) {
+    } else {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.update_table(new_table_schema, update_object_status_ignore_version);
+      });
+    }
   } else if (OB_FAIL(gen_table_dml(new_table_schema,
           update_object_status_ignore_version, dml))) {
   }
-  if (OB_SUCC(ret) && !is_core_table(table_id)) {
+  if (OB_SUCC(ret) && !is_core_table(table_id) && !native_update) {
     int64_t affected_rows = 0;
     const char *table_name = NULL;
     if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
@@ -2977,7 +3004,6 @@ int ObTableSqlService::update_data_table_schema_version(
 {
   int ret = OB_SUCCESS;
   
-  ObDMLSqlSplicer dml;
   ObRefreshSchemaStatus schema_status;
   
   ObTableSchema table_schema;
@@ -2995,21 +3021,19 @@ int ObTableSqlService::update_data_table_schema_version(
   if (OB_SUCC(ret)) {
     if (FALSE_IT(table_schema.set_in_offline_ddl_white_list(in_offline_ddl_white_list))) {
     } else if (OB_FAIL(check_ddl_allowed(table_schema))) {
-    } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                   data_table_id)))
-          || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-          || OB_FAIL(dml.add_column("rowkey_column_num", table_schema.get_rowkey_column_num()))
-          || OB_FAIL(dml.add_column("index_column_num", table_schema.get_index_column_num()))
-          || OB_FAIL(dml.add_column("max_used_column_id", table_schema.get_max_used_column_id()))
-          || OB_FAIL(dml.add_gmt_modified())) {
-        LOG_WARN("add column failed", K(ret));
     } else if (!is_core_table(data_table_id)) {
       int64_t affected_rows = 0;
-      const char *table_name = NULL;
-      if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-      } else if (OB_FAIL(exec_update(sql_client, data_table_id,
-                                     table_name, dml, affected_rows))) {
-      } else if (!is_single_row(affected_rows)) {
+      ret = update_table_fields_(sql_client, data_table_id, [&](auto &dml) {
+        int ret = OB_SUCCESS;
+        if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(data_table_id)))
+            || OB_FAIL(dml.add_column("schema_version", new_schema_version))
+            || OB_FAIL(dml.add_column("rowkey_column_num", table_schema.get_rowkey_column_num()))
+            || OB_FAIL(dml.add_column("index_column_num", table_schema.get_index_column_num()))
+            || OB_FAIL(dml.add_column("max_used_column_id", table_schema.get_max_used_column_id()))
+            || OB_FAIL(dml.add_gmt_modified())) {}
+        return ret;
+      }, affected_rows);
+      if (OB_SUCC(ret) && !is_single_row(affected_rows)) {
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("unexpected error",
                  K(affected_rows),
@@ -4064,6 +4088,12 @@ int ObTableSqlService::inner_update_table_options_(ObISQLClient &sql_client,
   
   const bool update_object_status_ignore_version = false;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
+  } else if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
+    if (OB_FAIL(check_table_options(new_table_schema))) {
+    } else {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_table(new_table_schema); });
+    }
   } else if (OB_FAIL(gen_table_options_dml(new_table_schema, update_object_status_ignore_version, dml))) {
   } else if (!is_core_table(table_id)) {
     int64_t affected_rows = 0;
@@ -4095,20 +4125,17 @@ int ObTableSqlService::update_table_schema_version(ObISQLClient &sql_client,
   
   
   const bool update_object_status_ignore_version = false;
-  ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(table_schema))) {
-  } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                 table_id)))
-        || OB_FAIL(dml.add_column("schema_version", table_schema.get_schema_version()))
-        || OB_FAIL(dml.add_gmt_modified())) {
-      LOG_WARN("add column failed", K(ret));
   } else if (!is_core_table(table_id)) {
     int64_t affected_rows = 0;
-    const char *table_name = NULL;
-    if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-    } else if (OB_FAIL(exec_update(sql_client, table_id,
-                                   table_name, dml, affected_rows))) {
-    } else if (affected_rows > 1) {
+    ret = update_table_fields_(sql_client, table_id, [&](auto &dml) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(table_id)))
+          || OB_FAIL(dml.add_column("schema_version", table_schema.get_schema_version()))
+          || OB_FAIL(dml.add_gmt_modified())) {}
+      return ret;
+    }, affected_rows);
+    if (OB_SUCC(ret) && affected_rows > 1) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected value", K(ret), K(affected_rows));
     }

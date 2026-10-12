@@ -948,6 +948,40 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS) { ret = begin(); }
     if (ret == OB_SUCCESS) { set_values(first, first_data); stage = "insert"; ret = writer.insert(OB_ALL_TABLE_HISTORY_TID, sample); }
     if (ret == OB_SUCCESS) { stage = "read_insert"; ret = verify(writer, &first, first_data); }
+    bool matched = false;
+    if (ret == OB_SUCCESS) {
+      stage = "partial_index_key";
+      ret = writer.update_fields(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_id", synthetic_id);
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("schema_version", version); }
+        if (rc == OB_SUCCESS) { rc = fields.add_column("data_table_id", second_data); }
+        return rc;
+      }, matched);
+      if (ret == OB_SUCCESS && !matched) { ret = OB_ERR_UNEXPECTED; }
+    }
+    if (ret == OB_SUCCESS) { ret = verify(writer, &first, second_data); }
+    if (ret == OB_SUCCESS) {
+      stage = "partial_lob";
+      ret = writer.update_fields(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_id", synthetic_id);
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("schema_version", version); }
+        if (rc == OB_SUCCESS) { rc = fields.add_column("view_definition", ObString(second.size(), second.data())); }
+        return rc;
+      }, matched);
+      if (ret == OB_SUCCESS && !matched) { ret = OB_ERR_UNEXPECTED; }
+    }
+    if (ret == OB_SUCCESS) { ret = verify(writer, &second, second_data); }
+    if (ret == OB_SUCCESS) {
+      stage = "partial_missing";
+      ret = writer.update_fields(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_id", synthetic_id + 10000000);
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("schema_version", version); }
+        if (rc == OB_SUCCESS) { rc = fields.add_column("data_table_id", second_data); }
+        return rc;
+      }, matched);
+      if (ret == OB_SUCCESS && matched) { ret = OB_ERR_UNEXPECTED; }
+    }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_PARTIAL namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
     if (ret == OB_SUCCESS) { set_values(second, second_data); stage = "update_key"; ret = writer.update(OB_ALL_TABLE_HISTORY_TID, sample); }
     if (ret == OB_SUCCESS) { stage = "read_update"; ret = verify(writer, &second, second_data); }
     if (ret == OB_SUCCESS) { stage = "uncommitted_invisible"; ret = verify_committed(nullptr, 0); }
@@ -1154,6 +1188,27 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     stage = "read_own_insert";
     if (ret == OB_SUCCESS) { ret = verify(&first); }
     if (ret == OB_SUCCESS) {
+      stage = "retain_lob_locator";
+      ObArenaAllocator raw_arena(ObMemAttr("RawLobProbe"));
+      ObNewRow before, after;
+      ret = native.get_storage_row_for_update(tx, table, key, raw_arena, before);
+      int64_t comment = -1;
+      if (ret == OB_SUCCESS) { ret = column_index(fixed, "comment", comment); }
+      ObSEArray<uint64_t, 1> changed;
+      if (ret == OB_SUCCESS) {
+        const auto *column = fixed.get_column_schema(ObString::make_string("comment"));
+        ret = changed.push_back(column->get_column_id());
+        sample.cells_[comment].set_meta_type(column->get_meta_type());
+        sample.cells_[comment].set_string(column->get_data_type(), ObString::make_string("partial update"));
+      }
+      if (ret == OB_SUCCESS) { ret = native.update(tx, table, sample, changed); }
+      if (ret == OB_SUCCESS) { ret = native.get_storage_row_for_update(tx, table, key, raw_arena, after); }
+      if (ret == OB_SUCCESS && (before.cells_[value_index].get_string() != after.cells_[value_index].get_string()
+          || after.cells_[comment].get_string() != ObString::make_string("partial update"))) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = verify(&first); }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_LOB_RETAIN namespace=%lu ret=%d\n", namespace_id, ret);
+    }
+    if (ret == OB_SUCCESS) {
       sample.cells_[value_index].set_string(sample.cells_[value_index].get_type(),
           ObString(second.size(), second.data()));
       stage = "update";
@@ -1183,6 +1238,40 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS) { stage = "commit"; ret = native.commit(tx); }
     if (ret == OB_SUCCESS) { ret = native.begin(tx, deadline); }
     if (ret == OB_SUCCESS) { stage = "read_committed"; ret = verify(&first); }
+    if (ret == OB_SUCCESS) {
+      // tx predates another writer's commit. Its partial update must retain
+      // that writer's comment even though an ordinary snapshot read is older.
+      stage = "partial_after_other_commit";
+      storage::NativeInnerTable::Transaction other;
+      int64_t comment = -1;
+      ret = column_index(fixed, "comment", comment);
+      ObSEArray<uint64_t, 1> changed;
+      if (ret == OB_SUCCESS) { ret = changed.push_back(fixed.get_column_schema(ObString::make_string("comment"))->get_column_id()); }
+      if (ret == OB_SUCCESS) {
+        sample.cells_[comment].set_string(sample.cells_[comment].get_type(), ObString::make_string("other committed"));
+        ret = native.begin(other, deadline);
+      }
+      if (ret == OB_SUCCESS) { ret = native.update(other, table, sample, changed); }
+      if (ret == OB_SUCCESS) { ret = native.commit(other); }
+      if (other.is_active()) { native.rollback(other); }
+      changed.reset();
+      if (ret == OB_SUCCESS) { ret = changed.push_back(fixed.get_column_schema(ObString::make_string("view_definition"))->get_column_id()); }
+      if (ret == OB_SUCCESS) {
+        sample.cells_[comment].set_null(); // unselected input must be ignored
+        sample.cells_[value_index].set_string(sample.cells_[value_index].get_type(), ObString(second.size(), second.data()));
+        ret = native.update(tx, table, sample, changed);
+      }
+      ObArenaAllocator raw_arena(ObMemAttr("PartialRace"));
+      ObNewRow current;
+      if (ret == OB_SUCCESS) { ret = native.get_storage_row_for_update(tx, table, key, raw_arena, current); }
+      if (ret == OB_SUCCESS && current.cells_[comment].get_string() != ObString::make_string("other committed")) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = verify(&second); }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_PARTIAL_LATEST namespace=%lu ret=%d\n", namespace_id, ret);
+      const int undo = tx.is_active() ? native.rollback(tx) : OB_SUCCESS;
+      if (ret == OB_SUCCESS) { ret = undo; }
+      if (ret == OB_SUCCESS) { ret = native.begin(tx, deadline); }
+      if (ret == OB_SUCCESS) { ret = verify(&first); }
+    }
     bool existed = false;
     if (ret == OB_SUCCESS) { stage = "erase"; ret = native.erase(tx, table, key, existed); }
     if (ret == OB_SUCCESS && !existed) { ret = OB_ERR_UNEXPECTED; }

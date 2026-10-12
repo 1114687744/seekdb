@@ -563,7 +563,7 @@ int NativeInnerTable::get_current(Transaction &tx, const Table &table,
 { return read(tx, table, key, allocator, row, true); }
 
 int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow &row,
-    Write operation, const ObNewRow *old_row)
+    Write operation, const ObNewRow *old_row, const ObIArray<uint64_t> *column_ids)
 {
   int ret = check(tx, true);
   if (OB_SUCC(ret) && (row.projector_size_ != 0
@@ -615,7 +615,7 @@ int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow 
         ret = rows.old.init(old_row->count_);
         for (int64_t i = 0; OB_SUCC(ret) && i < old_row->count_; ++i) {
           ret = rows.old.storage_datums_[i].from_obj_enhance(old_row->cells_[i]);
-          if (OB_SUCC(ret) && i >= table.state_->schema.get_rowkey_column_num()) {
+          if (OB_SUCC(ret) && column_ids == nullptr && i >= table.state_->schema.get_rowkey_column_num()) {
             ret = updated.push_back(table.state_->columns.at(i));
           }
         }
@@ -630,7 +630,7 @@ int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow 
         ret = access_.put_rows(table.state_->tablet, *tx.descriptor_, param, table.state_->columns, &rows, affected);
       } else if (operation == Write::UPDATE) {
         ret = access_.update_rows(table.state_->tablet, *tx.descriptor_, param,
-            table.state_->columns, updated, &rows, affected);
+            table.state_->columns, column_ids == nullptr ? updated : *column_ids, &rows, affected);
       } else if (operation == Write::ERASE) {
         ret = access_.delete_rows(table.state_->tablet, *tx.descriptor_, param, table.state_->columns, &rows, affected);
       } else {
@@ -668,16 +668,56 @@ int NativeInnerTable::get_for_update(Transaction &tx, const Table &table, const 
     ObIAllocator &allocator, ObNewRow &row)
 { return lock_and_read(tx, table, key, allocator, row, false); }
 
+int NativeInnerTable::get_storage_row_for_update(Transaction &tx, const Table &table, const ObRowkey &key,
+    ObIAllocator &allocator, ObNewRow &row)
+{ return lock_and_read(tx, table, key, allocator, row, true); }
+
 int NativeInnerTable::update(Transaction &tx, const Table &table, const ObNewRow &row)
+{ return update_impl(tx, table, row, nullptr); }
+
+int NativeInnerTable::update(Transaction &tx, const Table &table, const ObNewRow &row,
+    const ObIArray<uint64_t> &column_ids)
+{ return update_impl(tx, table, row, &column_ids); }
+
+int NativeInnerTable::update_impl(Transaction &tx, const Table &table, const ObNewRow &row,
+    const ObIArray<uint64_t> *column_ids)
 {
   int ret = check(tx, true);
+  if (OB_SUCC(ret)) { ret = check_table(table); }
   if (OB_SUCC(ret) && row.projector_size_ != 0) { ret = OB_INVALID_ARGUMENT; }
-  if (OB_SUCC(ret)) { ret = check_cells(table, row.cells_, row.count_, false, false); }
+  if (OB_SUCC(ret) && (row.cells_ == nullptr || row.count_ != table.state_->columns.count())) {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  ObSEArray<int64_t, 16> positions;
+  if (OB_SUCC(ret) && column_ids != nullptr) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < column_ids->count(); ++i) {
+      int64_t position = -1;
+      for (int64_t j = table.state_->schema.get_rowkey_column_num(); j < row.count_; ++j) {
+        if (table.state_->columns.at(j) == column_ids->at(i)) { position = j; break; }
+      }
+      if (position < 0) { ret = OB_INVALID_ARGUMENT; }
+      for (int64_t j = 0; OB_SUCC(ret) && j < positions.count(); ++j) {
+        if (positions.at(j) == position) { ret = OB_INVALID_ARGUMENT; }
+      }
+      if (OB_SUCC(ret)) { ret = positions.push_back(position); }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ret = check_cells(table, row.cells_, column_ids == nullptr ? row.count_ : table.state_->schema.get_rowkey_column_num(),
+                      column_ids != nullptr, false);
+  }
   if (OB_SUCC(ret)) {
     ObArenaAllocator allocator(ObMemAttr("NativeInnerUpd"));
     ObNewRow previous;
     const ObRowkey key(row.cells_, table.state_->schema.get_rowkey_column_num());
     if (OB_FAIL(lock_and_read(tx, table, key, allocator, previous, true))) {
+    } else if (column_ids != nullptr) {
+      ObSEArray<ObObj, 16> cells;
+      for (int64_t i = 0; OB_SUCC(ret) && i < previous.count_; ++i) { ret = cells.push_back(previous.cells_[i]); }
+      for (int64_t i = 0; OB_SUCC(ret) && i < positions.count(); ++i) { cells.at(positions.at(i)) = row.cells_[positions.at(i)]; }
+      ObNewRow next;
+      next.assign(cells.get_data(), cells.count());
+      if (OB_SUCC(ret) && !column_ids->empty()) { ret = write(tx, table, next, Write::UPDATE, &previous, column_ids); }
     } else if (table.state_->schema.get_rowkey_column_num() == table.state_->columns.count()) {
       // The key is the complete row; the lock established that it exists.
     } else { ret = write(tx, table, row, Write::UPDATE, &previous); }
