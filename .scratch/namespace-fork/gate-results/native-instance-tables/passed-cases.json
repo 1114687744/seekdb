@@ -1,0 +1,310 @@
+[
+  {
+    "log": "bootstrap.log",
+    "result": {
+      "event": "PASS",
+      "elapsed_limit_s": 30
+    }
+  },
+  {
+    "log": "bootstrap.log",
+    "result": {
+      "event": "PASS",
+      "case": "inprocess_bootstrap",
+      "one_process": true,
+      "child_login": true,
+      "inherited_read": true,
+      "empty_namespace": true,
+      "template_restart": true
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "event": "PASS",
+      "case": "automatic_catalog_gc",
+      "old_view": true,
+      "parent_drop": true,
+      "crash_restart": true
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "event": "PASS",
+      "case": "sql_read_view",
+      "rr": true,
+      "rc": true,
+      "px": true,
+      "own_writes": true,
+      "parent_truncate": true
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "event": "PASS",
+      "case": "shared_transaction",
+      "faults": false,
+      "atomic_lob_unit": true,
+      "rollback": null,
+      "crash_recovery": true,
+      "concurrent_creation": true
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "event": "PASS",
+      "case": "inprocess_direct",
+      "ddl": true,
+      "partition": true,
+      "index": true,
+      "lob": true,
+      "fulltext": true,
+      "ivf": true,
+      "ivf_pq": true,
+      "ivf_sq8": true,
+      "empty_hnsw": true,
+      "source_drop": true,
+      "ddl_redefinition": true,
+      "check_constraint": true,
+      "auto_increment": true,
+      "fork_table": true,
+      "cache_lifecycle": true,
+      "interrupted_heap_recovery": true,
+      "restart": true
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "case": "basic",
+      "exit_code": 0,
+      "elapsed_s": 118.81
+    }
+  },
+  {
+    "log": "direct.log",
+    "result": {
+      "case": "namespace_fork_local",
+      "exit_code": 0,
+      "elapsed_s": 116.54
+    }
+  },
+  {
+    "log": "locked-root.log",
+    "result": {
+      "event": "PASS",
+      "case": "catalog_locked_root"
+    }
+  },
+  {
+    "log": "locked-root.log",
+    "result": {
+      "event": "locked_root_evidence",
+      "line": "INSTANCE_CATALOG_LOCKED_ROOT_REPRO snapshot=1791814674115314024 root_version=2 page=11733487962978548053 page_ret=0 stage_ret=0"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "native_kv_verified",
+      "recovered": false,
+      "typed_records": true,
+      "physical_retention": true,
+      "durable_phase": "created"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "crash_for_recovery",
+      "pid": 1310508,
+      "after_phase": "created"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "native_kv_verified",
+      "recovered": true,
+      "typed_records": true,
+      "physical_retention": true,
+      "durable_phase": "marked"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "crash_for_recovery",
+      "pid": 1312472,
+      "after_phase": "marked"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "native_kv_verified",
+      "recovered": true,
+      "typed_records": true,
+      "physical_retention": true,
+      "durable_phase": "finished"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "crash_for_recovery",
+      "pid": 1313814,
+      "after_phase": "finished"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "native_kv_verified",
+      "recovered": true,
+      "typed_records": true,
+      "physical_retention": true,
+      "durable_phase": "verified"
+    }
+  },
+  {
+    "log": "native-probe.log",
+    "result": {
+      "event": "PASS",
+      "case": "instance_meta_native",
+      "rollback": true,
+      "cross_collection": true,
+      "duplicate_key": true,
+      "own_writes": true,
+      "snapshot": true,
+      "locked_current_read": true,
+      "sequential_put_put_scan": true,
+      "scan_reentrant_write_rejected": true,
+      "native_inner_table_cleanup": true,
+      "cross_table_commit_rollback": true,
+      "binary_value_60000": true,
+      "key_512": true,
+      "value_65536": true,
+      "binary_bounds": true,
+      "scan": true,
+      "erase": true,
+      "snapshot_across_minor": true,
+      "writer_conflict": true,
+      "typed_records": true,
+      "catalog_tree": true,
+      "capped_roots": true,
+      "obsolete_lineage_removed": true,
+      "gc_watermark": true,
+      "physical_retention": true,
+      "crash_recovery": true,
+      "durable_fork_drop": true
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "initial_restore_fork_read_and_write_rejection",
+      "namespace_id": 3,
+      "logical_tablet": 200001
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "dynamic_namespace_discovery"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "materialization_transaction_replay_with_lob"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "child_ddl_refresh"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "historical_source_after_parent_truncate_and_drop"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "replicated_namespace_drop_admission"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "promotion_lazy_schema_recovery_and_writes"
+    }
+  },
+  {
+    "log": "native-table-standby/namespace_fork_local.log",
+    "result": {
+      "case": "fork_after_promotion"
+    }
+  },
+  {
+    "log": "native-table-standby-catalog/catalog_read_view.log",
+    "result": {
+      "case": "old_root_delete_replayed",
+      "page": 4556230639946996613
+    }
+  },
+  {
+    "log": "native-table-standby-catalog/catalog_read_view.log",
+    "result": {
+      "case": "replica_rr_late_open_after_page_gc",
+      "passed": true
+    }
+  },
+  {
+    "log": "shared-transaction-faults.log",
+    "result": {
+      "event": "PASS",
+      "case": "shared_transaction",
+      "faults": true,
+      "atomic_lob_unit": true,
+      "rollback": true,
+      "crash_recovery": true,
+      "concurrent_creation": true
+    }
+  },
+  {
+    "log": "sql.log",
+    "result": {
+      "event": "PASS",
+      "case": "inprocess_sql",
+      "transactions": true,
+      "index": true,
+      "nested_fork": true,
+      "restart": true
+    }
+  },
+  {
+    "log": "standby-catalog.log",
+    "result": {
+      "case": "catalog_read_view",
+      "exit_code": 0,
+      "elapsed_s": 112.15
+    }
+  },
+  {
+    "log": "tls.log",
+    "result": {
+      "event": "PASS",
+      "case": "inprocess_tls",
+      "protocol": "TLSv1.3",
+      "child_login": true
+    }
+  }
+]

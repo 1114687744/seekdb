@@ -1,0 +1,7 @@
+{
+  "binary": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-locked-root-current",
+  "evidence": [
+    "INSTANCE_CATALOG_LOCKED_ROOT_REPRO snapshot=1791813394421751023 root_version=2 page=11733487962978548053 page_ret=-4018 stage_ret=-4018",
+    "INSTANCE_META_PROBE_FAIL locked_root line=51 ret=-4018 operation=stage_ret"
+  ]
+}

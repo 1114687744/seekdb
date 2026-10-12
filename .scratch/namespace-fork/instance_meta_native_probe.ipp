@@ -1,7 +1,7 @@
 // Native integration probe. Injected only in a test build; excluded from production.
 static int run_instance_meta_native_probe()
 {
-  auto &kv = share::server_service<storage::ObAccessService>()->instance_meta_store();
+  auto &kv = share::server_service<storage::ObAccessService>()->storage_schema_store();
   using Tx = storage::InstanceMetaStore::Transaction;
   using Collection = storage::MetaCollection;
   const auto first = static_cast<Collection>(10001);
@@ -108,7 +108,7 @@ static int run_instance_meta_native_probe()
   auto freeze_and_wait = [&]() -> int {
     ObLS *ls = nullptr;
     ObTabletHandle handle;
-    const ObTabletID tablet(ObTabletID::LS_INSTANCE_META_TABLET_ID);
+    const ObTabletID tablet(ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID);
     int rc = share::server_service<ObLSService>()->get_ls(ls);
     if (rc == OB_SUCCESS) { rc = ls->get_tablet(tablet, handle); }
     const SCN before = rc == OB_SUCCESS ? handle.get_obj()->get_tablet_meta().clog_checkpoint_scn_ : SCN();
@@ -150,7 +150,7 @@ static int run_instance_meta_native_probe()
   bool merged = false;
   while (!merged && common::ObTimeUtility::current_time() < merge_deadline) {
     ObTabletHandle handle;
-    META_PROBE_CALL(merge_ls->get_tablet(ObTabletID(ObTabletID::LS_INSTANCE_META_TABLET_ID), handle));
+    META_PROBE_CALL(merge_ls->get_tablet(ObTabletID(ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID), handle));
     merged = handle.get_obj()->get_minor_table_count() < 4;
     if (merged) {
       fprintf(stderr, "INSTANCE_META_PROBE_MINOR four_flushes=1 remaining=%ld\n", handle.get_obj()->get_minor_table_count());
@@ -258,39 +258,78 @@ static int run_instance_meta_native_probe()
   META_PROBE_CALL(kv.put(failed_read, first, key, next));
   META_PROBE_CALL(kv.commit(failed_read));
 
-  // Both physical KV tablets use the same native row/transaction module.
-  // The participant survives the owner's release and is detached afterwards.
-  auto &layouts = share::server_service<storage::ObAccessService>()->storage_schema_store();
+  // The directory's five tables share one native transaction and snapshot.
+  // It can also borrow the layout store's transaction through owner release.
+  auto &directory = share::server_service<storage::ObAccessService>()->instance_meta_store();
   const auto shared_collection = static_cast<Collection>(10006);
+  using Table = storage::InstanceTable;
+  common::ObObj cells[2]; cells[0].set_uint64(900001); cells[1].set_uint64(123);
+  common::ObNewRow row; row.assign(cells, 2);
   for (bool committed : {false, true}) {
     Tx left, right;
     META_PROBE_CALL(kv.begin(left, deadline()));
-    META_PROBE_CALL(layouts.attach(right, left, deadline()));
+    META_PROBE_CALL(directory.attach(right, left, deadline()));
     META_PROBE_CALL(kv.put(left, shared_collection, key, next));
-    META_PROBE_CALL(layouts.put(right, shared_collection, key, next));
-    META_PROBE_ASSERT(layouts.commit(right) == OB_INVALID_ARGUMENT);
+    META_PROBE_CALL(directory.insert(right, Table::COUNTERS, row));
+    META_PROBE_ASSERT(directory.commit(right) == OB_INVALID_ARGUMENT);
     META_PROBE_CALL(committed ? kv.commit(left) : kv.rollback(left));
-    META_PROBE_CALL(layouts.detach(right));
-    for (auto *store : {&kv, &layouts}) {
-      Tx check;
-      META_PROBE_CALL(store->begin(check, deadline()));
-      ret = store->get(check, shared_collection, key, allocator, value);
-      META_PROBE_ASSERT(committed ? ret == OB_SUCCESS && value == next : ret == OB_ENTRY_NOT_EXIST);
-      if (committed) {
-        bool removed = false;
-        META_PROBE_CALL(store->erase(check, shared_collection, key, removed));
-        META_PROBE_ASSERT(removed);
-      }
-      META_PROBE_CALL(store->commit(check));
+    META_PROBE_CALL(directory.detach(right));
+    Tx check, check_directory;
+    META_PROBE_CALL(kv.begin(check, deadline()));
+    META_PROBE_CALL(directory.begin(check_directory, deadline()));
+    ret = kv.get(check, shared_collection, key, allocator, value);
+    META_PROBE_ASSERT(committed ? ret == OB_SUCCESS && value == next : ret == OB_ENTRY_NOT_EXIST);
+    common::ObNewRow result;
+    ret = directory.get(check_directory, Table::COUNTERS, cells[0], allocator, result);
+    META_PROBE_ASSERT(committed ? ret == OB_SUCCESS && result.cells_[1].get_uint64() == 123
+                               : ret == OB_ENTRY_NOT_EXIST);
+    if (committed) {
+      bool removed = false;
+      META_PROBE_CALL(kv.erase(check, shared_collection, key, removed));
+      META_PROBE_ASSERT(removed);
+      META_PROBE_CALL(directory.erase(check_directory, Table::COUNTERS, cells[0], removed));
+      META_PROBE_ASSERT(removed);
     }
+    META_PROBE_CALL(kv.commit(check));
+    META_PROBE_CALL(directory.commit(check_directory));
   }
-  fprintf(stderr, "INSTANCE_NATIVE_INNER_TABLE_PASS failed_begin_cleanup=1 scan_cleanup=1 cross_table_commit_rollback=1\n");
+  // A snapshot obtained before writes protects every bound table, including
+  // a table not accessed until after a concurrent transaction commits.
+  Tx grouped_seed, grouped_reader, grouped_writer;
+  cells[1].set_uint64(10);
+  META_PROBE_CALL(directory.begin(grouped_seed, deadline()));
+  META_PROBE_CALL(directory.insert(grouped_seed, Table::COUNTERS, row));
+  cells[1].set_int(10);
+  META_PROBE_CALL(directory.insert(grouped_seed, Table::SNAPSHOT_COORDINATION, row));
+  META_PROBE_CALL(directory.commit(grouped_seed));
+  META_PROBE_CALL(directory.begin(grouped_reader, deadline(), true));
+  META_PROBE_CALL(directory.begin(grouped_writer, deadline()));
+  cells[1].set_uint64(20);
+  META_PROBE_CALL(directory.put(grouped_writer, Table::COUNTERS, row));
+  cells[1].set_int(20);
+  META_PROBE_CALL(directory.put(grouped_writer, Table::SNAPSHOT_COORDINATION, row));
+  META_PROBE_CALL(directory.commit(grouped_writer));
+  common::ObNewRow result;
+  META_PROBE_CALL(directory.get(grouped_reader, Table::COUNTERS, cells[0], allocator, result));
+  META_PROBE_ASSERT(result.cells_[1].get_uint64() == 10);
+  META_PROBE_CALL(directory.get(grouped_reader, Table::SNAPSHOT_COORDINATION, cells[0], allocator, result));
+  META_PROBE_ASSERT(result.cells_[1].get_int() == 10);
+  META_PROBE_CALL(directory.commit(grouped_reader));
+  Tx cleanup;
+  META_PROBE_CALL(directory.begin(cleanup, deadline()));
+  for (auto table : {Table::COUNTERS, Table::SNAPSHOT_COORDINATION}) {
+    bool removed = false;
+    META_PROBE_CALL(directory.erase(cleanup, table, cells[0], removed));
+    META_PROBE_ASSERT(removed);
+  }
+  META_PROBE_CALL(directory.commit(cleanup));
+  fprintf(stderr, "INSTANCE_NATIVE_INNER_TABLE_PASS failed_begin_cleanup=1 scan_cleanup=1 cross_table_commit_rollback=1 shared_directory_snapshot=1\n");
   Tx visible_page_tx;
-  META_PROBE_CALL(kv.begin(visible_page_tx, deadline()));
-  rootserver::InstanceNamespaceMetadata visible_pages(kv, visible_page_tx);
+  META_PROBE_CALL(directory.begin(visible_page_tx, deadline()));
+  rootserver::InstanceNamespaceMetadata visible_pages(directory, visible_page_tx);
   uint64_t visible_page_id = 0;
   META_PROBE_CALL(visible_pages.save_page(std::string("page\0payload", 12), visible_page_id));
-  META_PROBE_CALL(kv.commit(visible_page_tx));
+  META_PROBE_CALL(directory.commit(visible_page_tx));
   fprintf(stderr, "INSTANCE_META_PROBE_PASS recovered=%d large_value=60000 cross_collection=1 snapshot=1 locked_current_read=1\n", recovered);
 #undef META_PROBE_ASSERT
 #undef META_PROBE_CALL

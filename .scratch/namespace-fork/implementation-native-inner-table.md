@@ -71,7 +71,9 @@ Storage 头文件归属完整检查在本次变更前已有清单缺项、归属
 - direct 的 checksum 故障夹具仍沿用缺少 `namespace_id` 的 SQLite INSERT OR IGNORE，原有 NOT NULL 约束导致实际插入零行。补全夹具归属并改用 INSERT、断言插入数；同一份归档数据库中复现旧夹具零行、新夹具两行。随后完整 direct 用例通过。
 - 备库 basic 的框架 `reboot` 在固定等待结束后就创建 admin 用户，一次遇到初始化尚未完成而登录失败。展开该测试的首次启动，并复用既有 Namespace 备库测试的 30 秒启动等待。尝试框架 SQL 就绪轮询时发现其固定使用尚未创建的 admin，故没有采用该轮询。这个测试仍使用有界固定等待；没有修改产品启动流程。
 
-## TODO：目录加锁读取与普通读快照不一致
+## 后续已修复：目录加锁读取与普通读快照不一致
+
+`2031b2ef0` 在实例元数据拆表任务中完成修复；确定性并发用例和历史页面读取均已通过，见 [本轮实施记录](implementation-native-instance-tables.md)。以下保留发现时的原始证据与原任务范围。
 
 本轮 direct 续跑出现一次 `CREATE TABLE phase10.blobs ...` 的目录发布 `OB_ENTRY_NOT_EXIST(-4018)`。沿目录发布路径做了确定性复现，并将 KV 两个实现文件换回基线 `194d1454097432539b8dade3d5ecbe89f82062bf` 编译对照，两者都失败：
 

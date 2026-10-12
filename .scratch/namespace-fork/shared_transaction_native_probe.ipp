@@ -4,9 +4,10 @@ static int run_shared_transaction_native_probe()
   auto &kv = *directory_kv_store();
   using Tx = InstanceMetaStore::Transaction;
   using Access = query::ObInnerSQLConnectionAccess;
-  const auto collection = static_cast<MetaCollection>(10004);
-  const ObString key = ObString::make_string("shared-transaction");
-  const ObString value = ObString::make_string("committed");
+  const auto table = storage::InstanceTable::COUNTERS;
+  ObObj key; key.set_uint64(900004);
+  ObObj cells[2]; cells[0] = key; cells[1].set_uint64(71);
+  ObNewRow value; value.assign(cells, 2);
   const uint64_t tablet = encoded(1, 4294900000ULL);
   const uint64_t catalog_namespace = 600000;
   auto deadline = [] { return ObTimeUtility::current_time() + 30000000; };
@@ -41,7 +42,7 @@ static int run_shared_transaction_native_probe()
     SHARED_CALL(Access::with_native_transaction(sql.get_connection(), [&](transaction::ObTxDesc &native) -> int {
       identity = &native;
       int rc = kv.attach(borrowed, native, deadline());
-      if (rc == OB_SUCCESS) { rc = kv.put(borrowed, collection, key, value); }
+      if (rc == OB_SUCCESS) { rc = kv.put(borrowed, table, value); }
       rootserver::InstanceNamespaceMetadata metadata(kv, borrowed);
       rootserver::InstanceNamespaceRecord record;
       record.id = catalog_namespace;
@@ -67,10 +68,10 @@ static int run_shared_transaction_native_probe()
     SHARED_CALL(Access::with_native_transaction(sql.get_connection(), [&](transaction::ObTxDesc &native) -> int {
       if (&native != identity) { return OB_ERR_UNEXPECTED; }
       ObArenaAllocator allocator(ObMemAttr("SharedTxProbe"));
-      ObString actual;
-      int rc = kv.get(borrowed, collection, key, allocator, actual);
-      if (rc == OB_SUCCESS && actual != value) { rc = OB_ERR_UNEXPECTED; }
-      if (rc == OB_SUCCESS) { rc = kv.put(borrowed, collection, key, value); }
+      ObNewRow actual;
+      int rc = kv.get(borrowed, table, key, allocator, actual);
+      if (rc == OB_SUCCESS && actual.cells_[1].get_uint64() != 71) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS) { rc = kv.put(borrowed, table, value); }
       return rc;
     }));
     SCN retained;
@@ -93,9 +94,9 @@ static int run_shared_transaction_native_probe()
     Tx reader;
     SHARED_CALL(kv.begin(reader, deadline()));
     ObArenaAllocator allocator(ObMemAttr("SharedTxProbe"));
-    ObString actual;
-    ret = kv.get(reader, collection, key, allocator, actual);
-    SHARED_CHECK(commit ? ret == OB_SUCCESS && actual == value : ret == OB_ENTRY_NOT_EXIST);
+    ObNewRow actual;
+    ret = kv.get(reader, table, key, allocator, actual);
+    SHARED_CHECK(commit ? ret == OB_SUCCESS && actual.cells_[1].get_uint64() == 71 : ret == OB_ENTRY_NOT_EXIST);
     rootserver::InstanceNamespaceMetadata metadata(kv, reader);
     rootserver::InstanceNamespaceRecord record;
     ret = metadata.get_namespace(catalog_namespace, record);
@@ -122,7 +123,7 @@ static int run_shared_transaction_native_probe()
   SHARED_CALL(Access::with_native_transaction(sql.get_connection(), [&](transaction::ObTxDesc &native) -> int {
     int rc = kv.attach(borrowed, native, deadline());
     bool erased = false;
-    if (rc == OB_SUCCESS) { rc = kv.erase(borrowed, collection, key, erased); }
+    if (rc == OB_SUCCESS) { rc = kv.erase(borrowed, table, key, erased); }
     rootserver::InstanceNamespaceMetadata metadata(kv, borrowed);
     if (rc == OB_SUCCESS) { rc = metadata.erase_namespace(catalog_namespace); }
     return rc == OB_SUCCESS && !erased ? OB_ERR_UNEXPECTED : rc;

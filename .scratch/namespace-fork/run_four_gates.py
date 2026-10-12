@@ -70,6 +70,7 @@ gates = [
         [local / 'physical_retention_cut_probe.py', '--binary', probe],
         [local / 'physical_gc_plan_probe.py', '--binary', probe],
         [local / 'run_instance_meta_native_probe.py', '--binary', probe],
+        [local / 'run_instance_meta_native_probe.py', '--binary', probe, '--locked-root-regression'],
         [local / 'cold_materialization_probe.py', '--binary', probe],
         [local / 'run_standby_suite.py', '--binary', probe, '--case', 'catalog_read_view',
          '--log-dir', args.log_dir / 'catalog-read-view-standby'],

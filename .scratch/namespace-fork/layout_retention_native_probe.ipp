@@ -72,7 +72,9 @@ static int run_layout_retention_native_probe()
   auto publish = [&](int64_t version) -> int {
     ObTableSchema logical(&allocator);
     ObStorageSchema layout;
-    int rc = InstanceMetaStore::build_schema(ObTabletID(900000102), logical);
+    int rc = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, logical);
+    logical.set_table_id(900000102);
+    logical.set_tablet_id(ObTabletID(900000102));
     logical.set_schema_version(version);
     if (rc == OB_SUCCESS) { rc = layout.init(allocator, logical, false); }
     Tx tx;

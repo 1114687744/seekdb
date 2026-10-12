@@ -13,7 +13,9 @@ static int run_storage_schema_history_native_probe()
   fprintf(stderr, "LAYOUT_HISTORY_FAIL line=%d ret=%d check=%s\n", __LINE__, ret, #expr); return OB_ERR_UNEXPECTED; } } while (0)
   auto definition = [&](int64_t version, int64_t default_size, ObStorageSchema &physical) -> int {
     ObTableSchema sql(&allocator);
-    int rc = InstanceMetaStore::build_schema(ObTabletID(900000002), sql);
+    int rc = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, sql);
+    sql.set_table_id(900000002);
+    sql.set_tablet_id(ObTabletID(900000002));
     sql.set_schema_version(version);
     ObColumnSchemaV2 column;
     column.set_table_id(sql.get_table_id());

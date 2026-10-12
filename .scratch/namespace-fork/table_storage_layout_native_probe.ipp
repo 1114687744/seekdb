@@ -15,7 +15,9 @@ static int run_table_storage_layout_native_probe()
   ObArenaAllocator allocator(ObMemAttr("LayoutBinding"));
   auto definition = [&](uint64_t id, int64_t version, ObCreateTabletSchema &out) {
     ObTableSchema sql;
-    int rc = InstanceMetaStore::build_schema(ObTabletID(id), sql);
+    int rc = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, sql);
+    sql.set_table_id(id);
+    sql.set_tablet_id(ObTabletID(id));
     sql.set_schema_version(version);
     if (rc == OB_SUCCESS) { rc = out.init(allocator, sql, false); }
     return rc;

@@ -9,7 +9,9 @@ static int run_local_storage_schema_native_probe()
   fprintf(stderr, "LOCAL_SCHEMA_FAIL line=%d check=%s\n", __LINE__, #expr); return OB_ERR_UNEXPECTED; } } while (0)
   auto definition = [&](int64_t version, ObStorageSchema &physical) -> int {
     ObTableSchema sql(&allocator);
-    int rc = InstanceMetaStore::build_schema(ObTabletID(900000002), sql);
+    int rc = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, sql);
+    sql.set_table_id(900000002);
+    sql.set_tablet_id(ObTabletID(900000002));
     sql.set_schema_version(version);
     sql.set_block_size(version == 10 ? 16384 : 32768);
     ObColumnSchemaV2 column;

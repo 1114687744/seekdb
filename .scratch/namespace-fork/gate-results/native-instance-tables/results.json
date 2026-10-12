@@ -1,0 +1,70 @@
+{
+  "code_commit": "2031b2ef0",
+  "status": "PASS",
+  "scope": "native-inner-table profile, executed in separate commands; not the full historical suite",
+  "build": {
+    "release_production": true,
+    "release_native_probe": true,
+    "production_hooks_removed": true
+  },
+  "gates": {
+    "native": true,
+    "bootstrap": true,
+    "sql": true,
+    "direct": true,
+    "tls": true
+  },
+  "native": {
+    "four_recovery_phases": true,
+    "sigkill_restarts": 3,
+    "cross_table_snapshot": true,
+    "cross_store_commit_rollback": true,
+    "sql_borrowed_transaction": true,
+    "directory_gc_deleted_page_history": true,
+    "locked_root_regression": true
+  },
+  "shared_transaction_faults": true,
+  "standby": [
+    {
+      "case": "basic",
+      "exit_code": 0,
+      "elapsed_s": 118.81
+    },
+    {
+      "case": "namespace_fork_local",
+      "exit_code": 0,
+      "elapsed_s": 116.54
+    },
+    {
+      "case": "catalog_read_view",
+      "exit_code": 0,
+      "elapsed_s": 112.15
+    }
+  ],
+  "baseline_locked_root": {
+    "page_ret": -4018,
+    "stage_ret": -4018
+  },
+  "fixed_locked_root": {
+    "page_ret": 0,
+    "stage_ret": 0,
+    "unlocked_row_snapshot_preserved": true,
+    "all_three_source_mappings_preserved": true
+  },
+  "known_limitations": [
+    "Full mysqltest and sysbench were not run, as requested.",
+    "Existing Share header-ownership checker failures remain; verified no new errors relative to ca04c7025.",
+    "SQL schema catalog integration and physical-layout history removal are later tasks."
+  ],
+  "failed_attempts": [
+    "Compile corrections recorded in implementation-native-instance-tables.md.",
+    "First new locked-root assertion incorrectly expected an old version after locking the same row. Changed the assertion to an independently updated, unlocked row; subsequent test passed."
+  ],
+  "artifacts": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-instance-tables",
+  "evidence": [
+    "passed-cases.json",
+    "native-assertions.txt",
+    "locked-root-baseline.json",
+    "share-header-delta.json"
+  ]
+}

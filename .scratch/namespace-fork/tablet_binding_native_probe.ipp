@@ -3,7 +3,9 @@ static int run_tablet_binding_native_probe()
 {
   ObArenaAllocator allocator("BindingProbe");
   ObTableSchema sql_definition(&allocator);
-  int descriptor_ret = InstanceMetaStore::build_schema(ObTabletID(900001), sql_definition);
+  int descriptor_ret = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, sql_definition);
+  sql_definition.set_table_id(900001);
+  sql_definition.set_tablet_id(ObTabletID(900001));
   ObCreateTabletSchema physical, copied, decoded;
   if (descriptor_ret == OB_SUCCESS) { descriptor_ret = physical.init(allocator, sql_definition, false); }
   physical.set_storage_layout_id(8123456);
@@ -89,7 +91,9 @@ static int run_tablet_binding_native_probe()
   }
   fprintf(stderr, "INSTANCE_PERSISTED_CREATION_DESCRIPTOR_PASS kv=1 sql_released=1 batch_owned=1 malformed=1\n");
   ObTableSchema schema(&allocator);
-  int ret = InstanceMetaStore::build_schema(ObTabletID(900001), schema);
+  int ret = InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, schema);
+  schema.set_table_id(900001);
+  schema.set_tablet_id(ObTabletID(900001));
   if (ret != OB_SUCCESS) { return ret; }
   schema.set_table_id(900001);
   schema.set_table_type(USER_TABLE);

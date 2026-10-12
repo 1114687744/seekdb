@@ -90,7 +90,9 @@ void run_layout_reference_gc_command()
       ObArenaAllocator memory(ObMemAttr("LayoutGcTest"));
       ObTableSchema logical(&memory);
       ObStorageSchema layout;
-      REF_GC_CALL(InstanceMetaStore::build_schema(ObTabletID(990000000), logical));
+      REF_GC_CALL(InstanceMetaStore::build_schema(storage::InstanceTable::STORAGE_LAYOUT_KV, logical));
+      logical.set_table_id(990000000);
+      logical.set_tablet_id(ObTabletID(990000000));
       logical.set_schema_version(10);
       REF_GC_CALL(layout.init(memory, logical, false));
       InstanceMetaStore::Transaction tx;
