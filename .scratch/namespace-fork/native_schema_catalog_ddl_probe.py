@@ -2,6 +2,7 @@
 """Exercise production native catalog writes with SQL readers and crash recovery."""
 import argparse
 import resource
+import pymysql
 from fork_parent_truncate_probe import BootstrapExperiment, connect
 
 
@@ -78,6 +79,113 @@ def verify_constraints(query, evidence):
                          'ORDER BY schema_version DESC LIMIT 1') == ((1,),)
 
 
+def exercise_foreign_keys(query):
+    query('CREATE DATABASE native_fk')
+    query('USE native_fk')
+    query('SET SESSION recyclebin=OFF')
+    query('SET SESSION foreign_key_checks=0')
+    query('CREATE TABLE child(id INT PRIMARY KEY,a INT,b INT,KEY ix(a,b),'
+          'CONSTRAINT fk_ab FOREIGN KEY(a,b) REFERENCES missing(a,b))')
+    fk_id, first_mock = query("SELECT foreign_key_id,parent_table_id FROM oceanbase.__all_foreign_key "
+                              "WHERE foreign_key_name='fk_ab'")[0]
+    old_columns = query('SELECT child_column_id,parent_column_id,position '
+                         f'FROM oceanbase.__all_foreign_key_column WHERE foreign_key_id={fk_id} ORDER BY position')
+    assert len(old_columns) == 2, old_columns
+    # A second child adds and then removes a distinct column of the same mock.
+    query('CREATE TABLE extra_child(id INT PRIMARY KEY,c INT,KEY ix(c),'
+          'CONSTRAINT fk_c FOREIGN KEY(c) REFERENCES missing(c))')
+    assert query('SELECT COUNT(*) FROM oceanbase.__all_mock_fk_parent_table_column '
+                 f'WHERE mock_fk_parent_table_id={first_mock}') == ((3,),)
+    query('DROP TABLE extra_child')
+    assert query('SELECT COUNT(*) FROM oceanbase.__all_mock_fk_parent_table_column '
+                 f'WHERE mock_fk_parent_table_id={first_mock}') == ((2,),)
+    # The added leading column forces real column IDs to differ from the mock.
+    query('CREATE TABLE missing(pad INT,a INT,b INT,PRIMARY KEY(a,b))')
+    resolved = query('SELECT child_column_id,parent_column_id,position '
+                     f'FROM oceanbase.__all_foreign_key_column WHERE foreign_key_id={fk_id} ORDER BY position')
+    assert resolved != old_columns, (resolved, old_columns)
+    query('INSERT INTO missing VALUES(99,11,12)')
+    query('SET SESSION foreign_key_checks=1')
+    query('INSERT INTO child VALUES(1,11,12)')
+    # Parent DROP first removes the FK row, then recreates it pointing at a mock.
+    query('SET SESSION foreign_key_checks=0')
+    query('DROP TABLE missing')
+    second_mock, is_mock = query('SELECT parent_table_id,is_parent_table_mock FROM oceanbase.__all_foreign_key '
+                                 f'WHERE foreign_key_id={fk_id}')[0]
+    assert is_mock == 1 and second_mock != first_mock, (second_mock, is_mock)
+    query('CREATE TABLE missing(a INT,b INT,PRIMARY KEY(a,b))')
+    query('INSERT INTO missing VALUES(11,12)')
+    query('SET SESSION foreign_key_checks=1')
+    query('INSERT INTO child VALUES(2,11,12)')
+    # Existing DDL validation leaves an enabled NOVALIDATE FK after 5785.
+    # Check its persistent state, then explicitly drop it; owner rollback is
+    # covered independently by the cold native transaction probe.
+    query('CREATE TABLE bad_child(id INT PRIMARY KEY,a INT,b INT,KEY ix(a,b))')
+    query('INSERT INTO bad_child VALUES(1,999,999)')
+    try:
+        query('ALTER TABLE bad_child ADD CONSTRAINT fk_rejected FOREIGN KEY(a,b) REFERENCES missing(a,b)')
+    except pymysql.MySQLError as error:
+        assert error.args[0] == 5785, error
+    else:
+        raise AssertionError('invalid existing row accepted by foreign key validation')
+    rejected = query("SELECT foreign_key_id,enable_flag,validate_flag FROM oceanbase.__all_foreign_key "
+                     "WHERE foreign_key_name='fk_rejected'")
+    assert len(rejected) == 1 and rejected[0][1:] == (1, 0), rejected
+    assert query('SELECT foreign_key_id,enable_flag,validate_flag FROM oceanbase.__all_foreign_key_history '
+                 f'WHERE foreign_key_id={rejected[0][0]} ORDER BY schema_version DESC LIMIT 1') == rejected
+    query('ALTER TABLE bad_child DROP FOREIGN KEY fk_rejected')
+    # Both explicit DROP FOREIGN KEY and whole-child DROP publish deletions.
+    dropped = [rejected[0][0]]
+    for name, drop_table in (('drop_fk_child', False), ('drop_table_child', True)):
+        query(f'CREATE TABLE {name}(id INT PRIMARY KEY,a INT,b INT,KEY ix(a,b),'
+              f'CONSTRAINT {name}_fk FOREIGN KEY(a,b) REFERENCES missing(a,b))')
+        fid = query('SELECT foreign_key_id FROM oceanbase.__all_foreign_key '
+                     f"WHERE foreign_key_name='{name}_fk'")[0][0]
+        dropped.append(fid)
+        query(f'DROP TABLE {name}' if drop_table else f'ALTER TABLE {name} DROP FOREIGN KEY {name}_fk')
+    return fk_id, (first_mock, second_mock), dropped
+
+
+def verify_foreign_keys(query, evidence):
+    fk_id, mocks, dropped = evidence
+    assert query('SELECT id,a,b FROM native_fk.child ORDER BY id') == ((1, 11, 12), (2, 11, 12))
+    fields = ('foreign_key_id,foreign_key_name,child_table_id,parent_table_id,update_action,delete_action,'
+              'enable_flag,validate_flag,rely_flag,ref_cst_type,ref_cst_id,is_parent_table_mock,name_generated_type')
+    current = query(f'SELECT {fields} FROM oceanbase.__all_foreign_key WHERE foreign_key_id={fk_id}')
+    history = query(f'SELECT {fields} FROM oceanbase.__all_foreign_key_history WHERE foreign_key_id={fk_id} '
+                     'ORDER BY schema_version DESC LIMIT 1')
+    assert current == history and len(current) == 1 and current[0][-2] == 0, (current, history)
+    parent_id = current[0][3]
+    columns = query('SELECT child_column_id,parent_column_id,position FROM oceanbase.__all_foreign_key_column '
+                     f'WHERE foreign_key_id={fk_id} ORDER BY position')
+    parent_columns = dict(query('SELECT column_name,column_id FROM oceanbase.__all_column '
+                                f"WHERE table_id={parent_id} AND column_name IN ('a','b')"))
+    assert [r[1] for r in columns] == [parent_columns['a'], parent_columns['b']], (columns, parent_columns)
+    for fid in (fk_id, *dropped):
+        latest = query('SELECT h.child_column_id,h.parent_column_id,h.is_deleted FROM oceanbase.__all_foreign_key_column_history h '
+                        f'WHERE h.foreign_key_id={fid} AND h.schema_version=(SELECT MAX(v.schema_version) '
+                        'FROM oceanbase.__all_foreign_key_column_history v WHERE v.foreign_key_id=h.foreign_key_id '
+                        'AND v.child_column_id=h.child_column_id AND v.parent_column_id=h.parent_column_id)')
+        active = query('SELECT child_column_id,parent_column_id FROM oceanbase.__all_foreign_key_column '
+                        f'WHERE foreign_key_id={fid}')
+        assert {r[:2] for r in latest if r[2] == 0} == set(active), (latest, active)
+        if fid in dropped:
+            assert not active and latest and all(r[2] == 1 for r in latest), (active, latest)
+            assert query(f'SELECT COUNT(*) FROM oceanbase.__all_foreign_key WHERE foreign_key_id={fid}') == ((0,),)
+            assert query('SELECT is_deleted FROM oceanbase.__all_foreign_key_history '
+                         f'WHERE foreign_key_id={fid} ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+    for mid in mocks:
+        for inner in ('__all_mock_fk_parent_table', '__all_mock_fk_parent_table_column'):
+            assert query(f'SELECT COUNT(*) FROM oceanbase.{inner} WHERE mock_fk_parent_table_id={mid}') == ((0,),)
+        assert query('SELECT is_deleted FROM oceanbase.__all_mock_fk_parent_table_history '
+                     f'WHERE mock_fk_parent_table_id={mid} ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+        latest = query('SELECT h.is_deleted FROM oceanbase.__all_mock_fk_parent_table_column_history h '
+                        f'WHERE h.mock_fk_parent_table_id={mid} AND h.schema_version=(SELECT MAX(v.schema_version) '
+                        'FROM oceanbase.__all_mock_fk_parent_table_column_history v '
+                        'WHERE v.mock_fk_parent_table_id=h.mock_fk_parent_table_id AND v.parent_column_id=h.parent_column_id)')
+        assert latest and all(row == (1,) for row in latest), latest
+
+
 def run(binary):
     experiment = BootstrapExperiment(binary, 'native_catalog_ddl', prototype=6)
     child = None
@@ -142,9 +250,11 @@ def run(binary):
         experiment.sql('PURGE RECYCLEBIN', child)
         experiment.sql('TRUNCATE TABLE native_ddl.p', child)
         experiment.sql('DROP TABLE native_ddl.p', child)
+        fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
 
         def verify():
+            verify_foreign_keys(lambda statement: experiment.sql(statement, child), fk_evidence)
             verify_constraints(lambda statement: experiment.sql(statement, child), constraint_evidence)
             assert experiment.sql('SELECT id,v,u,n,e,c,LENGTH(body) FROM native_ddl.t') == (
                 (1, '初始', 18446744073709551615, None, '', 'b', 90000),)

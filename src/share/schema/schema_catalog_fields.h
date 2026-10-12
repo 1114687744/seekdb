@@ -11,7 +11,7 @@
 namespace oceanbase {
 namespace share {
 namespace schema {
-// The single field mapping for persisted table, column and constraint definitions. A sink
+// The single field mapping for persisted table definitions and their relationships. A sink
 // may encode SQL or build native typed cells; it must own variable-length values.
 class SchemaCatalogFields final
 {
@@ -21,6 +21,15 @@ public:
                    RowWriter &, bool is_history);
   template<class RowWriter>
   static int column(const ObColumnSchemaV2 &, RowWriter &, bool is_history);
+  template<class RowWriter>
+  static int foreign_key(const ObForeignKeyInfo &, RowWriter &);
+  template<class RowWriter>
+  static int foreign_key_column(uint64_t foreign_key_id, uint64_t child_column_id,
+                                uint64_t parent_column_id, int64_t position, RowWriter &);
+  template<class RowWriter>
+  static int mock_parent(const ObMockFKParentTableSchema &, RowWriter &);
+  template<class RowWriter>
+  static int mock_parent_column(const ObMockFKParentTableSchema &, int64_t index, RowWriter &);
   template<class RowWriter>
   static int constraint(const ObConstraint &, RowWriter &);
   template<class RowWriter>
@@ -251,6 +260,82 @@ int SchemaCatalogFields::column(
       SHARE_SCHEMA_LOG(WARN, "dml add column failed", K(ret));
     }
   }
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::foreign_key(const ObForeignKeyInfo &foreign_key_info,
+                                           RowWriter &dml)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(dml.add_pk_column("foreign_key_id", ObSchemaUtils::get_extract_schema_id(
+                                                     foreign_key_info.foreign_key_id_)))
+      || OB_FAIL(dml.add_column("foreign_key_name", ObHexEscapeSqlStr(foreign_key_info.foreign_key_name_)))
+      || OB_FAIL(dml.add_column("child_table_id",  ObSchemaUtils::get_extract_schema_id(
+                                                   foreign_key_info.child_table_id_)))
+      || OB_FAIL(dml.add_column("parent_table_id", ObSchemaUtils::get_extract_schema_id(
+                                                   foreign_key_info.parent_table_id_)))
+      || OB_FAIL(dml.add_column("update_action", foreign_key_info.update_action_))
+      || OB_FAIL(dml.add_column("delete_action", foreign_key_info.delete_action_))
+      || OB_FAIL(dml.add_column("enable_flag", foreign_key_info.enable_flag_))
+      || OB_FAIL(dml.add_column("validate_flag", foreign_key_info.validate_flag_))
+      || OB_FAIL(dml.add_column("rely_flag", foreign_key_info.rely_flag_))
+      || OB_FAIL(dml.add_column("ref_cst_type", foreign_key_info.fk_ref_type_))
+      || OB_FAIL(dml.add_column("ref_cst_id", foreign_key_info.ref_cst_id_))
+      || OB_FAIL(dml.add_column("is_parent_table_mock", foreign_key_info.is_parent_table_mock_))
+      || (OB_FAIL(dml.add_column("name_generated_type", foreign_key_info.name_generated_type_)))
+      || OB_FAIL(dml.add_gmt_create())
+      || OB_FAIL(dml.add_gmt_modified())
+      ) {
+    LOG_WARN("failed to add column", K(ret));
+  }
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::foreign_key_column(
+    uint64_t foreign_key_id,
+    uint64_t child_column_id,
+    uint64_t parent_column_id,
+    int64_t position,
+    RowWriter &dml)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(dml.add_pk_column("foreign_key_id", ObSchemaUtils::get_extract_schema_id(
+                                                     foreign_key_id)))
+      || OB_FAIL(dml.add_pk_column("child_column_id", child_column_id))
+      || OB_FAIL(dml.add_pk_column("parent_column_id", parent_column_id))
+      || OB_FAIL(dml.add_column("position", position))
+      || OB_FAIL(dml.add_gmt_create())
+      || OB_FAIL(dml.add_gmt_modified())
+      ) {
+    LOG_WARN("failed to add column", K(ret));
+  }
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::mock_parent(const ObMockFKParentTableSchema &table, RowWriter &fields)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(fields.add_pk_column("mock_fk_parent_table_id", table.get_mock_fk_parent_table_id()))
+      || OB_FAIL(fields.add_column("database_id", table.get_database_id()))
+      || OB_FAIL(fields.add_column("mock_fk_parent_table_name", table.get_mock_fk_parent_table_name()))
+      || OB_FAIL(fields.add_column("schema_version", table.get_schema_version()))
+      || OB_FAIL(fields.add_gmt_modified())) {}
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::mock_parent_column(const ObMockFKParentTableSchema &table, int64_t index, RowWriter &fields)
+{
+  int ret = OB_SUCCESS;
+  const auto &column = table.get_column_array().at(index);
+  if (OB_FAIL(fields.add_pk_column("mock_fk_parent_table_id", table.get_mock_fk_parent_table_id()))
+      || OB_FAIL(fields.add_pk_column("parent_column_id", column.first))
+      || OB_FAIL(fields.add_column("parent_column_name", column.second))
+      || OB_FAIL(fields.add_column("schema_version", table.get_schema_version()))
+      || OB_FAIL(fields.add_gmt_modified())) {}
   return ret;
 }
 

@@ -1099,8 +1099,6 @@ int ObTableSqlService::add_columns_for_core(ObISQLClient &sql_client, const ObTa
 {
   int ret = OB_SUCCESS;
 
-  
-
   ObDMLSqlSplicer dml;
   ObCoreTableProxy kv(OB_ALL_COLUMN_HISTORY_TNAME, sql_client);
   ObArray<ObCoreTableProxy::UpdateCell> cells;
@@ -1268,8 +1266,6 @@ int ObTableSqlService::add_constraints(ObISQLClient &sql_client,
   }
   return ret;
 }
-
-
 
 int ObTableSqlService::batch_add_constraints_for_create_table(
     common::ObISQLClient &sql_client, const ObIArray<ObTableSchema> &tables)
@@ -1805,8 +1801,6 @@ int ObTableSqlService::delete_single_column(
 {
   int ret = OB_SUCCESS;
 
-  
-  
   const uint64_t table_id = new_table_schema.get_table_id();
   const uint64_t column_id = orig_column_schema.get_column_id();
 
@@ -2899,12 +2893,6 @@ int ObTableSqlService::gen_column_dml(
   return ret;
 }
 
-
-
-
-
-
-
 int ObTableSqlService::log_core_operation(
     common::ObISQLClient &sql_client,
     const int64_t schema_version)
@@ -3179,168 +3167,29 @@ int ObTableSqlService::insert_ori_schema_version(
   return ret;
 }
 
-int ObTableSqlService::gen_foreign_key_dml(const ObForeignKeyInfo &foreign_key_info,
-                                           ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  dml.reset();
-  if (OB_FAIL(dml.add_pk_column("foreign_key_id", ObSchemaUtils::get_extract_schema_id(
-                                                     foreign_key_info.foreign_key_id_)))
-      || OB_FAIL(dml.add_column("foreign_key_name", ObHexEscapeSqlStr(foreign_key_info.foreign_key_name_)))
-      || OB_FAIL(dml.add_column("child_table_id",  ObSchemaUtils::get_extract_schema_id(
-                                                   foreign_key_info.child_table_id_)))
-      || OB_FAIL(dml.add_column("parent_table_id", ObSchemaUtils::get_extract_schema_id(
-                                                   foreign_key_info.parent_table_id_)))
-      || OB_FAIL(dml.add_column("update_action", foreign_key_info.update_action_))
-      || OB_FAIL(dml.add_column("delete_action", foreign_key_info.delete_action_))
-      || OB_FAIL(dml.add_column("enable_flag", foreign_key_info.enable_flag_))
-      || OB_FAIL(dml.add_column("validate_flag", foreign_key_info.validate_flag_))
-      || OB_FAIL(dml.add_column("rely_flag", foreign_key_info.rely_flag_))
-      || OB_FAIL(dml.add_column("ref_cst_type", foreign_key_info.fk_ref_type_))
-      || OB_FAIL(dml.add_column("ref_cst_id", foreign_key_info.ref_cst_id_))
-      || OB_FAIL(dml.add_column("is_parent_table_mock", foreign_key_info.is_parent_table_mock_))
-      || (OB_FAIL(dml.add_column("name_generated_type", foreign_key_info.name_generated_type_)))
-      || OB_FAIL(dml.add_gmt_create())
-      || OB_FAIL(dml.add_gmt_modified())
-      ) {
-    LOG_WARN("failed to add column", K(ret));
-  }
-  return ret;
-}
-
-int ObTableSqlService::gen_foreign_key_column_dml(
-    uint64_t foreign_key_id,
-    uint64_t child_column_id,
-    uint64_t parent_column_id,
-    int64_t position,
-    ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  dml.reset();
-  if (OB_FAIL(dml.add_pk_column("foreign_key_id", ObSchemaUtils::get_extract_schema_id(
-                                                     foreign_key_id)))
-      || OB_FAIL(dml.add_pk_column("child_column_id", child_column_id))
-      || OB_FAIL(dml.add_pk_column("parent_column_id", parent_column_id))
-      || OB_FAIL(dml.add_column("position", position))
-      || OB_FAIL(dml.add_gmt_create())
-      || OB_FAIL(dml.add_gmt_modified())
-      ) {
-    LOG_WARN("failed to add column", K(ret));
-  }
-  return ret;
-}
-
-int ObTableSqlService::delete_from_all_foreign_key(ObISQLClient &sql_client,
-    const int64_t new_schema_version,
-    const ObForeignKeyInfo &foreign_key_info)
-{
-  int ret = OB_SUCCESS;
-  ObSqlString sql;
-  const int64_t is_deleted = 1;
-  int64_t affected_rows = 0;
-  
-  // insert into __all_foreign_key_history
-  if (OB_FAIL(sql.assign_fmt(
-      "INSERT INTO %s(foreign_key_id,schema_version,is_deleted,child_table_id,parent_table_id)"
-      " VALUES(%lu,%ld,%ld,%lu,%lu)",
-      OB_ALL_FOREIGN_KEY_HISTORY_TNAME,
-      ObSchemaUtils::get_extract_schema_id(foreign_key_info.foreign_key_id_),
-      new_schema_version, is_deleted,
-      ObSchemaUtils::get_extract_schema_id(foreign_key_info.child_table_id_),
-      ObSchemaUtils::get_extract_schema_id(foreign_key_info.parent_table_id_)))) {
-  } else if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-  } else if (1 != affected_rows) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("no row has inserted", K(ret));
-  }
-  // delete from __all_foreign_key
-  if (OB_SUCC(ret)) {
-    if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE foreign_key_id = %lu",
-                              OB_ALL_FOREIGN_KEY_TNAME,
-                              ObSchemaUtils::get_extract_schema_id(foreign_key_info.foreign_key_id_)))) {
-    } else if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-    } else {
-      // Checking affected rows here is unnecessary because
-      // record maybe be deleted before in the same trans.
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::delete_from_all_foreign_key_column(ObISQLClient &sql_client,
-    const uint64_t foreign_key_id,
-    const uint64_t child_column_id,
-    const uint64_t parent_column_id,
-    const uint64_t fk_column_pos,
-    const int64_t new_schema_version)
-{
-  int ret = OB_SUCCESS;
-  ObSqlString sql;
-  const int64_t is_deleted = 1;
-  int64_t affected_rows = 0;
-  
-  // insert into __all_foreign_key_column_history
-  if (OB_FAIL(sql.assign_fmt(
-      "INSERT INTO %s(foreign_key_id,child_column_id,parent_column_id,schema_version,is_deleted,position)"
-      " VALUES(%lu,%lu,%lu,%ld,%ld,%lu)",
-      OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TNAME,
-      ObSchemaUtils::get_extract_schema_id(foreign_key_id),
-      child_column_id, parent_column_id, new_schema_version, is_deleted, fk_column_pos))) {
-  } else if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-  } else if (1 != affected_rows) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("no row has inserted", K(ret));
-  }
-  if (OB_SUCC(ret)) {
-    // delete from __all_foreign_key_column
-    if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE foreign_key_id = %lu AND child_column_id = %lu AND parent_column_id = %lu",
-                              OB_ALL_FOREIGN_KEY_COLUMN_TNAME,
-                              ObSchemaUtils::get_extract_schema_id(foreign_key_id),
-                              child_column_id, parent_column_id))) {
-    } else if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-    } else {
-      // Checking affected rows here is unnecessary because
-      // record maybe be deleted before in the same trans.
-    }
-  }
-  return ret;
-}
-
 // drop fk child table or drop fk child table into recyclebin will come here
 int ObTableSqlService::delete_foreign_key(
     common::ObISQLClient &sql_client, const ObTableSchema &table_schema,
     const int64_t new_schema_version, const bool is_truncate_table)
 {
-  int ret = OB_SUCCESS;
-  const ObIArray<ObForeignKeyInfo> &foreign_key_infos = table_schema.get_foreign_key_infos();
-  
-  if (OB_FAIL(check_ddl_allowed(table_schema, &sql_client))) {
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < foreign_key_infos.count(); i++) {
-    const ObForeignKeyInfo &foreign_key_info = foreign_key_infos.at(i);
-    /*When the parent table or child table is deleted,
-     *the foreign key relationship should be deleted.
-     *If the parent table is deleted under foreign_key_checks=off,
-     *the foreign key relationship will be mocked by the child table
-     */
-    uint64_t foreign_key_id = foreign_key_info.foreign_key_id_;
-    if (OB_FAIL(delete_from_all_foreign_key(sql_client, new_schema_version, foreign_key_info))) {
-    } else if (OB_UNLIKELY(foreign_key_info.child_column_ids_.count() != foreign_key_info.parent_column_ids_.count())) {
-      ret = OB_INVALID_ARGUMENT;
-      LOG_WARN("child column num and parent column num should be equal", K(ret),
-                K(foreign_key_info.child_column_ids_.count()),
-                K(foreign_key_info.parent_column_ids_.count()));
-    } else if (table_schema.get_table_id() == foreign_key_info.child_table_id_) {
-      //The column table needs to be updated only when the child table is deleted
-      for (int64_t j = 0; OB_SUCC(ret) && j < foreign_key_info.child_column_ids_.count(); j++) {
-        // delete from __all_foreign_key_column_history
-        uint64_t child_column_id = foreign_key_info.child_column_ids_.at(j);
-        uint64_t parent_column_id = foreign_key_info.parent_column_ids_.at(j);
-        if (OB_FAIL(delete_from_all_foreign_key_column(
-            sql_client, foreign_key_id, child_column_id, parent_column_id, j + 1 /* fk_column_pos */, new_schema_version))) {
+  int ret = check_ddl_allowed(table_schema, &sql_client);
+  const auto &infos = table_schema.get_foreign_key_infos();
+  if (OB_SUCC(ret) && !infos.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
+        const auto &info = infos.at(i);
+        if (info.child_column_ids_.count() != info.parent_column_ids_.count()) { ret = OB_INVALID_ARGUMENT; }
+        else { ret = catalog.erase_foreign_key(info, new_schema_version, false); }
+        // A deleted parent is replaced by a mock parent; its column mapping
+        // remains until the child itself is removed or the parent reappears.
+        if (OB_SUCC(ret) && table_schema.get_table_id() == info.child_table_id_) {
+          ret = catalog.erase_foreign_key_columns(info, new_schema_version);
         }
       }
-    }
+      return ret;
+    });
   }
   return ret;
 }
@@ -3366,62 +3215,27 @@ int ObTableSqlService::update_check_constraint_state(
   return ret;
 }
 
-// foreign_key_columns will not be updated unless replacing the mock fk parent table with a real fk parent table
-int ObTableSqlService::update_foreign_key_columns(
-    common::ObISQLClient &sql_client,
-    const ObForeignKeyInfo &ori_foreign_key_info, const ObForeignKeyInfo &new_foreign_key_info,
-    const int64_t new_schema_version_1, const int64_t new_schema_version_2)
-{
-  int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  ObDMLExecHelper exec(sql_client);
-  if (OB_SUCC(ret)) {
-    if (OB_FAIL(drop_foreign_key_columns(sql_client, ori_foreign_key_info, new_schema_version_1))) {
-    } else if (OB_FAIL(add_foreign_key_columns(sql_client, new_foreign_key_info, new_schema_version_2, false))) {
-    }
-  }
-  return ret;
-}
 
 int ObTableSqlService::update_foreign_key_state(common::ObISQLClient &sql_client, const ObTableSchema &table)
 {
-  int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(sql_client);
-  const ObIArray<ObForeignKeyInfo> &foreign_key_infos = table.get_foreign_key_infos();
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < foreign_key_infos.count(); ++i) {
-    const ObForeignKeyInfo &foreign_key_info = foreign_key_infos.at(i);
-    if (!foreign_key_info.is_modify_fk_state_) {
-      // skip
-    } else {
-      dml.reset();
-      int64_t affected_rows = 0;
-      //UPDATE is not used to update __all_foreign_key because the parent table may have deleted the record in advance
-      if (OB_FAIL(gen_foreign_key_dml(foreign_key_info, dml))) {
-      } else if (OB_FAIL(exec.exec_insert_update(OB_ALL_FOREIGN_KEY_TNAME, dml, affected_rows))) {
-      } else if (affected_rows > 2) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected error", K(affected_rows), K(ret));
-      } else if (OB_FAIL(dml.add_column("schema_version", table.get_schema_version()))) {
-      } else if (OB_FAIL(dml.add_column("is_deleted", false))) {
-      } else if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_HISTORY_TNAME, dml, affected_rows))) {
-      } else if (!is_single_row(affected_rows)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-      }
-      if (OB_SUCC(ret)) {
-        if (OB_FAIL(update_data_table_schema_version(sql_client,
-                    foreign_key_info.parent_table_id_, table.get_in_offline_ddl_white_list()))) {
+  int ret = check_ddl_allowed(table);
+  const auto &infos = table.get_foreign_key_infos();
+  if (OB_SUCC(ret) && !infos.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
+        const auto &info = infos.at(i);
+        if (!info.is_modify_fk_state_) { continue; }
+        ret = catalog.write_foreign_key(info, table.get_schema_version(),
+            observer::NativeSchemaCatalog::ForeignKeyWrite::UPSERT);
+        if (OB_SUCC(ret)) {
+          ret = update_data_table_schema_version(sql_client, info.parent_table_id_, table.get_in_offline_ddl_white_list());
         }
       }
-    }
+      return ret;
+    });
   }
-
   return ret;
 }
 
@@ -3430,106 +3244,34 @@ int ObTableSqlService::add_foreign_key(
     const ObTableSchema &table,
     const bool only_history)
 {
-  int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(sql_client);
-  int64_t affected_rows = 0;
-  const ObIArray<ObForeignKeyInfo> &foreign_key_infos = table.get_foreign_key_infos();
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (is_inner_table(table.get_table_id())) {
-    // To avoid cyclic dependence
-    ret = OB_OP_NOT_ALLOW;
-    LOG_WARN("should not be here", K(ret), K(table));
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < foreign_key_infos.count(); i++) {
-    const ObForeignKeyInfo &foreign_key_info = foreign_key_infos.at(i);
-    const int64_t is_deleted = only_history ? 1 : 0;
-    if (foreign_key_info.is_modify_fk_state_) {
-      continue;
-    } else if (!foreign_key_info.is_parent_table_mock_) {
-      // If parent table is mock, it may not exist. And we will deal with mock fk parent table after add_foreign_key.
-      if (OB_FAIL(update_data_table_schema_version(sql_client,
-          table.get_table_id() == foreign_key_info.child_table_id_ ? foreign_key_info.parent_table_id_ : foreign_key_info.child_table_id_, table.get_in_offline_ddl_white_list()))) {
-      }
-    }
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(gen_foreign_key_dml(foreign_key_info, dml))) {
-    } else {
-      if (!only_history) {
-        if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_TNAME, dml, affected_rows))) {
-        } else if (!is_single_row(affected_rows)) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-        }
-      }
-      if (OB_SUCC(ret)) {
-        if (OB_FAIL(dml.add_column("schema_version", table.get_schema_version()))) {
-        } else if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-        } else if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_HISTORY_TNAME, dml, affected_rows))) {
-        } else if (!is_single_row(affected_rows)) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-        }
-      }
-      if (OB_SUCC(ret)) {
-        if (OB_FAIL(add_foreign_key_columns(sql_client, foreign_key_info, table.get_schema_version(), only_history))) {
-        }
-      }
-    }
-  }
-
-  return ret;
-}
-
-int ObTableSqlService::add_foreign_key_columns(
-    common::ObISQLClient &sql_client,
-    const ObForeignKeyInfo &foreign_key_info,
-    const int64_t new_schema_version,
-    const bool only_history)
-{
-  int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  ObDMLExecHelper exec(sql_client);
-  int64_t affected_rows = 0;
-  const int64_t is_deleted = only_history ? 1 : 0;
-  if (OB_UNLIKELY(foreign_key_info.child_column_ids_.count() != foreign_key_info.parent_column_ids_.count())) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("child column num and parent column num should be equal", K(ret),
-             K(foreign_key_info.child_column_ids_.count()),
-             K(foreign_key_info.parent_column_ids_.count()));
-  } else {
-    uint64_t foreign_key_id = foreign_key_info.foreign_key_id_;
-    for (int64_t j = 0; OB_SUCC(ret) && j < foreign_key_info.child_column_ids_.count(); j++) {
-      uint64_t child_column_id = foreign_key_info.child_column_ids_.at(j);
-      uint64_t parent_column_id = foreign_key_info.parent_column_ids_.at(j);
-      if (OB_FAIL(gen_foreign_key_column_dml(foreign_key_id,
-                                             child_column_id, parent_column_id, j + 1, dml))) {
-      } else {
-        if (!only_history) {
-          if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_COLUMN_TNAME, dml, affected_rows))) {
-          } else if (!is_single_row(affected_rows)) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-          }
+  int ret = check_ddl_allowed(table);
+  const auto &infos = table.get_foreign_key_infos();
+  if (OB_SUCC(ret) && is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
+  if (OB_SUCC(ret) && !infos.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
+        const auto &info = infos.at(i);
+        if (info.is_modify_fk_state_) { continue; }
+        if (!info.is_parent_table_mock_) {
+          ret = update_data_table_schema_version(sql_client,
+              table.get_table_id() == info.child_table_id_ ? info.parent_table_id_ : info.child_table_id_,
+              table.get_in_offline_ddl_white_list());
         }
         if (OB_SUCC(ret)) {
-          if (OB_FAIL(dml.add_column("schema_version", new_schema_version))) {
-          } else if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-          } else if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TNAME, dml, affected_rows))) {
-          } else if (!is_single_row(affected_rows)) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-          }
+          ret = catalog.write_foreign_key(info, table.get_schema_version(), only_history
+              ? observer::NativeSchemaCatalog::ForeignKeyWrite::HISTORY_DELETE
+              : observer::NativeSchemaCatalog::ForeignKeyWrite::INSERT);
         }
+        if (OB_SUCC(ret)) { ret = catalog.insert_foreign_key_columns(info, table.get_schema_version(), only_history); }
       }
-    }
+      return ret;
+    });
   }
-
   return ret;
 }
+
 
 // description: alter table drop foreign key
 // @param [in] sql_client : Normally, sql_client here is ObDDLSQLTransaction which is inherited from ObISQLClient.
@@ -3544,55 +3286,24 @@ int ObTableSqlService::drop_foreign_key(
     const ObForeignKeyInfo *foreign_key_info,
     const bool parent_table_in_offline_ddl_white_list)
 {
-  int ret = OB_SUCCESS;
-  
-  
-  if (OB_FAIL(check_ddl_allowed(table_schema))) {
-  }
-  if (OB_SUCC(ret) && OB_NOT_NULL(foreign_key_info)) {
-    ObDMLSqlSplicer dml;
-    ObDMLExecHelper exec(sql_client);
-    
-    int64_t affected_rows = 0;
-    if (OB_FAIL(gen_foreign_key_dml(*foreign_key_info, dml))) {
-    } else if (OB_FAIL(exec.exec_delete(OB_ALL_FOREIGN_KEY_TNAME, dml, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-    } else if (OB_FAIL(dml.add_column("schema_version", new_schema_version))) {
-    } else if (OB_FAIL(dml.add_column("is_deleted", 1))) {
-    } else if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_HISTORY_TNAME, dml, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-    } else if (OB_FAIL(drop_foreign_key_columns(sql_client, *foreign_key_info, new_schema_version))) {
+  int ret = check_ddl_allowed(table_schema);
+  if (OB_SUCC(ret) && foreign_key_info != nullptr) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = catalog.erase_foreign_key(*foreign_key_info, new_schema_version, true);
+      if (OB_SUCC(ret)) { ret = catalog.erase_foreign_key_columns(*foreign_key_info, new_schema_version); }
+      return ret;
+    });
+    if (OB_SUCC(ret)) {
+      ret = update_data_table_schema_version(sql_client, foreign_key_info->child_table_id_, table_schema.get_in_offline_ddl_white_list());
     }
     if (OB_SUCC(ret)) {
-      if (OB_FAIL(update_data_table_schema_version(sql_client, foreign_key_info->child_table_id_, table_schema.get_in_offline_ddl_white_list()))) {
-      } else if (OB_FAIL(update_data_table_schema_version(sql_client, foreign_key_info->parent_table_id_, parent_table_in_offline_ddl_white_list))) {
-      }
+      ret = update_data_table_schema_version(sql_client, foreign_key_info->parent_table_id_, parent_table_in_offline_ddl_white_list);
     }
   }
   return ret;
 }
 
-int ObTableSqlService::drop_foreign_key_columns(
-    common::ObISQLClient &sql_client,
-    const ObForeignKeyInfo &foreign_key_info,
-    const int64_t new_schema_version)
-{
-  int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  
-  ObDMLExecHelper exec(sql_client);
-  for (int64_t j = 0; OB_SUCC(ret) && j < foreign_key_info.child_column_ids_.count(); j++) {
-    if (OB_FAIL(delete_from_all_foreign_key_column(sql_client, foreign_key_info.foreign_key_id_,
-        foreign_key_info.child_column_ids_.at(j), foreign_key_info.parent_column_ids_.at(j), j + 1 /* fk_column_pos */, new_schema_version))) {
-    }
-  }
-  return ret;
-}
 
 int ObTableSqlService::check_table_options(const ObTableSchema &table)
 {
@@ -3778,8 +3489,13 @@ int ObTableSqlService::add_mock_fk_parent_table(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("sql_client is NULL", K(ret));
   } else {
-    if (OB_FAIL(insert_mock_fk_parent_table(*sql_client, mock_fk_parent_table_schema, false))) {
-    } else if (OB_FAIL(insert_mock_fk_parent_table_column(*sql_client, mock_fk_parent_table_schema, false))) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = catalog.insert_mock_parent(mock_fk_parent_table_schema, false);
+      if (OB_SUCC(ret)) { ret = catalog.insert_mock_parent_columns(mock_fk_parent_table_schema); }
+      return ret;
+    });
+    if (OB_FAIL(ret)) {
     } else if (need_update_foreign_key
                && OB_FAIL(update_foreign_key_in_mock_fk_parent_table(sql_client, mock_fk_parent_table_schema, NULL, false))) {
       // need to update fk info (such as parent table id) when drop fk parent table
@@ -3814,11 +3530,11 @@ int ObTableSqlService::alter_mock_fk_parent_table(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("sql_client is NULL", K(ret));
   } else if (MOCK_FK_PARENT_TABLE_OP_ADD_COLUMN == mock_fk_parent_table_schema.get_operation_type()) {
-    if (OB_FAIL(insert_mock_fk_parent_table_column(*sql_client, mock_fk_parent_table_schema, false))) {
-    }
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_mock_parent_columns(mock_fk_parent_table_schema); });
   } else if (MOCK_FK_PARENT_TABLE_OP_DROP_COLUMN == mock_fk_parent_table_schema.get_operation_type()) {
-    if (OB_FAIL(delete_mock_fk_parent_table_column(*sql_client, mock_fk_parent_table_schema, false))) {
-    }
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.erase_mock_parent_columns(mock_fk_parent_table_schema); });
   }
   if (OB_SUCC(ret)) {
     if (OB_FAIL(update_mock_fk_parent_table_schema_version(sql_client, mock_fk_parent_table_schema))) {
@@ -3836,9 +3552,13 @@ int ObTableSqlService::drop_mock_fk_parent_table(
     const ObMockFKParentTableSchema &mock_fk_parent_table_schema)
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(delete_mock_fk_parent_table_column(*sql_client, mock_fk_parent_table_schema, false))) {
-  } else if (OB_FAIL(delete_mock_fk_parent_table(*sql_client, mock_fk_parent_table_schema, false))) {
-  }
+  if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
+  ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    int ret = catalog.erase_mock_parent_columns(mock_fk_parent_table_schema);
+    if (OB_SUCC(ret)) { ret = catalog.erase_mock_parent(mock_fk_parent_table_schema); }
+    return ret;
+  });
   if (OB_SUCC(ret)) {
     ObSchemaOperation opt;
     
@@ -3868,9 +3588,14 @@ int ObTableSqlService::replace_mock_fk_parent_table(
     const ObMockFKParentTableSchema *ori_mock_fk_parent_table_schema_ptr)
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(delete_mock_fk_parent_table_column(*sql_client, mock_fk_parent_table_schema, false))) {
-  } else if (OB_FAIL(delete_mock_fk_parent_table(*sql_client, mock_fk_parent_table_schema, false))) {
-  } else if (OB_FAIL(update_foreign_key_in_mock_fk_parent_table(sql_client, mock_fk_parent_table_schema, ori_mock_fk_parent_table_schema_ptr, true))) {
+  if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
+  ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    int ret = catalog.erase_mock_parent_columns(mock_fk_parent_table_schema);
+    if (OB_SUCC(ret)) { ret = catalog.erase_mock_parent(mock_fk_parent_table_schema); }
+    return ret;
+  });
+  if (OB_SUCC(ret) && OB_FAIL(update_foreign_key_in_mock_fk_parent_table(sql_client, mock_fk_parent_table_schema, ori_mock_fk_parent_table_schema_ptr, true))) {
   }
   if (OB_SUCC(ret)) {
     ObSchemaOperation opt;
@@ -3892,30 +3617,14 @@ int ObTableSqlService::update_mock_fk_parent_table_schema_version(
     common::ObISQLClient *sql_client,
     ObMockFKParentTableSchema &mock_fk_parent_table_schema)
 {
+  if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
   int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(*sql_client);
-  dml.reset();
   int64_t new_schema_version = OB_INVALID_VERSION;
   if (OB_FAIL(schema_service_.gen_new_schema_version(OB_INVALID_VERSION, new_schema_version))) {
-  } else if (FALSE_IT(mock_fk_parent_table_schema.set_schema_version(new_schema_version))) {
-  } else if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))
-        || OB_FAIL(dml.add_column("schema_version", mock_fk_parent_table_schema.get_schema_version()))
-        || OB_FAIL(dml.add_gmt_modified())) {
-      LOG_WARN("add column failed", K(ret));
   } else {
-    int64_t affected_rows = 0;
-    if (OB_FAIL(exec.exec_update(OB_ALL_MOCK_FK_PARENT_TABLE_TNAME, dml, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows unexpected to be one", K(ret), K(affected_rows));
-    }
-  }
-  if (OB_SUCC(ret)) {
-    if (OB_FAIL(insert_mock_fk_parent_table(*sql_client, mock_fk_parent_table_schema, true))) {
-    }
+    mock_fk_parent_table_schema.set_schema_version(new_schema_version);
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_mock_parent_version(mock_fk_parent_table_schema); });
   }
   if (OB_SUCC(ret)) {
     ObSchemaOperation opt;
@@ -3938,278 +3647,32 @@ int ObTableSqlService::update_foreign_key_in_mock_fk_parent_table(
     const ObMockFKParentTableSchema *ori_mock_fk_parent_table_schema_ptr,
     const bool need_update_foreign_key_columns)
 {
+  if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
   int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(*sql_client);
-  const ObIArray<ObForeignKeyInfo> &foreign_key_infos = new_mock_fk_parent_table_schema.get_foreign_key_infos();
-  int64_t new_schema_version = OB_INVALID_VERSION;
-  if (OB_SUCC(ret) && need_update_foreign_key_columns) {
-    if (OB_ISNULL(ori_mock_fk_parent_table_schema_ptr)) {
+  const auto &infos = new_mock_fk_parent_table_schema.get_foreign_key_infos();
+  int64_t version = new_mock_fk_parent_table_schema.get_schema_version();
+  if (need_update_foreign_key_columns) {
+    if (ori_mock_fk_parent_table_schema_ptr == nullptr
+        || ori_mock_fk_parent_table_schema_ptr->get_foreign_key_infos().count() != infos.count()) {
       ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("ori_mock_fk_parent_table_schema_ptr is null", K(ret), K(ori_mock_fk_parent_table_schema_ptr), K(new_mock_fk_parent_table_schema));
-    } else if (OB_FAIL(schema_service_.gen_new_schema_version(OB_INVALID_VERSION, new_schema_version))) {
-    } else {
-      const ObIArray<ObForeignKeyInfo> &ori_foreign_key_infos = ori_mock_fk_parent_table_schema_ptr->get_foreign_key_infos();
-      if (ori_foreign_key_infos.count() != foreign_key_infos.count()) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("the count of foreign_key_infos is not equal", K(ret), K(ori_foreign_key_infos.count()), K(foreign_key_infos.count()));
-      } else {
-        for (int64_t i = 0; OB_SUCC(ret) && i < ori_foreign_key_infos.count(); ++i) {
-          if (OB_FAIL(update_foreign_key_columns(
-              *sql_client, ori_foreign_key_infos.at(i),
-              foreign_key_infos.at(i), new_mock_fk_parent_table_schema.get_schema_version(), new_schema_version))) {
-          }
+    } else { ret = schema_service_.gen_new_schema_version(OB_INVALID_VERSION, version); }
+  }
+  if (OB_SUCC(ret) && !infos.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      if (need_update_foreign_key_columns) {
+        const auto &old_infos = ori_mock_fk_parent_table_schema_ptr->get_foreign_key_infos();
+        for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
+          ret = catalog.erase_foreign_key_columns(old_infos.at(i), new_mock_fk_parent_table_schema.get_schema_version());
+          if (OB_SUCC(ret)) { ret = catalog.insert_foreign_key_columns(infos.at(i), version, false); }
         }
       }
-    }
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < foreign_key_infos.count(); ++i) {
-    const ObForeignKeyInfo &foreign_key_info = foreign_key_infos.at(i);
-    dml.reset();
-    int64_t affected_rows = 0;
-    //UPDATE is not used to update __all_foreign_key because the parent table may have deleted the record in advance
-    if (OB_FAIL(gen_foreign_key_dml(foreign_key_info, dml))) {
-    } else if (OB_FAIL(exec.exec_insert_update(OB_ALL_FOREIGN_KEY_TNAME, dml, affected_rows))) {
-    } else if (affected_rows > 2) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("unexpected error", K(ret), K(affected_rows));
-    } else if (OB_FAIL(dml.add_column("schema_version", need_update_foreign_key_columns ? new_schema_version : new_mock_fk_parent_table_schema.get_schema_version()))) {
-    } else if (OB_FAIL(dml.add_column("is_deleted", false))) {
-    } else if (OB_FAIL(exec.exec_insert(OB_ALL_FOREIGN_KEY_HISTORY_TNAME, dml, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::insert_mock_fk_parent_table(
-    common::ObISQLClient &sql_client,
-     const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-     const bool only_history)
-{
-  int ret = OB_SUCCESS;
-  const char *tname[] = {OB_ALL_MOCK_FK_PARENT_TABLE_TNAME, OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME};
-  
-  
-  for (int64_t i = 0; OB_SUCC(ret) && i < ARRAYSIZEOF(tname); i++) {
-    ObDMLSqlSplicer dml;
-    bool is_history = (0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME));
-    int64_t affected_rows = 0;
-    ObDMLExecHelper exec(sql_client);
-    if (only_history && 0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_TNAME)) {
-      continue;
-    } else if (OB_FAIL(format_insert_mock_table_dml_sql(mock_fk_parent_table_schema, dml, is_history))) {
-    } else if (OB_FAIL(exec.exec_insert(tname[i], dml, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("unexpected value", K(affected_rows), K(ret));
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::delete_mock_fk_parent_table(
-    common::ObISQLClient &sql_client,
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool only_history)
-{
-  int ret = OB_SUCCESS;
-  const char *tname[] = {OB_ALL_MOCK_FK_PARENT_TABLE_TNAME, OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME};
-  
-  
-  for (int64_t i = 0; OB_SUCC(ret) && i < ARRAYSIZEOF(tname); ++i) {
-    ObSqlString delete_mock_table_dml_sql;
-    bool is_history = (0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME));
-    int64_t affected_rows = 0;
-    if (only_history && 0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME)) {
-      continue;
-    } else if (OB_FAIL(format_delete_mock_table_dml_sql(mock_fk_parent_table_schema, is_history, delete_mock_table_dml_sql))) {
-    } else if (OB_FAIL(sql_client.write(delete_mock_table_dml_sql.ptr(), affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows is not single row", K(ret),
-               K(affected_rows), K(delete_mock_table_dml_sql), K(mock_fk_parent_table_schema));
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::insert_mock_fk_parent_table_column(
-    common::ObISQLClient &sql_client,
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool only_history)
-{
-  int ret = OB_SUCCESS;
-  const char *tname[] = {OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME, OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME};
-  
-  
-  for (int64_t i = 0; OB_SUCC(ret) && i < ARRAYSIZEOF(tname); ++i) {
-    ObSqlString column_sql;
-    bool is_history = (0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME));
-    int64_t affected_rows = 0;
-    if (only_history && 0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME)) {
-      continue;
-    } else if (OB_FAIL(format_insert_mock_table_column_dml_sql(mock_fk_parent_table_schema, is_history, column_sql))) {
-    } else if (OB_FAIL(sql_client.write(column_sql.ptr(), affected_rows))) {
-    } else if (affected_rows != mock_fk_parent_table_schema.get_column_array().count()) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows not equal to col count in table", K(ret),
-               K(affected_rows), K(mock_fk_parent_table_schema.get_column_array().count()));
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::delete_mock_fk_parent_table_column(
-    common::ObISQLClient &sql_client,
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool only_history)
-{
-  int ret = OB_SUCCESS;
-  const char *tname[] = {OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME, OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME};
-  
-  
-  for (int64_t i = 0; OB_SUCC(ret) && i < ARRAYSIZEOF(tname); ++i) {
-    ObSqlString column_sql;
-    bool is_history = (0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME));
-    int64_t affected_rows = 0;
-    if (only_history && 0 == STRCMP(tname[i], OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME)) {
-      continue;
-    } else if (OB_FAIL(format_delete_mock_table_column_dml_sql(mock_fk_parent_table_schema, is_history, column_sql))) {
-    } else if (OB_FAIL(sql_client.write(column_sql.ptr(), affected_rows))) {
-    } else if (affected_rows != mock_fk_parent_table_schema.get_column_array().count()) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows not equal to col count in table", K(ret),
-               K(affected_rows), K(column_sql), K(mock_fk_parent_table_schema));
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::format_insert_mock_table_dml_sql(
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    ObDMLSqlSplicer &dml,
-    bool &is_history)
-{
-  int ret = OB_SUCCESS;
-  
-  
-  if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))
-      || OB_FAIL(dml.add_column("database_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_database_id())))
-      || OB_FAIL(dml.add_column("mock_fk_parent_table_name", mock_fk_parent_table_schema.get_mock_fk_parent_table_name()))
-      || OB_FAIL(dml.add_column("schema_version", mock_fk_parent_table_schema.get_schema_version()))
-      || OB_FAIL(dml.add_gmt_modified())
-      || (is_history && OB_FAIL(dml.add_column("is_deleted", 0)))) {
-    LOG_WARN("add column failed", K(ret));
-  }
-  return ret;
-}
-
-int ObTableSqlService::format_delete_mock_table_dml_sql(
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool is_history,
-    ObSqlString &delete_mock_table_dml_sql)
-{
-  int ret = OB_SUCCESS;
-  
-  
-  const int64_t IS_DELETED = 1;
-  ObDMLSqlSplicer dml;
-  if (is_history) {
-    if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))
-        || OB_FAIL(dml.add_column("database_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_database_id())))
-        || OB_FAIL(dml.add_column("schema_version", mock_fk_parent_table_schema.get_schema_version()))
-        || OB_FAIL(dml.add_gmt_modified())
-        || (is_history && OB_FAIL(dml.add_column("is_deleted", IS_DELETED)))) {
-      LOG_WARN("add column failed", K(ret));
-    } else if (OB_FAIL(dml.splice_insert_sql_without_plancache(OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TNAME, delete_mock_table_dml_sql))) {
-    }
-  } else {
-    if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))) {
-    } else if (OB_FAIL(dml.splice_delete_sql(OB_ALL_MOCK_FK_PARENT_TABLE_TNAME, delete_mock_table_dml_sql))) {
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::format_insert_mock_table_column_dml_sql(
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool is_history,
-    ObSqlString &column_sql)
-{
-  int ret = OB_SUCCESS;
-  
-  
-  for (int64_t i = 0; OB_SUCC(ret) && i < mock_fk_parent_table_schema.get_column_array().count(); ++i) {
-    ObDMLSqlSplicer dml;
-    if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))
-        || OB_FAIL(dml.add_pk_column("parent_column_id", mock_fk_parent_table_schema.get_column_array().at(i).first))
-        || OB_FAIL(dml.add_column("parent_column_name", mock_fk_parent_table_schema.get_column_array().at(i).second))
-        || OB_FAIL(dml.add_column("schema_version", mock_fk_parent_table_schema.get_schema_version()))
-        || OB_FAIL(dml.add_gmt_modified())
-        || (is_history && OB_FAIL(dml.add_column("is_deleted", 0)))) {
-      LOG_WARN("add column failed", K(ret));
-    } else if (0 == i) { // 0 == i or column_sql.empty() means the first column in fk info
-      if (OB_FAIL(dml.splice_insert_sql_without_plancache(
-          is_history ? OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME : OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME, column_sql))) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
+        ret = catalog.write_foreign_key(infos.at(i), version, observer::NativeSchemaCatalog::ForeignKeyWrite::UPSERT);
       }
-    } else { // the following columns in fk info
-      ObSqlString value_str;
-      if (OB_FAIL(dml.splice_values(value_str))) {
-      } else if (OB_FAIL(column_sql.append_fmt(", (%s)", value_str.ptr()))) {
-      }
-    }
-  }
-  return ret;
-}
-
-int ObTableSqlService::format_delete_mock_table_column_dml_sql(
-    const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-    const bool is_history,
-    ObSqlString &column_sql)
-{
-  int ret = OB_SUCCESS;
-  
-  
-  const int64_t IS_DELETED = 1;
-
-  if (is_history) {
-    for (int64_t i = 0; OB_SUCC(ret) && i < mock_fk_parent_table_schema.get_column_array().count(); ++i) {
-      ObDMLSqlSplicer dml;
-      if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))
-          || OB_FAIL(dml.add_pk_column("parent_column_id", mock_fk_parent_table_schema.get_column_array().at(i).first))
-          || OB_FAIL(dml.add_column("schema_version", mock_fk_parent_table_schema.get_schema_version()))
-          || OB_FAIL(dml.add_gmt_modified())
-          || OB_FAIL(dml.add_column("is_deleted", IS_DELETED))) {
-        LOG_WARN("add column failed", K(ret));
-      } else if (0 == i) { // 0 == i or column_sql.empty() means the first column in fk info
-        if (OB_FAIL(dml.splice_insert_sql_without_plancache(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TNAME, column_sql))) {
-        }
-      } else { // the following columns in fk info
-        ObSqlString value_str;
-        if (OB_FAIL(dml.splice_values(value_str))) {
-        } else if (OB_FAIL(column_sql.append_fmt(", (%s)", value_str.ptr()))) {
-        }
-      }
-    }
-  } else {
-    ObDMLSqlSplicer dml;
-    if (OB_FAIL(dml.add_pk_column("mock_fk_parent_table_id", ObSchemaUtils::get_extract_schema_id(mock_fk_parent_table_schema.get_mock_fk_parent_table_id())))) {
-    } else if (OB_FAIL(dml.splice_delete_sql(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TNAME, column_sql))) {
-    } else if (OB_FAIL(column_sql.append_fmt(" AND parent_column_id in (%lu", mock_fk_parent_table_schema.get_column_array().at(0).first))) {
-    } else {
-      for (int64_t i = 1; OB_SUCC(ret) && i < mock_fk_parent_table_schema.get_column_array().count(); ++i) {
-        if (OB_FAIL(column_sql.append_fmt(", %lu", mock_fk_parent_table_schema.get_column_array().at(i).first))) {
-        }
-      }
-      if (FAILEDx(column_sql.append_fmt(")"))) {
-        LOG_WARN("append_fmt failed", K(ret), K(column_sql));
-      }
-    }
+      return ret;
+    });
   }
   return ret;
 }

@@ -858,6 +858,146 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_BORROWED namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_mock_fk_multi") != std::string::npos) {
+    ObArenaAllocator arena(ObMemAttr("ForeignKeyProbe"));
+    ObTableSchema *definition = nullptr;
+    ret = catalog.get_table(table_id, INT64_MAX - 1, arena, definition);
+    ObForeignKeyInfo info;
+    if (ret == OB_SUCCESS && (definition == nullptr || definition->get_foreign_key_infos().count() != 1)) { ret = OB_ERR_UNEXPECTED; }
+    if (ret == OB_SUCCESS) { ret = info.assign(definition->get_foreign_key_infos().at(0)); }
+    ObSEArray<uint64_t, 1> selection;
+    ObArray<ObMockFKParentTableSchema> parents;
+    if (ret == OB_SUCCESS) { ret = selection.push_back(info.parent_table_id_); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_mock_fk_parent_tables(INT64_MAX - 1, parents, &selection); }
+    if (ret == OB_SUCCESS && parents.count() != 1) { ret = OB_ERR_UNEXPECTED; }
+    ObMockFKParentTableSchema parent;
+    if (ret == OB_SUCCESS) { ret = parent.assign(parents.at(0)); }
+    const int64_t version = parent.get_schema_version() + 100;
+    parent.set_table_id(parent.get_table_id() + 1000000000);
+    parent.set_schema_version(version);
+    if (ret == OB_SUCCESS) { ret = parent.set_table_name(ObString::make_string("native_missing_parent")); }
+    info.foreign_key_id_ += 1000000000;
+    info.parent_table_id_ = parent.get_table_id();
+    info.foreign_key_name_ = ObString::make_string("native_fk");
+    info.enable_flag_ = false;
+    info.rely_flag_ = true;
+    info.validate_flag_ = CST_FK_NO_VALIDATE;
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    auto begin = [&]() {
+      int rc = native.begin(owner, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](bool commit) {
+      int rc = owner.is_active() ? (commit ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+      const int closed = writer.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, bool exists, bool enabled, int64_t parent_version) {
+      ObArenaAllocator rows(ObMemAttr("ForeignKeyRead"));
+      ObTableSchema *actual = nullptr;
+      int rc = reader.get_table(table_id, INT64_MAX - 1, rows, actual);
+      const ObForeignKeyInfo *found = nullptr;
+      if (rc == OB_SUCCESS) {
+        for (int64_t i = 0; i < actual->get_foreign_key_infos().count(); ++i) {
+          const auto &fk = actual->get_foreign_key_infos().at(i);
+          if (fk.foreign_key_id_ == info.foreign_key_id_) { found = &fk; }
+        }
+        if (!exists) { if (found != nullptr) { rc = OB_ERR_UNEXPECTED; } }
+        else if (found == nullptr || found->parent_table_id_ != parent.get_table_id()
+            || !found->is_parent_table_mock_ || found->enable_flag_ != enabled || !found->rely_flag_
+            || found->validate_flag_ != CST_FK_NO_VALIDATE || found->foreign_key_name_ != info.foreign_key_name_
+            || found->child_column_ids_.count() != info.child_column_ids_.count()
+            || found->parent_column_ids_.count() != info.parent_column_ids_.count()) { rc = OB_ERR_UNEXPECTED; }
+        for (int64_t i = 0; rc == OB_SUCCESS && exists && i < info.parent_column_ids_.count(); ++i) {
+          if (found->parent_column_ids_.at(i) != info.parent_column_ids_.at(i)
+              || found->child_column_ids_.at(i) != info.child_column_ids_.at(i)) { rc = OB_ERR_UNEXPECTED; }
+        }
+      }
+      if (actual != nullptr) { actual->~ObTableSchema(); }
+      ObSEArray<uint64_t, 1> ids;
+      ObArray<ObMockFKParentTableSchema> result;
+      if (rc == OB_SUCCESS) { rc = ids.push_back(parent.get_table_id()); }
+      if (rc == OB_SUCCESS) { rc = reader.get_mock_fk_parent_tables(INT64_MAX - 1, result, &ids); }
+      if (rc == OB_SUCCESS && result.count() != (exists ? 1 : 0)) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS && exists && (result.at(0).get_schema_version() != parent_version
+          || result.at(0).get_column_array().count() != parent.get_column_array().count()
+          || result.at(0).get_foreign_key_infos().count() != 1)) { rc = OB_ERR_UNEXPECTED; }
+      for (uint64_t inner : {OB_ALL_FOREIGN_KEY_TID, OB_ALL_FOREIGN_KEY_COLUMN_TID,
+                            OB_ALL_MOCK_FK_PARENT_TABLE_TID, OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TID}) {
+        observer::NativeSchemaCatalog::Cursor scan;
+        const bool fk = inner == OB_ALL_FOREIGN_KEY_TID || inner == OB_ALL_FOREIGN_KEY_COLUMN_TID;
+        ObObj key; key.set_int(fk ? info.foreign_key_id_ : parent.get_table_id());
+        if (rc == OB_SUCCESS) { rc = reader.open_prefix(inner, ObRowkey(&key, 1), scan); }
+        const ObNewRow *row = nullptr;
+        int64_t count = 0;
+        while (rc == OB_SUCCESS && (rc = scan.next(row)) == OB_SUCCESS) { ++count; }
+        if (rc == OB_ITER_END) { rc = OB_SUCCESS; }
+        const int closed = scan.close();
+        if (rc == OB_SUCCESS) { rc = closed; }
+        const int64_t expected = !exists ? 0 : inner == OB_ALL_FOREIGN_KEY_TID || inner == OB_ALL_MOCK_FK_PARENT_TABLE_TID
+            ? 1 : fk ? info.child_column_ids_.count() : parent.get_column_array().count();
+        if (rc == OB_SUCCESS && count != expected) { rc = OB_ERR_UNEXPECTED; }
+      }
+      return rc;
+    };
+    auto outside = [&](bool exists, bool enabled, int64_t v) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      return rc == OB_SUCCESS ? verify(reader, exists, enabled, v) : rc;
+    };
+    auto insert = [&]() {
+      int rc = writer.insert_mock_parent(parent, false);
+      if (rc == OB_SUCCESS) { rc = writer.insert_mock_parent_columns(parent); }
+      if (rc == OB_SUCCESS) { rc = writer.write_foreign_key(info, version, observer::NativeSchemaCatalog::ForeignKeyWrite::UPSERT); }
+      if (rc == OB_SUCCESS) { rc = writer.insert_foreign_key_columns(info, version, false); }
+      return rc;
+    };
+    auto erase = [&]() {
+      int rc = writer.erase_foreign_key(info, version + 4, true);
+      if (rc == OB_SUCCESS) { rc = writer.erase_foreign_key_columns(info, version + 4); }
+      if (rc == OB_SUCCESS) { rc = writer.erase_mock_parent_columns(parent); }
+      if (rc == OB_SUCCESS) { rc = writer.erase_mock_parent(parent); }
+      return rc;
+    };
+    const char *stage = "insert";
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert(); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, true, false, version); }
+    if (ret == OB_SUCCESS) { ret = outside(false, false, 0); }
+    info.enable_flag_ = true;
+    parent.set_schema_version(version + 1);
+    if (ret == OB_SUCCESS) { stage = "update"; ret = writer.update_mock_parent_version(parent); }
+    if (ret == OB_SUCCESS) { ret = writer.write_foreign_key(info, version + 1, observer::NativeSchemaCatalog::ForeignKeyWrite::UPSERT); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, true, true, version + 1); }
+    if (ret == OB_SUCCESS) { stage = "rollback"; ret = end(false); }
+    if (ret == OB_SUCCESS) { ret = outside(false, false, 0); }
+    info.enable_flag_ = false;
+    parent.set_schema_version(version);
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert(); }
+    if (ret == OB_SUCCESS) { stage = "commit"; ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = outside(true, false, version); }
+    parent.set_schema_version(version + 4);
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = erase(); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, false, false, 0); }
+    if (ret == OB_SUCCESS) { stage = "erase_rollback"; ret = end(false); }
+    if (ret == OB_SUCCESS) { ret = outside(true, false, version); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = erase(); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "deleted"; ret = outside(false, false, 0); }
+    const int cleanup = end(false);
+    if (ret == OB_SUCCESS) { ret = cleanup; }
+    if (definition != nullptr) { definition->~ObTableSchema(); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FOREIGN_KEY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_constraint") != std::string::npos) {
     ObArenaAllocator arena(ObMemAttr("ConstraintProbe"));
     ObTableSchema *table = nullptr;

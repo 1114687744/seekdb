@@ -287,20 +287,7 @@ public:
   int add_foreign_key(common::ObISQLClient &sql_client,
                       const ObTableSchema &table,
                       const bool only_history);
-  int update_foreign_key_columns(
-      common::ObISQLClient &sql_client,
-      const ObForeignKeyInfo &ori_foreign_key_info, const ObForeignKeyInfo &new_foreign_key_info,
-      const int64_t new_schema_version_1,
-      const int64_t new_schema_version_2);
-  int add_foreign_key_columns(
-      common::ObISQLClient &sql_client,
-      const ObForeignKeyInfo &foreign_key_info,
-      const int64_t new_schema_version,
-      const bool only_history);
-  int drop_foreign_key_columns(
-      common::ObISQLClient &sql_client,
-      const ObForeignKeyInfo &ori_foreign_key_info,
-      const int64_t new_schema_version);
+
   int update_foreign_key_state(common::ObISQLClient &sql_client, const ObTableSchema &table);
   int update_check_constraint_state(
       common::ObISQLClient &sql_client,
@@ -408,20 +395,7 @@ private:
       const ObTableSchema &table_schema,
       const int64_t new_schema_version,
       const bool is_truncate_table);
-  int delete_from_all_foreign_key(common::ObISQLClient &sql_client,
-      const int64_t new_schema_version,
-      const ObForeignKeyInfo &foreign_key_info);
-  int delete_from_all_foreign_key_column(common::ObISQLClient &sql_client,
-      const uint64_t foreign_key_id,
-      const uint64_t child_column_id,
-      const uint64_t parent_column_id,
-      const uint64_t fk_column_pos,
-      const int64_t new_schema_version);
-  int gen_foreign_key_dml(const ObForeignKeyInfo &foreign_key_info,
-                          share::ObDMLSqlSplicer &dml);
-  int gen_foreign_key_column_dml(uint64_t foreign_key_id,
-                                 uint64_t child_column_id, uint64_t parent_column_id,
-                                 int64_t position, share::ObDMLSqlSplicer &dml);
+
   int check_table_options(const share::schema::ObTableSchema &table_schema);
   int add_single_column(common::ObISQLClient &sql_client, const ObColumnSchemaV2 &column,
                         const bool only_history = false);
@@ -501,38 +475,7 @@ private:
       const ObMockFKParentTableSchema &new_mock_fk_parent_table_schema,
       const ObMockFKParentTableSchema *ori_mock_fk_parent_table_schema_ptr,
       const bool need_update_foreign_key_columns);
-  int insert_mock_fk_parent_table(
-      common::ObISQLClient &sql_client,
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool only_history);
-  int delete_mock_fk_parent_table(
-      common::ObISQLClient &sql_client,
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool only_history);
-  int insert_mock_fk_parent_table_column(
-      common::ObISQLClient &sql_client,
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool only_history);
-  int delete_mock_fk_parent_table_column(
-      common::ObISQLClient &sql_client,
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool only_history);
-  int format_insert_mock_table_dml_sql(
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      ObDMLSqlSplicer &dml,
-      bool &is_history);
-  int format_delete_mock_table_dml_sql(
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool is_history,
-      ObSqlString &column_sql);
-  int format_insert_mock_table_column_dml_sql(
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool is_history,
-      ObSqlString &column_sql);
-  int format_delete_mock_table_column_dml_sql(
-      const ObMockFKParentTableSchema &mock_fk_parent_table_schema,
-      const bool is_history,
-      ObSqlString &column_sql);
+
 // MockFKParentTable end
 //
   int check_table_history_matched_(

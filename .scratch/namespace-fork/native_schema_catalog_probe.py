@@ -171,6 +171,8 @@ def run(binary, selected=None):
             if label == 'part':
                 assert (f'NATIVE_SCHEMA_CATALOG_INDEX_METADATA_TX namespace={child_id} '
                         'stage=read_rollback ret=0') in trace, trace[-2000:]
+            if label == 'mock_fk_multi':
+                assert f'NATIVE_SCHEMA_CATALOG_FOREIGN_KEY namespace={child_id} stage=deleted ret=0' in trace
             if label == 'constraint':
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_CONSTRAINT namespace={child_id} stage=deleted ret=0' in trace

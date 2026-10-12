@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列和单个约束删除已通过冷读取、生产 DDL/重启及主备回放验证，完整分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区及其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -255,3 +255,22 @@
 - 首次 `native-constraint-standby` 回放检查失败在新增 helper 的首次 `SELECT native_constraints.state_t`（1146）。该检查漏掉了其他主备用例已有的 schema 可见性等待：日志回放水位达到目标不等于已装载 Namespace 的 schema cache 已刷新。新增同样的有界表结构/数据等待，再执行全部持久 current/history 断言；不把该首次失败记为通过。
 
 - 约束阶段生产 Namespace 主备回归退出 0（140.27 秒），见 `gate-results/native-schema-catalog/native-constraint-standby2/results.json`。新增 `native_catalog_constraint_replay` 及提升后复查通过，包括 current/history 状态、关系行删除标记、回收站改名和 PURGE；生产编译、冷 Namespace、DDL 与重启验证均已完成。完整目标继续推进分区和外键关系写入。
+
+### 外键和占位父表完整写入（实施中）
+
+- 外键、列关系以及 mock 父表/列的 current/history 写入改用原生目录。父表删除后的外键重建保留原有 upsert 语义；同一 DDL owner 中更新当前行、历史和物理索引。真实父表替换占位父表时，先发布旧列关系删除版本，再以新版本写入真实列关系。
+- 删除 ObTableSqlService 的相应 SQL 字段生成、拼接和执行 helper；字段映射归入 SchemaCatalogFields，批量外键/列操作共用一个目录操作。操作日志、对象版本生成继续由上层负责。
+- 四件套冷探针增加多列外键与占位父表的 own-write、独立读不可见、状态更新、提交/回滚、删除回滚；真实 DDL/主备共享用例增加占位父表增删列、父表删除后重建、真实列 ID 变化、无效数据的外键校验失败回滚，以及 current/history 对照。
+- `fk-build1.log` 首次编译发现测试探针对 ObIArray 使用 range-for；待本次编译终止后改为 count/at。尚未计为通过。
+
+- `fk-build2.log` 编译通过。`fk-probe1.log` 的冷多列外键首次 upsert 报重复主键：原实现先调用锁定读取，底层 lock_rows 假定行存在，缺失键上的锁节点使随后的 INSERT 判为重复。新增 upsert 改为先读当前行，缺失时直接 INSERT，存在时锁定 UPDATE；对象串行化由原有 DDL owner 提供，未修改存储锁协议。
+- `fk-ddl1.log` 的父表删除/重建及列映射替换已执行成功，随后新增断言错误地要求校验失败的外键完全消失。旧生产二进制最小对照 `fk-validation-prior1.log` 证实同样返回 5785，仍保留 enable=1、validate=0 的 current/history 记录。测试改为核对该既有持久状态并显式 DROP；原生事务回滚单独由冷探针验证，不能将这条 DDL 测试宣称为整个异步 DDL 回滚成功。
+- TODO（既有 DDL 异常清理）：`ObConstraintTask::rollback_failed_foregin_key` 构造回滚 alter_table_arg 后没有实际调用 alter_table，仅记录成功。需要单独修复并验证失败后清理语义；这不是本轮原生外键写入引入，旧二进制已有运行证据，不阻塞当前访问层替换。
+
+- `fk-build3.log` 编译通过；`fk-probe2.log` 的 fk/mock_fk_multi/old_mock_fk/self_fk/old_fk 五个冷 Namespace 用例退出 0，实例 `namespace_fork_PROTOTYPE_native_schema_catalog_k3vgi6qx` 的 FOREIGN_KEY stage=deleted ret=0。首次 upsert 重复键回归已通过，所有孩子 runtime 槽位保持 0。
+- `fk-ddl2.log` 的真实 DDL、父表删除和多次重建、占位列增删、列 ID 替换、完整 current/history 对照、显式/整表外键删除、父子隔离、崩溃重启及重启后父表解析均通过。钩子已移除，生产编译和主备验证继续。
+
+- `/tmp/native-schema-catalog-fk-production-build1.log` 移除测试钩子后编译通过；`fk-production-ddl1.log` 退出 0，真实 DDL 与崩溃重启复查全部通过。`ObTableSqlService` 已无外键/占位父表八张内表的 SQL 表名引用；主备结果待确认。
+- 剩余写入清单补充：`ObPartitionSqlHelper` 批量与增量分区路径、`ObTableSqlService` 分区选项/删除、`update_view_columns`、`batch_insert_ori_schema_version`，以及完整定义关联入口（包括 trigger 服务）和操作日志/core 表示的边界审计。本阶段通过不能替代这些入口接入。
+
+- 外键阶段生产 Namespace 主备回归退出 0（139.30 秒），见 `gate-results/native-schema-catalog/native-fk-standby/results.json`。`native_catalog_foreign_key_replay` 和提升后的复查均通过：外键完整属性、真实父列 ID、旧列关系删除记录、占位表/列删除 history 一致；原有父 TRUNCATE/DROP、Namespace 删除、提升后写入及再次 fork 继续通过。过程失败用例保留在四件套共享脚本中；未运行全量 mysqltest 或 sysbench。

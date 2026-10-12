@@ -1597,6 +1597,203 @@ int NativeSchemaCatalog::erase_constraint(const ObConstraint &constraint, int64_
   return ret;
 }
 
+int NativeSchemaCatalog::write_foreign_key(const ObForeignKeyInfo &info, int64_t version, ForeignKeyWrite mode)
+{
+  const auto fill = [&](SchemaCatalogRow &fields) { return SchemaCatalogFields::foreign_key(info, fields); };
+  int ret = OB_SUCCESS;
+  if (mode == ForeignKeyWrite::INSERT) { ret = insert_fields(OB_ALL_FOREIGN_KEY_TID, fill); }
+  else if (mode == ForeignKeyWrite::UPSERT) { ret = upsert_fields(OB_ALL_FOREIGN_KEY_TID, fill); }
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_FOREIGN_KEY_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = fill(fields);
+      if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("schema_version", version))
+          || OB_FAIL(fields.add_column("is_deleted", mode == ForeignKeyWrite::HISTORY_DELETE)))) {}
+      return ret;
+    });
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_foreign_key_columns(const ObForeignKeyInfo &info, int64_t version, bool only_history)
+{
+  if (info.child_column_ids_.count() != info.parent_column_ids_.count()) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < info.child_column_ids_.count(); ++i) {
+    const auto fill = [&](SchemaCatalogRow &fields) {
+      return SchemaCatalogFields::foreign_key_column(info.foreign_key_id_, info.child_column_ids_.at(i),
+          info.parent_column_ids_.at(i), i + 1, fields);
+    };
+    if (!only_history) { ret = insert_fields(OB_ALL_FOREIGN_KEY_COLUMN_TID, fill); }
+    if (OB_SUCC(ret)) {
+      ret = insert_fields(OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int ret = fill(fields);
+        if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("schema_version", version))
+            || OB_FAIL(fields.add_column("is_deleted", only_history)))) {}
+        return ret;
+      });
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_foreign_key(const ObForeignKeyInfo &info, int64_t version, bool require_current)
+{
+  int64_t affected = 0;
+  int ret = erase_prefix(OB_ALL_FOREIGN_KEY_TID, [&](SchemaCatalogRow &fields) {
+    return fields.add_pk_column("foreign_key_id", info.foreign_key_id_);
+  }, affected);
+  // Parent and child deletion can encounter the same relationship in one DDL.
+  if (OB_SUCC(ret) && require_current && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) { ret = write_foreign_key(info, version, ForeignKeyWrite::HISTORY_DELETE); }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_foreign_key_columns(const ObForeignKeyInfo &info, int64_t version)
+{
+  if (info.child_column_ids_.count() != info.parent_column_ids_.count()) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < info.child_column_ids_.count(); ++i) {
+    const auto key = [&](SchemaCatalogRow &fields) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(fields.add_pk_column("foreign_key_id", info.foreign_key_id_))
+          || OB_FAIL(fields.add_pk_column("child_column_id", info.child_column_ids_.at(i)))
+          || OB_FAIL(fields.add_pk_column("parent_column_id", info.parent_column_ids_.at(i)))) {}
+      return ret;
+    };
+    int64_t affected = 0;
+    ret = erase_prefix(OB_ALL_FOREIGN_KEY_COLUMN_TID, key, affected);
+    if (OB_SUCC(ret)) {
+      ret = insert_fields(OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int ret = key(fields);
+        if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("schema_version", version))
+            || OB_FAIL(fields.add_column("is_deleted", 1))
+            || OB_FAIL(fields.add_column("position", i + 1)))) {}
+        return ret;
+      });
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_mock_parent(const ObMockFKParentTableSchema &table, bool only_history)
+{
+  const auto fill = [&](SchemaCatalogRow &fields) { return SchemaCatalogFields::mock_parent(table, fields); };
+  int ret = only_history ? OB_SUCCESS : insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_TID, fill);
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = fill(fields);
+      if (OB_SUCC(ret)) { ret = fields.add_column("is_deleted", 0); }
+      return ret;
+    });
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_mock_parent_columns(const ObMockFKParentTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < table.get_column_array().count(); ++i) {
+    const auto fill = [&](SchemaCatalogRow &fields) { return SchemaCatalogFields::mock_parent_column(table, i, fields); };
+    ret = insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TID, fill);
+    if (OB_SUCC(ret)) {
+      ret = insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int ret = fill(fields);
+        if (OB_SUCC(ret)) { ret = fields.add_column("is_deleted", 0); }
+        return ret;
+      });
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_mock_parent(const ObMockFKParentTableSchema &table)
+{
+  const auto key = [&](SchemaCatalogRow &fields) {
+    return fields.add_pk_column("mock_fk_parent_table_id", table.get_mock_fk_parent_table_id());
+  };
+  int64_t affected = 0;
+  int ret = erase_prefix(OB_ALL_MOCK_FK_PARENT_TABLE_TID, key, affected);
+  if (OB_SUCC(ret) && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = key(fields);
+      if (OB_SUCC(ret) && (OB_FAIL(fields.add_column("database_id", table.get_database_id()))
+          || OB_FAIL(fields.add_pk_column("schema_version", table.get_schema_version()))
+          || OB_FAIL(fields.add_column("is_deleted", 1)) || OB_FAIL(fields.add_gmt_modified()))) {}
+      return ret;
+    });
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_mock_parent_columns(const ObMockFKParentTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < table.get_column_array().count(); ++i) {
+    const auto key = [&](SchemaCatalogRow &fields) {
+      int ret = fields.add_pk_column("mock_fk_parent_table_id", table.get_mock_fk_parent_table_id());
+      if (OB_SUCC(ret)) { ret = fields.add_pk_column("parent_column_id", table.get_column_array().at(i).first); }
+      return ret;
+    };
+    int64_t affected = 0;
+    ret = erase_prefix(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_TID, key, affected);
+    if (OB_SUCC(ret) && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+    if (OB_SUCC(ret)) {
+      ret = insert_fields(OB_ALL_MOCK_FK_PARENT_TABLE_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int ret = key(fields);
+        if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("schema_version", table.get_schema_version()))
+            || OB_FAIL(fields.add_column("is_deleted", 1)) || OB_FAIL(fields.add_gmt_modified()))) {}
+        return ret;
+      });
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::update_mock_parent_version(const ObMockFKParentTableSchema &table)
+{
+  bool matched = false;
+  int ret = update_fields(OB_ALL_MOCK_FK_PARENT_TABLE_TID, [&](SchemaCatalogRow &fields) {
+    int ret = OB_SUCCESS;
+    if (OB_FAIL(fields.add_pk_column("mock_fk_parent_table_id", table.get_mock_fk_parent_table_id()))
+        || OB_FAIL(fields.add_column("schema_version", table.get_schema_version()))
+        || OB_FAIL(fields.add_gmt_modified())) {}
+    return ret;
+  }, matched);
+  if (OB_SUCC(ret) && !matched) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) { ret = insert_mock_parent(table, true); }
+  return ret;
+}
+
+int NativeSchemaCatalog::upsert_fields(uint64_t inner_table_id, const FieldWriter &fill)
+{
+  if (!fill) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = prepare_write(inner_table_id, target);
+  SchemaCatalogRow fields;
+  ObNewRow row;
+  ObSEArray<uint64_t, 16> columns;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = fill(fields); }
+  if (OB_SUCC(ret)) { ret = fields.finish_update(row, columns); }
+  // lock_rows assumes an existing row: locking an absent key produces a lock
+  // node which a following INSERT treats as a duplicate. Inspect the current
+  // row first; the DDL owner serializes this object's metadata mutations.
+  ObArenaAllocator allocator(ObMemAttr("CatalogUpsert"));
+  ObNewRow current;
+  if (OB_SUCC(ret)) {
+    ret = state_->native.get_current(state_->transaction, target->table,
+        ObRowkey(row.cells_, target->schema.get_rowkey_column_num()), allocator, current);
+    if (ret == OB_ENTRY_NOT_EXIST) { ret = insert_fields(inner_table_id, fill); }
+    else if (OB_SUCC(ret)) {
+      bool matched = false;
+      ret = update_fields(inner_table_id, fill, matched);
+      if (OB_SUCC(ret) && !matched) { ret = OB_STATE_NOT_MATCH; }
+    }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::insert(uint64_t inner_table_id, const ObNewRow &row)
 {
   bool existed = false;

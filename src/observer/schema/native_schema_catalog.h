@@ -123,6 +123,9 @@ public:
   // missing row as success with matched=false. Index changes share this owner.
   using FieldWriter = std::function<int(share::schema::SchemaCatalogRow &)>;
   int insert_fields(uint64_t inner_table_id, const FieldWriter &);
+  // The DDL owner serializes the object; missing-row insertion still uses
+  // the storage engine's uniqueness check.
+  int upsert_fields(uint64_t inner_table_id, const FieldWriter &);
   int update_fields(uint64_t inner_table_id, const FieldWriter &, bool &matched);
   // Delete the nonempty key prefix visible to this operation, including own
   // writes. The DDL owner supplies object-level serialization. Temporary keys
@@ -141,6 +144,16 @@ public:
   int update_constraint(const share::schema::ObConstraint &);
   int rename_constraint(const share::schema::ObConstraint &, const common::ObString &, int64_t schema_version);
   int erase_constraint(const share::schema::ObConstraint &, int64_t schema_version, int64_t &deleted_columns);
+  enum class ForeignKeyWrite { INSERT, UPSERT, HISTORY_DELETE };
+  int write_foreign_key(const share::schema::ObForeignKeyInfo &, int64_t version, ForeignKeyWrite);
+  int insert_foreign_key_columns(const share::schema::ObForeignKeyInfo &, int64_t version, bool only_history);
+  int erase_foreign_key(const share::schema::ObForeignKeyInfo &, int64_t version, bool require_current);
+  int erase_foreign_key_columns(const share::schema::ObForeignKeyInfo &, int64_t version);
+  int insert_mock_parent(const share::schema::ObMockFKParentTableSchema &, bool only_history);
+  int insert_mock_parent_columns(const share::schema::ObMockFKParentTableSchema &);
+  int erase_mock_parent(const share::schema::ObMockFKParentTableSchema &);
+  int erase_mock_parent_columns(const share::schema::ObMockFKParentTableSchema &);
+  int update_mock_parent_version(const share::schema::ObMockFKParentTableSchema &);
   int close();
   const ns::NamespaceCatalogViews::Handle &view() const;
 private:
