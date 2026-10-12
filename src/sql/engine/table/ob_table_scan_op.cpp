@@ -3581,9 +3581,9 @@ int ObTableScanOp::init_spatial_index_rows()
     int64_t *slot = nullptr;
     if (OB_ISNULL(expr)) {
       ret = OB_ERR_UNEXPECTED;
-    } else if (expr->type_ == T_FUN_SYS_SPATIAL_CELLID) {
+    } else if (expr->type_ == T_FUN_SYS_INDEX_VALUE && expr->datum_meta_.type_ == ObUInt64Type) {
       slot = &cell_idx;
-    } else if (expr->type_ == T_FUN_SYS_SPATIAL_MBR) {
+    } else if (expr->type_ == T_FUN_SYS_INDEX_VALUE && expr->datum_meta_.type_ == ObVarcharType) {
       slot = &mbr_idx;
     } else if (expr->datum_meta_.type_ == ObGeometryType) {
       slot = &geo_idx;

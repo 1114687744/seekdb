@@ -28,8 +28,7 @@
 #include "sql/resolver/expr/ob_raw_expr_util.h"
 #include "sql/engine/expr/ob_plugin_expr_utils.h"
 #include "sql/engine/expr/plugin_function_expr.h"
-#include "sql/engine/expr/ob_expr_spatial_cellid.h"
-#include "sql/engine/expr/ob_expr_spatial_mbr.h"
+#include "sql/engine/expr/index_value_expr.h"
 #include "share/geo/ob_s2adapter.h"
 #include "share/geo/ob_srs_info.h"
 #include "share/geo/ob_srs_wkt_parser.h"
@@ -409,7 +408,7 @@ static int plugin_nodes(const ObRawExpr &raw)
   const auto *udf = dynamic_cast<const ObUDFRawExpr *>(&raw);
   int count = udf && udf->get_udf_id() >= 340000 && udf->get_udf_id() < 340112 ? 1 : 0;
   CHECK(raw.get_expr_type() != T_FUN_SYS_PLUGIN_FUNCTION);
-  CHECK(raw.get_expr_type() != T_FUN_SYS_ST_AREA);
+  if (count != 0) CHECK(raw.get_expr_type() == T_FUN_UDF);
   for (int64_t i = 0; i < raw.get_param_count(); ++i) count += plugin_nodes(*raw.get_param_expr(i));
   return count;
 }
@@ -557,21 +556,11 @@ static void spatial_index_placeholders()
   uint64_t storage = 123;
   ObDatum result(reinterpret_cast<const char *>(&storage), sizeof(storage), false);
   result.set_uint(123);
-  CHECK(ObExprSpatialCellid::eval_spatial_cellid(expr, eval, result) == OB_SUCCESS);
+  CHECK(IndexValueExpr::eval_index_value(expr, eval, result) == OB_SUCCESS);
   CHECK(result.is_null());
   result.set_uint(123);
-  CHECK(ObExprSpatialMbr::eval_spatial_mbr(expr, eval, result) == OB_SUCCESS);
+  CHECK(IndexValueExpr::eval_index_value(expr, eval, result) == OB_SUCCESS);
   CHECK(result.is_null());
-  ObExprCtx old_context;
-  ObObj old_result, argument;
-  ObExprSpatialCellid cell(arena);
-  ObExprSpatialMbr mbr(arena);
-  old_result.set_int(123);
-  CHECK(cell.calc_result1(old_result, argument, old_context) == OB_SUCCESS);
-  CHECK(old_result.is_null());
-  old_result.set_int(123);
-  CHECK(mbr.calc_result1(old_result, argument, old_context) == OB_SUCCESS);
-  CHECK(old_result.is_null());
   std::cout << "PASS: internal spatial index placeholders return NULL without plugin/operand evaluation" << std::endl;
 }
 
@@ -874,7 +863,8 @@ int main(int argc, char **argv)
   CHECK(OTTZ_MGR.init(timezone_proxy) == OB_SUCCESS);
   spatial_index_placeholders();
   for (const char *name : {"point", "st_area", "st_distance", "st_length", "st_x", "st_y",
-                           "st_geomfromtext", "st_geomfromwkb", "geometrycollection", "area"}) {
+                           "st_geomfromtext", "st_geomfromwkb", "geometrycollection", "area",
+                           "spatial_cellid", "spatial_mbr"}) {
     CHECK(ObExprOperatorFactory::get_type_by_name(ObString::make_string(name)) == T_INVALID);
   }
   native_activation_test::Observation observation;
@@ -1172,14 +1162,31 @@ int main(int argc, char **argv)
         "ST_X(_ST_MakePoint(3,4)) = 3",
         "LENGTH(ST_AsText(ST_GeomFromText(CONCAT('LINESTRING(',REPEAT('0 0,',20000),'1 1)')))) > 65535",
     }) expression(provider, catalog, sql);
-    // Unqualified names remain internal built-ins for generated index columns.
-    // They must not even evaluate their plugin-backed POINT operand.
-    expression(provider, catalog, "spatial_cellid(POINT(3,4)) IS NULL", false);
-    expression(provider, catalog, "spatial_mbr(POINT(3,4)) IS NULL", false);
+    for (const auto &slot : {
+        std::make_pair("__seekdb_index_value(POINT(3,4),CAST(NULL AS UNSIGNED))", ObUInt64Type),
+        std::make_pair("__seekdb_index_value(POINT(3,4),CAST(NULL AS BINARY(32)))", ObVarcharType)}) {
+      ObRawExpr *raw = nullptr;
+      ObSQLSessionInfo::ExecCtxSessionRegister registration(*catalog.session, &catalog.execution);
+      const int status = catalog.resolve(slot.first, raw);
+      if (status != OB_SUCCESS) std::cerr << "index slot resolution=" << status << ": " << slot.first << std::endl;
+      CHECK(status == OB_SUCCESS && raw);
+      CHECK(raw->formalize(catalog.session.get()) == OB_SUCCESS);
+      CHECK(raw->is_index_value_expr(slot.second));
+      CHECK(raw->get_param_count() == 2 && raw->get_param_expr(0)->is_udf_expr());
+      if (slot.second == ObVarcharType) {
+        CHECK(raw->get_result_type().get_length() == 32);
+        CHECK(raw->get_result_type().get_collation_type() == CS_TYPE_BINARY);
+      }
+    }
+    // Only generic storage slots skip operand evaluation. Public GIS names,
+    // whether qualified or not, must bind database-local native routines.
+    expression(provider, catalog, "__seekdb_index_value(POINT(3,4),CAST(NULL AS UNSIGNED)) IS NULL", false);
+    expression(provider, catalog, "__seekdb_index_value(POINT(3,4),CAST(NULL AS BINARY(32))) IS NULL", false);
+    expression(provider, catalog, "spatial_cellid(POINT(3,4)) IS NULL");
+    expression(provider, catalog, "spatial_mbr(POINT(3,4)) IS NULL");
     const int cell_calls = provider.function_calls_["org.seekdb.gis.function.spatial_cellid"];
     const int mbr_calls = provider.function_calls_["org.seekdb.gis.function.spatial_mbr"];
-    // Qualify the SQL-package compatibility routines so the test cannot pass
-    // merely by executing the built-in placeholders instead of the actual DSO.
+    // Qualified compatibility routines use the same DSO implementations.
     for (const char *sql : {
         "gis_db.spatial_cellid(POINT(3,4)) IS NULL",
         "gis_db.spatial_mbr(POINT(3,4)) IS NULL",

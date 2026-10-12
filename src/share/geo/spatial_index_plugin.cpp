@@ -24,7 +24,6 @@
 #include <vector>
 #include <new>
 
-#if !SEEKDB_ENABLE_CORE_GIS
 namespace oceanbase::common {
 struct SpatialIndexState {
   seekdb_plugin_spatial_cover_result_v2_t header{};
@@ -454,4 +453,3 @@ int ObSpatialMBR::filter(const ObSpatialMBR &other, ObDomainOpType type, bool &p
   return OB_SUCCESS;
 }
 } // namespace oceanbase::common
-#endif

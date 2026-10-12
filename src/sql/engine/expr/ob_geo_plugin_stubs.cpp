@@ -26,7 +26,6 @@ namespace oceanbase
 namespace sql
 {
 
-#if !SEEKDB_ENABLE_CORE_GIS
 int ObGeoExprUtils::get_srs_item(ObEvalCtx &ctx,
                                  common::ObSrsCacheGuard &srs_guard,
                                  const uint32_t srid,
@@ -77,7 +76,6 @@ int ObGeoExprUtils::check_empty(common::ObGeometry *geo, bool &is_empty)
   is_empty = true;
   return OB_NOT_SUPPORTED;
 }
-#endif
 
 } // namespace sql
 } // namespace oceanbase
@@ -87,7 +85,6 @@ namespace oceanbase
 namespace common
 {
 
-#if !SEEKDB_ENABLE_CORE_GIS
 int ObGeoTypeUtil::get_type_srid_from_wkb(const ObString &wkb,
                                           ObGeoType &type,
                                           uint32_t &srid)
@@ -97,7 +94,6 @@ int ObGeoTypeUtil::get_type_srid_from_wkb(const ObString &wkb,
   srid = 0;
   return OB_NOT_SUPPORTED;
 }
-#endif
 
 } // namespace common
 } // namespace oceanbase

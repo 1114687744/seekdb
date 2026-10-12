@@ -99,7 +99,7 @@ static void native_spatial_ranges(GisProvider &provider, GisCatalogContext &cata
   if (added != OB_SUCCESS) std::cerr << "native range add table=" << added << std::endl;
   CHECK(added == OB_SUCCESS);
   CHECK(MockSchemaService::cache_table(catalog.guard, *table) == OB_SUCCESS);
-  CHECK(ObExprOperatorFactory::get_type_by_name(ObString::make_string("spatial_mbr")) == T_FUN_SYS_SPATIAL_MBR);
+  CHECK(ObExprOperatorFactory::get_type_by_name(ObString::make_string("__seekdb_index_value")) == T_FUN_SYS_INDEX_VALUE);
   for (const auto *column : generated_columns) {
     bool has_index = false;
     const int status = catalog.checker.check_column_has_index(table->get_table_id(), column->get_column_id(), has_index);

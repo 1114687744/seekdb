@@ -494,7 +494,7 @@ END_P SET_VAR DELIMITER
 %type <node> json_extract_unquote_expr json_extract_expr json_query_expr opt_multivalue opt_asis opt_array opt_pretty opt_wrapper opt_scalars opt_query_on_error_or_empty_or_mismatch  on_empty_query  on_error_query on_mismatch_query opt_response_query
 %type <node> ws_nweights opt_ws_as_char opt_ws_levels ws_level_flag_desc ws_level_flag_reverse ws_level_flags ws_level_list ws_level_list_item ws_level_number ws_level_range ws_level_list_or_range
 %type <node> get_diagnostics_stmt get_statement_diagnostics_stmt get_condition_diagnostics_stmt statement_information_item_list condition_information_item_list statement_information_item condition_information_item statement_information_item_name condition_information_item_name condition_arg
-%type <node> method_opt method_list method extension mvt_param
+%type <node> method_opt method_list method extension
 %type <node> opt_storage_name opt_calibration_list calibration_info_list
 %type <node> external_file_format_list external_file_format
 %type <node> dynamic_sampling_hint
@@ -3115,76 +3115,86 @@ MOD '(' expr ',' expr ')'
 }
 | POINT '(' expr ',' expr ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_POINT, 2, $3, $5);
+  ParseNode *params = NULL;
+  malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 2, $3, $5);
+  make_name_node($$, result->malloc_pool_, "point");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | LINESTRING '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_LINESTRING, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "linestring");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | MULTIPOINT '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_MULTIPOINT, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "multipoint");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | MULTILINESTRING '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_MULTILINESTRING, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "multilinestring");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | POLYGON '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_POLYGON, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "polygon");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | MULTIPOLYGON '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_MULTIPOLYGON, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "multipolygon");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | GEOMCOLLECTION '(' expr_list ')'
 {
-  ParseNode *expr_list = $3;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_GEOMCOLLECTION, 1, expr_list);
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "geomcollection");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | GEOMCOLLECTION '(' ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_GEOMCOLLECTION, 1, NULL);
+  make_name_node($$, result->malloc_pool_, "geomcollection");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 1, $$);
+  $$->int16_values_[0] = 1;
 }
 | GEOMETRYCOLLECTION '(' expr_list ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_GEOMCOLLECTION, 1, $3);
-  $$->value_ = 1; /* Preserve the SQL alias for database-local routine lookup. */
+  ParseNode *params = NULL;
+  params = $3;
+  make_name_node($$, result->malloc_pool_, "geometrycollection");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | GEOMETRYCOLLECTION '(' ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_GEOMCOLLECTION, 1, NULL);
-  $$->value_ = 1;
+  make_name_node($$, result->malloc_pool_, "geometrycollection");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 1, $$);
+  $$->int16_values_[0] = 1;
 }
-| _ST_ASMVT '(' column_ref ')'
+| _ST_ASMVT '(' expr_list ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_ST_ASMVT, 1, $3);
-  $$->reserved_ = 0;
-}
-| _ST_ASMVT '(' column_ref ',' mvt_param ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_ST_ASMVT, 2, $3, $5);
-  $$->reserved_ = 0;
-}
-| _ST_ASMVT '(' column_ref ',' mvt_param ',' mvt_param ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_ST_ASMVT, 3, $3, $5, $7);
-  $$->reserved_ = 0;
-}
-| _ST_ASMVT '(' column_ref ',' mvt_param ',' mvt_param ',' mvt_param ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_ST_ASMVT, 4, $3, $5, $7, $9);
-  $$->reserved_ = 0;
-}
-| _ST_ASMVT '(' column_ref ',' mvt_param ',' mvt_param ',' mvt_param ',' mvt_param ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_ST_ASMVT, 5, $3, $5, $7, $9, $11);
-  $$->reserved_ = 0;
+  ParseNode *params = $3;
+  make_name_node($$, result->malloc_pool_, "_st_asmvt");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+  $$->int16_values_[0] = 1;
 }
 | SUM_OPNSIZE '(' expr ')'
 {
@@ -3330,18 +3340,6 @@ COSINE
   $$->is_hidden_const_ = 1;
   $$->value_ = 3;
 }
-;
-
-mvt_param:
-STRING_VALUE { $$ = $1; }
-| INTNUM { $$ = $1; }
-| '-' INTNUM
-{
-  $2->value_ = -$2->value_;
-  $$ = $2;
-}
-| NULLX { $$ = $1; }
-| column_ref { $$ = $1; }
 ;
 
 sys_interval_func:

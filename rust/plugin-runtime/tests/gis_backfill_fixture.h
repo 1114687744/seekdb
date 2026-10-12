@@ -58,7 +58,7 @@ static void spatial_backfill(GisProvider &provider)
     ObExpr &expr = *exprs[i];
     expr.frame_idx_ = i; expr.datum_off_ = 0; expr.eval_info_off_ = 256;
     expr.res_buf_off_ = 512; expr.res_buf_len_ = 128;
-    expr.type_ = i == 2 ? T_FUN_SYS_SPATIAL_CELLID : i == 3 ? T_FUN_SYS_SPATIAL_MBR : T_REF_COLUMN;
+    expr.type_ = i >= 2 ? T_FUN_SYS_INDEX_VALUE : T_REF_COLUMN;
     expr.datum_meta_.type_ = i == 0 ? ObGeometryType : i == 3 ? ObVarcharType : ObUInt64Type;
     expr.datum_meta_.cs_type_ = CS_TYPE_BINARY;
     expr.obj_meta_.set_type(expr.datum_meta_.type_);
@@ -181,7 +181,7 @@ static void spatial_backfill(GisProvider &provider)
   Scan malformed(execution, spec); malformed.bind(source, frames);
   mbr.type_ = T_REF_COLUMN;
   CHECK(malformed.init_rows() == OB_ERR_UNEXPECTED && !malformed.cache_initialized());
-  mbr.type_ = T_FUN_SYS_SPATIAL_MBR;
+  mbr.type_ = T_FUN_SYS_INDEX_VALUE;
   CHECK(malformed.init_rows() == OB_SUCCESS && malformed.cache_initialized());
   class Allocator final : public ObIAllocator {
   public:

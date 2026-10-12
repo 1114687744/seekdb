@@ -39,7 +39,7 @@ def main():
     subprocess.run(["cmake", "--build", str(build), "--target", "seekdb_gis_plugin", "-j2"], check=True)
     with tempfile.TemporaryDirectory(prefix="seekdb-gis-wkt-") as directory:
         stage = pathlib.Path(directory)
-        # CORE_GIS=OFF has a deliberately nonfunctional type-name stub. Supply
+        # The core has a deliberately nonfunctional type-name stub. Supply
         # the exact original helper under a test-local name, without replacing
         # any production symbol. The visitor algorithms below are unchanged.
         original = (source / "src/share/geo/ob_geo_utils.cpp").read_text()
@@ -55,17 +55,9 @@ def main():
         (stage / "legacy_geo_name_probe.h").write_text(
             '#include "share/geo/ob_geo_utils.h"\nnamespace oceanbase { namespace common {\n' + helper + "}}\n")
         paths = [pathlib.Path(__file__).with_suffix(".cpp").resolve()]
-        ewkb = (source / "src/sql/engine/expr/ob_expr_st_geomfromewkb.cpp").read_text()
-        begin = ewkb.index("int ObExprPrivSTGeomFromEWKB::get_header_info_from_ewkb(")
-        end = ewkb.index("int ObExprPrivSTGeomFromEWKB::create_geo_by_ewkb(", begin)
-        # Keep the original header and root rewrite bodies, under a test-only
-        # class name. Do not call the CORE_GIS=OFF factory stubs.
-        (stage / "legacy_ewkb_header.h").write_text(
-            '#include "share/geo/ob_geo_utils.h"\nnamespace oceanbase { namespace common {\n'
-            'struct LegacyEwkbHeader {\n'
-            'static int get_header_info_from_ewkb(const ObString &, ObGeoWkbHeader &);\n'
-            'static int construct_ewkb_data(ObString &, ObString &);\n};\n'
-            + ewkb[begin:end].replace("ObExprPrivSTGeomFromEWKB", "LegacyEwkbHeader") + "}}\n")
+        # The removed core implementation is retained only as a differential
+        # test fixture; production SQL uses the plugin codec.
+        shutil.copy2(pathlib.Path(__file__).with_name("legacy_ewkb_header.h"), stage)
         header = (source / "src/share/geo/ob_wkt_parser.h").read_text()
         header = header.replace("ObWktParser", "LegacyWktParser").replace("private:", "public:")
         header = header.replace("OCEANBASE_LIB_GEO_OB_WKT_PARSER_", "SEEKDB_TEST_LEGACY_WKT_PARSER_")
@@ -97,7 +89,6 @@ def main():
         for index, path in enumerate(paths):
             obj = stage / (str(index) + ".o")
             command = shlex.split(entry["command"])
-            command = [arg.replace("SEEKDB_ENABLE_CORE_GIS=0", "SEEKDB_ENABLE_CORE_GIS=1") for arg in command]
             command[command.index("-o") + 1] = str(obj)
             command[command.index("-c") + 1] = str(path)
             command.extend(["-I", str(stage), "-I", str(source / "src/share/geo")])

@@ -1389,11 +1389,6 @@ int ObRawExprDeduceType::visit(ObAggFunRawExpr &expr)
          }
         break;
       }
-      case T_FUN_SYS_ST_ASMVT: {
-        if (OB_FAIL(set_asmvt_result_type(expr, result_type))) {
-        }
-        break;
-      }
       case T_FUNC_SYS_ARRAY_AGG: {
         if (OB_FAIL(set_array_agg_result_type(expr, result_type))) {
         }
@@ -2682,21 +2677,6 @@ int ObRawExprDeduceType::set_agg_min_max_result_type(ObAggFunRawExpr &expr,
   return ret;
 }
 
-int ObRawExprDeduceType::set_asmvt_result_type(ObAggFunRawExpr &expr, 
-                                               ObExprResType& result_type)
-{
-  int ret = OB_SUCCESS;
-  if (OB_UNLIKELY(expr.get_real_param_count() < 1)) {
-    ret = OB_INVALID_ARGUMENT;
-  } else {
-    result_type.set_type(ObLongTextType);
-    result_type.set_collation_type(CS_TYPE_BINARY);
-    result_type.set_collation_level(CS_LEVEL_IMPLICIT);
-    result_type.set_accuracy(ObAccuracy::DDL_DEFAULT_ACCURACY[ObLongTextType]);
-    expr.set_result_type(result_type);
-  }
-  return ret;
-}
 
 int ObRawExprDeduceType::set_array_agg_result_type(ObAggFunRawExpr &expr, 
                                                    ObExprResType& result_type)
@@ -2964,7 +2944,6 @@ int ObRawExprDeduceType::add_implicit_cast(ObAggFunRawExpr &parent,
       }
     } else if ((parent.get_expr_type() == T_FUN_JSON_OBJECTAGG && i == 1) ||
                (parent.get_expr_type() == T_FUN_ORA_JSON_OBJECTAGG && i > 0) ||
-               parent.get_expr_type() == T_FUN_SYS_ST_ASMVT ||
                ((parent.get_expr_type() == T_FUN_SUM ||
                  parent.get_expr_type() == T_FUN_AVG ||
                  parent.get_expr_type() == T_FUN_COUNT) &&

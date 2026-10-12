@@ -69,7 +69,7 @@ class SqlPluginOwnershipTest(unittest.TestCase):
                     emit(ROOT, output)
             self.assertEqual(output.read_text(), "previous valid inventory\n")
 
-    def test_all_four_cmake_profiles(self):
+    def test_plugin_only_cmake_profiles(self):
         data = self.data
         baseline = [path for group in data["SQL_UNITY_GROUPS"] for path in group["srcs"]]
         baseline += [record["path"] for record in data["SQL_STANDALONE_SOURCES"]]
@@ -104,27 +104,23 @@ if(NOT kept STREQUAL namesake)
   message(FATAL_ERROR "GIS profile removed an unrelated same-named source")
 endif()
 ''', encoding="utf-8")
-            for core_gis in (False, True):
-                for experimental in (False, True):
-                    with self.subTest(core_gis=core_gis, experimental=experimental):
-                        build = stage / f"build-{int(core_gis)}-{int(experimental)}"
-                        result = subprocess.run([
-                            "cmake", "-S", str(stage), "-B", str(build),
-                            "-DSEEKDB_ENABLE_CORE_GIS=" + ("ON" if core_gis else "OFF"),
-                            "-DSEEKDB_ENABLE_EXPERIMENTAL_PLUGINS=" + ("ON" if experimental else "OFF"),
-                        ], capture_output=True, text=True, timeout=45)
-                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                        selected = [Path(path).relative_to(stage).as_posix()
-                                    for path in (build / "selected.txt").read_text().split(";")]
-                        self.assertEqual(len(selected), len(set(selected)), "duplicate compilation owners")
-                        expected = set(baseline)
-                        if not core_gis:
-                            expected = (expected - replacements) | adapters
-                        if experimental:
-                            expected |= runtime
-                        self.assertEqual(set(selected), expected)
-                        definitions = (build / "definitions.txt").read_text().split(";")
-                        self.assertEqual("SEEKDB_WITH_EXPERIMENTAL_PLUGINS=1" in definitions, experimental)
+            for experimental in (False, True):
+                with self.subTest(experimental=experimental):
+                    build = stage / f"build-{int(experimental)}"
+                    result = subprocess.run([
+                        "cmake", "-S", str(stage), "-B", str(build),
+                        "-DSEEKDB_ENABLE_EXPERIMENTAL_PLUGINS=" + ("ON" if experimental else "OFF"),
+                    ], capture_output=True, text=True, timeout=45)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    selected = [Path(path).relative_to(stage).as_posix()
+                                for path in (build / "selected.txt").read_text().split(";")]
+                    self.assertEqual(len(selected), len(set(selected)), "duplicate compilation owners")
+                    expected = (set(baseline) - replacements) | adapters
+                    if experimental:
+                        expected |= runtime
+                    self.assertEqual(set(selected), expected)
+                    definitions = (build / "definitions.txt").read_text().split(";")
+                    self.assertEqual("SEEKDB_WITH_EXPERIMENTAL_PLUGINS=1" in definitions, experimental)
 
 
 if __name__ == "__main__":

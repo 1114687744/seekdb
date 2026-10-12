@@ -42,12 +42,12 @@ class SqlSourceInventoryTest(unittest.TestCase):
 
     def test_missing_source_is_rejected(self):
         self.inputs[0][0].srcs.pop()
-        with self.assertRaisesRegex(ValueError, "1118 Unity sources"):
+        with self.assertRaisesRegex(ValueError, "1066 Unity sources"):
             self.validate(*self.inputs)
 
     def test_unplanned_source_is_rejected(self):
         self.inputs[0][0].srcs.append("src/sql/unplanned.cpp")
-        with self.assertRaisesRegex(ValueError, "1118 Unity sources"):
+        with self.assertRaisesRegex(ValueError, "1066 Unity sources"):
             self.validate(*self.inputs)
 
     def test_wrong_owner_is_rejected(self):

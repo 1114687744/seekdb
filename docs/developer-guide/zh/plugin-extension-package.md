@@ -285,7 +285,7 @@ Rust host；还会调用顶层 CMake install，将 plugins 组件安装到私有
 SQL 编译归属统一维护在 `src/sql/sql_source_inventory.bzl`。新增 SQL 源码时必须
 更新真实 owner 列表，不要仅在某个构建入口手工添加文件或给 ownership 检查加豁免。
 
-- `SQL_GIS_PLUGIN_ADAPTER_SOURCES`：关闭 `SEEKDB_ENABLE_CORE_GIS` 时编译的适配层。
+- `SQL_GIS_PLUGIN_ADAPTER_SOURCES`：始终编译的 GIS 插件适配层，GIS 算法仅由插件提供。
 - `SQL_EXTENSION_RUNTIME_SOURCES`：开启 `SEEKDB_ENABLE_EXPERIMENTAL_PLUGINS` 时
   编译的安装脚本/解析桥接层；同一 helper 为 SQL target 定义实验插件宏。
 - `SQL_CORE_GIS_REPLACED_SOURCES`：关闭 core GIS 时排除的完整路径引用，必须指向

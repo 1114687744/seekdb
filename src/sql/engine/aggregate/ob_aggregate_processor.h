@@ -31,7 +31,6 @@
 #include "sql/optimizer/stat/ob_topk_hist_estimator.h"
 #include "sql/engine/user_defined_function/ob_pl_user_defined_agg_function.h"
 #include "sql/engine/expr/ob_rt_datum_arith.h"
-#include "share/geo/ob_geo_mvt.h"
 #include "sql/engine/basic/ob_hp_infrastructure_manager.h"
 #include "sql/engine/expand/ob_expand_vec_op.h"
 
@@ -1076,14 +1075,6 @@ private:
                                    GroupConcatExtraResult *&extra,
                                    ObDatum &concat_result);
 
-  int get_asmvt_result(const ObAggrInfo &aggr_info,
-                       GroupConcatExtraResult *&extra,
-                       ObDatum &concat_result);
-  int init_asmvt_result(ObIAllocator &allocator,
-                        const ObAggrInfo &aggr_info,
-                        const ObObj *tmp_obj,
-                        uint32_t obj_cnt,
-                        mvt_agg_result &mvt_res);
   int get_array_agg_result(const ObAggrInfo &aggr_info,
                            GroupConcatExtraResult *&extra,
                            ObDatum &concat_result);
@@ -1197,7 +1188,7 @@ public:
       case T_FUN_ORA_JSON_ARRAYAGG:
       case T_FUN_JSON_OBJECTAGG:
       case T_FUN_ORA_JSON_OBJECTAGG: 
-      case T_FUN_SYS_ST_ASMVT: 
+
       case T_FUNC_SYS_ARRAY_AGG:
       {
         need_id = true;
@@ -1335,7 +1326,7 @@ OB_INLINE bool ObAggregateProcessor::need_extra_info(const ObExprOperatorType ex
     case T_FUN_ORA_JSON_ARRAYAGG:
     case T_FUN_JSON_OBJECTAGG:
     case T_FUN_ORA_JSON_OBJECTAGG:
-    case T_FUN_SYS_ST_ASMVT:
+
     case T_FUNC_SYS_ARRAY_AGG:
     {
       need_extra = true;

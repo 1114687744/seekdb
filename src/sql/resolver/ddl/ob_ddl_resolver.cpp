@@ -559,8 +559,7 @@ int ObDDLResolver::resolve_default_value(ParseNode *def_node,
       case T_WHEN:
       case T_FUN_SYS_INTERVAL:
       case T_FUN_SYS_IF:
-      case T_FUN_SYS_ISNULL:
-      case T_FUN_SYS_POINT: {
+      case T_FUN_SYS_ISNULL: {
         resolve_res.is_literal_ = false;
         ObObjParam first;
         ObDefaultValueRes first_res(first);

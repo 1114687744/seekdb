@@ -13,6 +13,7 @@
 # limitations under the License.
 """Offline checks of GIS SQL declaration coverage; not installation tests."""
 import pathlib
+import re
 import unittest
 
 from gis_sql import validate_declaration_inventory
@@ -28,6 +29,28 @@ class DeclarationInventory(unittest.TestCase):
 
     def test_complete(self):
         self.assertEqual(validate_declaration_inventory(self.descriptors, self.sql), (82, 112))
+
+    def test_no_kernel_gis_expression_types(self):
+        source = pathlib.Path(__file__).resolve().parents[3]
+        legacy = r'\bT_FUN_SYS_(?:ST_\w+|PRIV_ST_\w+|SPATIAL_\w+|POINT|LINESTRING|MULTIPOINT|MULTILINESTRING|POLYGON|MULTIPOLYGON|GEOMCOLLECTION)\b'
+        for header in ('src/query/api/query/parser/ob_item_type.h',
+                       'src/objit/include/objit/common/ob_item_type.h'):
+            self.assertIsNone(re.search(legacy, (source / header).read_text()), header)
+        exprs = source / 'src/sql/engine/expr'
+        for pattern in ('ob_expr_st_*', 'ob_expr_priv_st_*', 'ob_expr_point.*',
+                        'ob_expr_spatial_collection.*', 'ob_expr_spatial_cellid.*',
+                        'ob_expr_spatial_mbr.*'):
+            self.assertEqual(list(exprs.glob(pattern)), [], pattern)
+        factory = (exprs / 'ob_expr_operator_factory.cpp').read_text()
+        self.assertNotIn('REG_PLUGIN_GIS_OP', factory)
+
+    def test_index_columns_use_generic_typed_slots(self):
+        source = pathlib.Path(__file__).resolve().parents[3]
+        builder = (source / 'src/sql/resolver/ddl/ob_index_builder_util.cpp').read_text()
+        self.assertIn('__seekdb_index_value(`%s`, CAST(NULL AS UNSIGNED))', builder)
+        self.assertIn('__seekdb_index_value(`%s`, CAST(NULL AS BINARY(32)))', builder)
+        self.assertNotIn('"SPATIAL_CELLID(', builder)
+        self.assertNotIn('"SPATIAL_MBR(', builder)
 
     def test_nullable_descriptor_is_in_inventory(self):
         self.assertIn('GIS_SQL_FUNCTION_NULLABLE("org.seekdb.gis.function.st_asmvtgeom"', self.descriptors)

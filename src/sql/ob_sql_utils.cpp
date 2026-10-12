@@ -282,7 +282,7 @@ int ObSQLUtils::calc_const_or_calculable_expr(
           ret = OB_SUCCESS;
         }
       }
-      if (ignore_failure && !IS_SPATIAL_EXPR(raw_expr->get_expr_type())) {
+      if (ignore_failure && !raw_expr->is_spatial_expr()) {
         ret = OB_SUCCESS;
       }
     } else {
@@ -1996,7 +1996,6 @@ int ObSQLUtils::extract_geo_query_range(const ObQueryRangeProvider &query_range_
                                         ObMbrFilterArray &mbr_filters,
                                         const ObDataTypeCastParams &dtc_params)
 {
-#if !SEEKDB_ENABLE_CORE_GIS
   UNUSED(query_range_provider);
   UNUSED(allocator);
   UNUSED(exec_ctx);
@@ -2004,16 +2003,6 @@ int ObSQLUtils::extract_geo_query_range(const ObQueryRangeProvider &query_range_
   UNUSED(mbr_filters);
   UNUSED(dtc_params);
   return OB_NOT_SUPPORTED;
-#else
-  int ret = OB_SUCCESS;
-  bool dummy_all_single_value_ranges = false;
-  if (OB_FAIL(query_range_provider.get_tablet_ranges(allocator, exec_ctx, key_ranges,
-                                                     dummy_all_single_value_ranges,
-                                                     dtc_params,
-                                                     mbr_filters))) {
-  }
-  return ret;
-#endif
 }
 
 

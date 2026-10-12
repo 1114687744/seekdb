@@ -1977,7 +1977,7 @@ int ObExprRangeConverter::convert_geo_expr(const ObRawExpr *geo_expr,
     } else if (!l_expr->has_flag(CNT_COLUMN) && !r_expr->has_flag(CNT_COLUMN)) {
       // do nothing
     } else {
-      op_type = ObPreRangeGraph::get_geo_relation(expr->get_expr_type());
+      op_type = ObDomainOpType::T_INVALID;
       if (expr->is_udf_expr()) {
         switch (static_cast<const ObUDFRawExpr *>(expr)->get_native_spatial_flags()) {
           case SEEKDB_PLUGIN_EXTENSION_FLAG_SPATIAL_INTERSECTS: op_type = ObDomainOpType::T_GEO_INTERSECTS; break;

@@ -765,7 +765,7 @@ int ObRawExprResolverImpl::do_recursive_resolve(const ParseNode *node,
       case T_FUN_ORA_JSON_ARRAYAGG:
       case T_FUN_ORA_JSON_OBJECTAGG:
       case T_FUN_SUM_OPNSIZE:
-      case T_FUN_SYS_ST_ASMVT:
+
       case T_FUNC_SYS_ARRAY_AGG:
       {
         if (OB_FAIL(process_agg_node(node, expr))) {
@@ -1082,16 +1082,9 @@ int ObRawExprResolverImpl::do_recursive_resolve(const ParseNode *node,
         }
         break;
       }
-      case T_FUN_SYS_POINT:
-      case T_FUN_SYS_LINESTRING:
-      case T_FUN_SYS_MULTIPOINT:
-      case T_FUN_SYS_MULTILINESTRING:
-      case T_FUN_SYS_POLYGON:
-      case T_FUN_SYS_MULTIPOLYGON:
-      case T_FUN_SYS_GEOMCOLLECTION:
       case T_FUN_SYS_ARRAY:
       case T_FUN_SYS_MAP: {
-        OZ (process_geo_func_node(node, expr));
+        OZ (process_collection_func_node(node, expr));
         break;
       }
       case T_FUN_SYS_VECTOR_DISTANCE: {
@@ -2110,7 +2103,7 @@ int ObRawExprResolverImpl::process_vector_similarity_func_node(const ParseNode *
   return ret;
 }
 
-int ObRawExprResolverImpl::set_geo_func_name(ObSysFunRawExpr *func_expr,
+int ObRawExprResolverImpl::set_collection_func_name(ObSysFunRawExpr *func_expr,
                                              const ObItemType func_type)
 {
   int ret = OB_SUCCESS;
@@ -2119,34 +2112,6 @@ int ObRawExprResolverImpl::set_geo_func_name(ObSysFunRawExpr *func_expr,
     ret = OB_INVALID_ARGUMENT;
   } else {
     switch (func_type) {
-      case T_FUN_SYS_POINT: {
-        OX(func_expr->set_func_name(N_POINT));
-        break;
-      }
-      case T_FUN_SYS_LINESTRING: {
-        OX(func_expr->set_func_name(N_LINESTRING));
-        break;
-      }
-      case T_FUN_SYS_POLYGON: {
-        OX(func_expr->set_func_name(N_POLYGON));
-        break;
-      }
-      case T_FUN_SYS_MULTIPOINT: {
-        OX(func_expr->set_func_name(N_MULTIPOINT));
-        break;
-      }
-      case T_FUN_SYS_MULTILINESTRING: {
-        OX(func_expr->set_func_name(N_MULTILINESTRING));
-        break;
-      }
-      case T_FUN_SYS_MULTIPOLYGON: {
-        OX(func_expr->set_func_name(N_MULTIPOLYGON));
-        break;
-      }
-      case T_FUN_SYS_GEOMCOLLECTION: {
-        OX(func_expr->set_func_name(N_GEOMCOLLECTION));
-        break;
-      }
       case T_FUN_SYS_ARRAY: {
         OX(func_expr->set_func_name(N_ARRAY));
         break;
@@ -2165,79 +2130,21 @@ int ObRawExprResolverImpl::set_geo_func_name(ObSysFunRawExpr *func_expr,
   return ret;
 }
 
-int ObRawExprResolverImpl::process_geo_func_node(const ParseNode *node, ObRawExpr *&expr)
+int ObRawExprResolverImpl::process_collection_func_node(const ParseNode *node, ObRawExpr *&expr)
 {
   int ret = OB_SUCCESS;
   ObSysFunRawExpr *func_expr = NULL;
 
-#if !SEEKDB_ENABLE_CORE_GIS
-  if (node && node->type_ != T_FUN_SYS_ARRAY && node->type_ != T_FUN_SYS_MAP) {
-    // POINT/collection names are grammar keywords with legacy parse-node
-    // shapes. Normalize only that syntax; use the ordinary catalog resolver
-    // for binding, arity, types and evaluation, just like ST_Area(name).
-    if (OB_FAIL(ctx_.expr_factory_.create_raw_expr(T_FUN_SYS, func_expr))) return ret;
-    if (OB_FAIL(set_geo_func_name(func_expr, node->type_))) return ret;
-    if (node->type_ == T_FUN_SYS_GEOMCOLLECTION && node->value_ == 1) {
-      func_expr->set_func_name(N_GEOMETRYCOLLECTION);
-    }
-    if (!node->children_ || node->num_child_ < 1) return OB_ERR_PARSER_SYNTAX;
-    ParseNode name = {}, arguments = {}, call = {};
-    name.type_ = T_IDENT;
-    name.str_value_ = func_expr->get_func_name().ptr();
-    name.str_len_ = func_expr->get_func_name().length();
-    ParseNode *parameters = node->children_[0];
-    if (node->type_ == T_FUN_SYS_POINT) {
-      if (node->num_child_ != 2) return OB_ERR_PARSER_SYNTAX;
-      arguments.type_ = T_EXPR_LIST;
-      arguments.num_child_ = node->num_child_;
-      arguments.children_ = node->children_;
-      parameters = &arguments;
-    }
-    ParseNode *children[] = {&name, parameters};
-    call.type_ = T_FUN_SYS;
-    // Ordinary parenthesized call, not Oracle's NEW constructor syntax.
-    call.int16_values_[0] = 1;
-    call.num_child_ = parameters ? 2 : 1;
-    call.children_ = children;
-    ret = process_fun_sys_node(&call, expr, false);
-    if (ret == OB_ERR_FUNCTION_UNKNOWN) {
-      // Keyword constructors have no outer T_FUN_SYS fallback. Once a module
-      // only publishes implementations, resolve its SQL declaration through
-      // the same database routine namespace as an ordinary function call.
-      ParseNode *object_access = nullptr;
-      if (OB_FAIL(ObResolverUtils::transform_sys_func_to_objaccess(
-              &ctx_.expr_factory_.get_allocator(), &call, object_access))) {
-      } else if (OB_ISNULL(object_access)) {
-        ret = OB_ERR_UNEXPECTED;
-      } else {
-        ret = process_obj_access_node(*object_access, expr);
-      }
-    }
-    return ret;
-  }
-#endif
-
   if (OB_ISNULL(node)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(ctx_.expr_factory_.create_raw_expr(node->type_, func_expr))) {
-  } else if (OB_FAIL(set_geo_func_name(func_expr, node->type_))) {
-  } else if (T_FUN_SYS_POINT == node->type_) {
-    ObRawExpr *sub_expr1 = NULL;
-    ObRawExpr *sub_expr2 = NULL;
-    if (OB_UNLIKELY(2 != node->num_child_) || OB_ISNULL(node->children_)) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (OB_FAIL(SMART_CALL(recursive_resolve(node->children_[0], sub_expr1)))) {
-    } else if (OB_FAIL(SMART_CALL(recursive_resolve(node->children_[1], sub_expr2)))) {
-    } else if (OB_FAIL(func_expr->set_param_exprs(sub_expr1, sub_expr2))) {
-    }
-  } else if (OB_ISNULL(node->children_[0]) && T_FUN_SYS_GEOMCOLLECTION == node->type_) { // SELECT GEOMETRYCOLLECTION();
-    // do nothing
+  } else if (OB_FAIL(set_collection_func_name(func_expr, node->type_))) {
   } else {
     ParseNode *expr_list_node = node->children_[0];
     if (OB_ISNULL(expr_list_node) || OB_UNLIKELY(T_EXPR_LIST != expr_list_node->type_)
         || OB_ISNULL(expr_list_node->children_)) {
       ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("invalid children for geometry type function", K(node), K(expr_list_node));
+      LOG_WARN("invalid children for collection function", K(node), K(expr_list_node));
     } else if (OB_FAIL(func_expr->init_param_exprs(expr_list_node->num_child_))) {
     }
     for (int64_t i = 0; OB_SUCC(ret) && i < expr_list_node->num_child_; ++i) {
@@ -2416,7 +2323,7 @@ int ObRawExprResolverImpl::process_array_map_func_node(const ParseNode *node, Ob
         if (OB_ISNULL(expr_list_node) || OB_UNLIKELY(T_EXPR_LIST != expr_list_node->type_)
             || OB_ISNULL(expr_list_node->children_)) {
           ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("invalid children for geometry type function", K(node), K(expr_list_node));
+          LOG_WARN("invalid children for collection function", K(node), K(expr_list_node));
         } else if (expr_list_node->num_child_ != node->children_[0]->children_[0]->num_child_) {
           ret = OB_ERR_PARAM_SIZE;
           ObString func_name_("lambda function");
@@ -3600,15 +3507,6 @@ int ObRawExprResolverImpl::process_agg_node(const ParseNode *node, ObRawExpr *&e
           (static_cast<ObConstRawExpr *>(sub_expr))->set_scale(1);
         }
         if (OB_SUCC(ret) && OB_FAIL(agg_expr->add_real_param_expr(sub_expr))) {
-        }
-      } // end for
-    } else if (T_FUN_SYS_ST_ASMVT == node->type_) {
-      for (int64_t i = 0; OB_SUCC(ret) && i < node->num_child_; ++i) {
-        sub_expr = NULL;
-        if (OB_ISNULL(node->children_[i])) {
-          // do nothing
-        } else if (OB_FAIL(SMART_CALL(recursive_resolve(node->children_[i], sub_expr)))) {
-        } else if (OB_FAIL(agg_expr->add_real_param_expr(sub_expr))) {
         }
       } // end for
     } else if (T_FUNC_SYS_ARRAY_AGG == node->type_) {

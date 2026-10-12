@@ -90,7 +90,6 @@ _SQL_RUNTIME_SHARE_FREE_GROUPS = [
 ]
 
 _SQL_RUNTIME_SPARSE_SHARE_GROUPS = [
-    'ob_sql_engine_vector_continuous_0',
 ]
 
 _SQL_RUNTIME_COMMON_ONLY_GROUPS = [
@@ -290,7 +289,6 @@ _SQL_RUNTIME_EXTRA_DEP_CONSUMERS = {
         'ob_sql_engine_expr_7',
         'ob_sql_engine_expr_8',
         'ob_sql_engine_expr_9',
-        'ob_sql_engine_vector_continuous_0',
     ],
     '//src/share:geo_serialization': [
         'ob_sql_code_generator_0',
@@ -553,7 +551,6 @@ _SQL_RUNTIME_EXTRA_DEP_CONSUMERS = {
         'ob_sql_engine_expr_13',
         'ob_sql_engine_expr_2',
         'ob_sql_engine_expr_7',
-        'ob_sql_engine_vector_continuous_0',
         'ob_sql_engine_expr_8',
         'ob_sql_engine_expr_9',
         'ob_sql_engine_join_0',

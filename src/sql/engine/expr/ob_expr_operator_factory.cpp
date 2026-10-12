@@ -278,35 +278,7 @@
 #include "sql/engine/expr/ob_expr_scn_to_timestamp.h"
 #include "sql/engine/expr/ob_expr_errno.h"
 #include "sql/engine/expr/ob_expr_json_query.h"
-#include "sql/engine/expr/ob_expr_point.h"
-#include "sql/engine/expr/ob_expr_spatial_collection.h"
-#include "sql/engine/expr/ob_expr_st_area.h"
-#include "sql/engine/expr/ob_expr_st_intersects.h"
-#include "sql/engine/expr/ob_expr_st_x.h"
-#include "sql/engine/expr/ob_expr_st_transform.h"
-#include "sql/engine/expr/ob_expr_priv_st_transform.h"
-#include "sql/engine/expr/ob_expr_st_covers.h"
-#include "sql/engine/expr/ob_expr_st_bestsrid.h"
-#include "sql/engine/expr/ob_expr_st_astext.h"
-#include "sql/engine/expr/ob_expr_st_buffer.h"
-#include "sql/engine/expr/ob_expr_spatial_cellid.h"
-#include "sql/engine/expr/ob_expr_spatial_mbr.h"
-#include "sql/engine/expr/ob_expr_st_geomfromewkb.h"
-#include "sql/engine/expr/ob_expr_st_geomfromwkb.h"
-#include "sql/engine/expr/ob_expr_st_geomfromewkt.h"
-#include "sql/engine/expr/ob_expr_priv_st_geographyfromtext.h"
-#include "sql/engine/expr/ob_expr_st_asewkt.h"
-#include "sql/engine/expr/ob_expr_st_distance.h"
-#include "sql/engine/expr/ob_expr_st_geometryfromtext.h"
-#include "sql/engine/expr/ob_expr_priv_st_setsrid.h"
-#include "sql/engine/expr/ob_expr_priv_st_point.h"
-#include "sql/engine/expr/ob_expr_st_isvalid.h"
-#include "sql/engine/expr/ob_expr_st_dwithin.h"
-#include "sql/engine/expr/ob_expr_st_aswkb.h"
-#include "sql/engine/expr/ob_expr_st_distance_sphere.h"
-#include "sql/engine/expr/ob_expr_st_contains.h"
-#include "sql/engine/expr/ob_expr_st_within.h"
-#include "sql/engine/expr/ob_expr_priv_st_asewkb.h"
+#include "sql/engine/expr/index_value_expr.h"
 #include "sql/engine/expr/ob_expr_current_scn.h"
 #include "sql/engine/expr/ob_expr_name_const.h"
 #include "sql/engine/expr/ob_expr_format_bytes.h"
@@ -317,28 +289,10 @@
 #include "sql/engine/expr/ob_expr_prefix_pattern.h"
 #include "sql/engine/expr/ob_expr_extract_value.h"
 #include "sql/engine/expr/ob_expr_update_xml.h"
-#include "sql/engine/expr/ob_expr_priv_st_numinteriorrings.h"
-#include "sql/engine/expr/ob_expr_priv_st_iscollection.h"
-#include "sql/engine/expr/ob_expr_priv_st_equals.h"
-#include "sql/engine/expr/ob_expr_priv_st_touches.h"
 #include "sql/engine/expr/ob_expr_align_date4cmp.h"
 #include "sql/engine/expr/ob_expr_extract_cert_expired_time.h"
 #include "sql/engine/expr/ob_expr_transaction_id.h"
 #include "sql/engine/expr/ob_expr_inner_row_cmp_val.h"
-#include "sql/engine/expr/ob_expr_priv_st_makeenvelope.h"
-#include "sql/engine/expr/ob_expr_priv_st_clipbybox2d.h"
-#include "sql/engine/expr/ob_expr_priv_st_pointonsurface.h"
-#include "sql/engine/expr/ob_expr_priv_st_geometrytype.h"
-#include "sql/engine/expr/ob_expr_st_crosses.h"
-#include "sql/engine/expr/ob_expr_st_overlaps.h"
-#include "sql/engine/expr/ob_expr_st_union.h"
-#include "sql/engine/expr/ob_expr_st_length.h"
-#include "sql/engine/expr/ob_expr_st_difference.h"
-#include "sql/engine/expr/ob_expr_st_asgeojson.h"
-#include "sql/engine/expr/ob_expr_st_centroid.h"
-#include "sql/engine/expr/ob_expr_st_symdifference.h"
-#include "sql/engine/expr/ob_expr_priv_st_asmvtgeom.h"
-#include "sql/engine/expr/ob_expr_priv_st_makevalid.h"
 #include "sql/engine/expr/ob_expr_gtid.h"
 #include "sql/engine/expr/ob_expr_array.h"
 #include "sql/engine/expr/ob_expr_vec_ivf_center_id.h"
@@ -398,8 +352,6 @@
 #include "sql/engine/expr/ob_expr_array_first.h"
 #include "sql/engine/expr/ob_expr_mysql_proc_info.h"
 #include "sql/engine/expr/ob_expr_get_mysql_routine_parameter_type_str.h"
-#include "sql/engine/expr/ob_expr_priv_st_geohash.h"
-#include "sql/engine/expr/ob_expr_priv_st_makepoint.h"
 #include "sql/engine/expr/ob_expr_to_pinyin.h"
 #include "sql/engine/expr/ob_expr_url_codec.h"
 #include "sql/engine/expr/ob_expr_keyvalue.h"
@@ -445,15 +397,6 @@ static AllocFunc OP_ALLOC[T_MAX_OP];
     }();                                            \
   } while(0)
 
-#if SEEKDB_ENABLE_CORE_GIS
-#define REG_PLUGIN_GIS_OP(OpClass) REG_OP(OpClass)
-#else
-// SQL names/signatures belong to the GIS catalog. Keep only the legacy numeric
-// allocation entry for expressions synthesized by internal spatial machinery;
-// user SQL must resolve through PluginFunctionExpr, never a per-function shim.
-#define REG_PLUGIN_GIS_OP(OpClass) \
-  do { OpClass op(alloc); OP_ALLOC[op.get_type()] = ObExprOperatorFactory::alloc<OpClass>; } while (0)
-#endif
 // When developing two functionally identical expressions (e.g., mid and substr expressions) you can use this macro
 // OriOp is the existing expression, now we want to develop NewOp with the same functionality, using this macro can avoid duplicate code
 // But require OriOp has already registered
@@ -852,54 +795,7 @@ void ObExprOperatorFactory::register_expr_operators()
     // convert input value into an OceanBase error number and throw out as exception
     REG_OP(ObExprErrno);
 #endif
-    REG_PLUGIN_GIS_OP(ObExprPoint);
-    REG_PLUGIN_GIS_OP(ObExprLineString);
-    REG_PLUGIN_GIS_OP(ObExprMultiPoint);
-    REG_PLUGIN_GIS_OP(ObExprMultiLineString);
-    REG_PLUGIN_GIS_OP(ObExprPolygon);
-    REG_PLUGIN_GIS_OP(ObExprMultiPolygon);
-    REG_PLUGIN_GIS_OP(ObExprGeomCollection);
-    REG_PLUGIN_GIS_OP(ObExprGeometryCollection);
-    REG_PLUGIN_GIS_OP(ObExprSTGeomFromText);
-#if SEEKDB_ENABLE_CORE_GIS
-    REG_OP(ObExprSTArea);
-#endif
-    REG_PLUGIN_GIS_OP(ObExprSTIntersects);
-    REG_PLUGIN_GIS_OP(ObExprSTX);
-    REG_PLUGIN_GIS_OP(ObExprSTY);
-    REG_PLUGIN_GIS_OP(ObExprSTLatitude);
-    REG_PLUGIN_GIS_OP(ObExprSTLongitude);
-    REG_PLUGIN_GIS_OP(ObExprSTTransform);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTTransform);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTCovers);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTBestsrid);
-    REG_PLUGIN_GIS_OP(ObExprSTAsText);
-    REG_PLUGIN_GIS_OP(ObExprSTAsWkt);
-    REG_PLUGIN_GIS_OP(ObExprSTBufferStrategy);
-    REG_PLUGIN_GIS_OP(ObExprSTBuffer);
-    REG_OP(ObExprSpatialCellid);
-    REG_OP(ObExprSpatialMbr);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeomFromEWKB);
-    REG_PLUGIN_GIS_OP(ObExprSTGeomFromWKB);
-    REG_PLUGIN_GIS_OP(ObExprSTGeometryFromWKB);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeomFromEwkt);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTAsEwkt);
-    REG_PLUGIN_GIS_OP(ObExprSTSRID);
-    REG_PLUGIN_GIS_OP(ObExprSTDistance);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeogFromText);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeographyFromText);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTSetSRID);
-    REG_PLUGIN_GIS_OP(ObExprSTGeometryFromText);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTPoint);
-    REG_PLUGIN_GIS_OP(ObExprSTIsValid);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTBuffer);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTDWithin);
-    REG_PLUGIN_GIS_OP(ObExprSTAsWkb);
-    REG_PLUGIN_GIS_OP(ObExprStPrivAsEwkb);
-    REG_PLUGIN_GIS_OP(ObExprSTAsBinary);
-    REG_PLUGIN_GIS_OP(ObExprSTDistanceSphere);
-    REG_PLUGIN_GIS_OP(ObExprSTContains);
-    REG_PLUGIN_GIS_OP(ObExprSTWithin);
+    REG_OP(IndexValueExpr);
     REG_OP(ObExprFormatBytes);
     REG_OP(ObExprFormatPicoTime);
     REG_OP(ObExprUuid2bin);
@@ -929,10 +825,6 @@ void ObExprOperatorFactory::register_expr_operators()
     REG_OP(ObExprRandom);
     REG_OP(ObExprRandstr);
     REG_OP(ObExprPrefixPattern);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTNumInteriorRings);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTIsCollection);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTEquals);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTTouches);
     REG_OP(ObExprAlignDate4Cmp);
     REG_OP(ObExprJsonQuery);
     REG_OP(ObExprBM25);
@@ -945,22 +837,6 @@ void ObExprOperatorFactory::register_expr_operators()
     REG_OP(ObExprTransactionId);
     REG_OP(ObExprInnerRowCmpVal);
     REG_OP(ObExprTopNFilter);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTMakeEnvelope);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTClipByBox2D);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTPointOnSurface);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeometryType);
-    REG_PLUGIN_GIS_OP(ObExprSTCrosses);
-    REG_PLUGIN_GIS_OP(ObExprSTOverlaps);
-    REG_PLUGIN_GIS_OP(ObExprSTUnion);
-    REG_PLUGIN_GIS_OP(ObExprSTLength);
-    REG_PLUGIN_GIS_OP(ObExprSTDifference);
-    REG_PLUGIN_GIS_OP(ObExprSTAsGeoJson);
-    REG_PLUGIN_GIS_OP(ObExprSTCentroid);
-    REG_PLUGIN_GIS_OP(ObExprSTSymDifference);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTAsMVTGeom);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTMakeValid);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTGeoHash);
-    REG_PLUGIN_GIS_OP(ObExprPrivSTMakePoint);
     REG_OP(ObExprCurrentRole);
     REG_OP(ObExprArray);
     REG_OP(ObExprDemoteCast);
@@ -1235,14 +1111,6 @@ void ObExprOperatorFactory::get_function_alias_name(const ObString &origin_name,
     } else if (0 == origin_name.case_compare("character_length")) {
       // character_length is synonym for char_length
       alias_name = ObString::make_string(N_CHAR_LENGTH);
-#if SEEKDB_ENABLE_CORE_GIS
-    } else if (0 == origin_name.case_compare("area")) {
-      // area is synonym for st_area
-      alias_name = ObString::make_string(N_ST_AREA);
-    } else if (0 == origin_name.case_compare("centroid")) {
-      // centroid is synonym for st_centroid
-      alias_name = ObString::make_string(N_ST_CENTROID);
-#endif
     } else if (0 == origin_name.case_compare("semantic_distance")) {
       alias_name = ObString::make_string(N_SEMANTIC_DISTANCE);
     } else {

@@ -3722,10 +3722,10 @@ int ObStaticEngineCG::generate_normal_tsc(ObLogTableScan &op, ObTableScanSpec &s
           if (expr->get_expr_type() == T_REF_COLUMN) {
             const ObColumnRefRawExpr *column_expr = static_cast<const ObColumnRefRawExpr*>(expr);
             if (OB_ISNULL(column_expr->get_dependant_expr())) {
-            } else if (column_expr->get_dependant_expr()->get_expr_type() == T_FUN_SYS_SPATIAL_CELLID) {
+            } else if (column_expr->get_dependant_expr()->is_index_value_expr(ObUInt64Type)) {
               spec.set_spatial_ddl(true);
             }
-          } else if (expr->get_expr_type() == T_FUN_SYS_SPATIAL_CELLID) {
+          } else if (expr->is_index_value_expr(ObUInt64Type)) {
             spec.set_spatial_ddl(true);
           } else if (expr->get_expr_type() == T_FUN_SYS_JSON_QUERY && expr->is_multivalue_index_column_expr()) {
             // TODO: @yunyi, remove me later after support post-building multivalue index vectorization.

@@ -409,9 +409,9 @@ def emit(repo: Path, output: Path, generated_root: Optional[Path] = None) -> Non
                        "src/sql/sql_source_inventory.bzl:SQL_SIMD_UNITY_GROUPS[",
                        "src/sql/sql_source_inventory.bzl:SQL_STANDALONE_SOURCES",
                        "src/sql/sql_source_inventory.bzl:SQL_EXTRA_SOURCES")
-    if len(paths) != 16 or len(set(paths)) != len(paths) or any(
+    if len(paths) != 1 or len(set(paths)) != len(paths) or any(
             not owned.get(path, "").startswith(baseline_owners) for path in paths):
-        raise InventoryError("SQL GIS replacements must reference 16 distinct baseline SQL owners")
+        raise InventoryError("SQL GIS replacements must reference 1 distinct baseline SQL owners")
     _emit_set(lines, "SEEKDB_SQL_CORE_GIS_REPLACED_SOURCES", paths)
 
     for name, relative, variable, package in RELATIVE_SOURCE_SPECS:

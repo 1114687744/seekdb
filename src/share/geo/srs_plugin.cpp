@@ -23,7 +23,6 @@
 #include <cstring>
 #include <iterator>
 
-#if !SEEKDB_ENABLE_CORE_GIS
 namespace oceanbase::common {
 namespace {
 template <typename T, size_t N> bool zeroes(const T (&v)[N])
@@ -148,5 +147,3 @@ int ObSrsWktParser::parse_srs_wkt(ObIAllocator &allocator, uint64_t srid,
   return OB_SUCCESS;
 }
 } // namespace oceanbase::common
-#endif
-

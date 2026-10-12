@@ -585,8 +585,7 @@ const ObRawExpr *ObRawExpr::get_same_identify(const ObRawExpr *e,
 bool ObRawExpr::is_spatial_expr() const
 {
   const ObRawExpr *expr = ObRawExprUtils::skip_inner_added_expr(this);
-  return IS_SPATIAL_OP(expr->get_expr_type()) ||
-      (expr->is_udf_expr() && static_cast<const ObUDFRawExpr *>(expr)->get_native_spatial_flags() != 0);
+  return (expr->is_udf_expr() && static_cast<const ObUDFRawExpr *>(expr)->get_native_spatial_flags() != 0);
 }
 
 
@@ -640,7 +639,7 @@ ObRawExpr* ObRawExpr::get_json_domain_param_expr()
 bool ObRawExpr::is_domain_expr() const
 {
   const ObRawExpr *expr = ObRawExprUtils::skip_inner_added_expr(this);
-  return IS_DOMAIN_OP(expr->get_expr_type());
+  return (IS_DOMAIN_JSON_OP(expr->get_expr_type()) || expr->is_spatial_expr());
 }
 
 bool ObRawExpr::is_domain_json_expr() const
@@ -689,7 +688,7 @@ bool ObRawExpr::extract_multivalue_json_expr(const ObRawExpr*& json_expr) const
 
 bool ObRawExpr::is_mysql_geo_expr() const
 {
-  return IS_MYSQL_GEO_OP(get_expr_type());
+  return get_result_type().is_geometry();
 }
 
 
@@ -703,35 +702,6 @@ ObGeoType ObRawExpr::get_geo_expr_result_type() const
       if (OB_FAIL(get_geo_cast_result_type(geo_type))) {
         geo_type = ObGeoType::GEOTYPEMAX;
       }
-      break;
-    }
-    case T_FUN_SYS_POINT:
-    case T_FUN_SYS_ST_CENTROID: {
-      geo_type = ObGeoType::POINT;
-      break;
-    }
-    case T_FUN_SYS_LINESTRING: {
-      geo_type = ObGeoType::LINESTRING;
-      break;
-    }
-    case T_FUN_SYS_MULTIPOINT: {
-      geo_type = ObGeoType::MULTIPOINT;
-      break;
-    }
-    case T_FUN_SYS_MULTILINESTRING: {
-      geo_type = ObGeoType::MULTILINESTRING;
-      break;
-    }
-    case T_FUN_SYS_POLYGON: {
-      geo_type = ObGeoType::POLYGON;
-      break;
-    }
-    case T_FUN_SYS_MULTIPOLYGON: {
-      geo_type = ObGeoType::MULTIPOLYGON;
-      break;
-    }
-    case T_FUN_SYS_GEOMCOLLECTION: {
-      geo_type = ObGeoType::GEOMETRYCOLLECTION;
       break;
     }
     default: {

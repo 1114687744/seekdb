@@ -32,8 +32,8 @@ same 2D arguments or an additional `z`. The result type is
 the envelope polygon payload is 98 bytes, all using seekdb's
 SRID/version/byte-order/WKB wire format.
 
-The package intentionally contains no seekdb private headers or libraries. With
-core GIS disabled, ordinary GIS SQL names resolve through database routine
+The package intentionally contains no seekdb private headers or libraries.
+GIS is plugin-only; ordinary GIS SQL names resolve through database routine
 schemas and the generic native `ObExprUDF` bridge to `PluginFunctionExpr`.
 The SQL declarations specify types, overloads and compatibility aliases
 (`POINT`, `AREA`, `CENTROID`, collection constructors and underscore-prefixed
@@ -41,21 +41,22 @@ names); the module checks exact ABI types/arity and implements NULL propagation
 and numeric/SRID conversion.
 The generic host adapter evaluates arguments, materializes LOBs, binds the
 catalog identity and returns the result in the appropriate SQL datum format.
-There is no plugin-mode `ObExprSTArea` implementation. Other legacy numeric
-expression entries remain for internal spatial plan construction; `spatial_cellid`
-and `spatial_mbr` return NULL without evaluating an operand or calling a plugin,
-as in the original core. Their SQL-package compatibility routines also return
-NULL (ordinary native-routine argument evaluation still applies).
-Unqualified `spatial_cellid`/`spatial_mbr` remain reserved built-in names for
-generated index columns; qualify a package routine with its database name to
-exercise its native binding. Ordinary GIS functions do not have this exception.
+No GIS SQL function has a dedicated kernel expression class or item-type enum.
+Keyword constructors such as `POINT` and `GEOMETRYCOLLECTION` also produce ordinary
+function calls. Unqualified and qualified `spatial_cellid`/`spatial_mbr` both bind
+the SQL-package compatibility routines, which return NULL after normal argument
+evaluation. Storage-generated index columns instead use the generic internal
+`__seekdb_index_value(source, type_witness)` slot: its result type comes from the
+second operand, and neither operand is evaluated; index expansion fills the slot.
+The unsupported legacy `_ST_AsMVT` aggregate path has been removed; it is not a
+declared plugin aggregate. `_ST_AsMVTGeom` remains a supported scalar routine.
 A missing/inactive plugin
 does not fall back to a built-in implementation of the public GIS SQL names.
 
 To add an ordinary GIS function, add its implementation service and typed
 descriptor and SQL declaration to this package; do not add an expression class, name registration
-or function-specific result sink to the kernel. Core-GIS-enabled builds keep
-their original built-in implementations.
+or function-specific result sink to the kernel. The former core-GIS build mode
+is no longer supported.
 
 SQL decimal/decimal-integer arguments are transported as exact decimal text and
 converted by the plugin, not read as floating-point bit patterns. WKT and WKB
@@ -900,7 +901,7 @@ through the production DSO and real SQL expression/LOB bridge. Neither test prov
 live-server installation, transactions or storage. Remaining algorithms and
 broader compatibility still require migration and differential testing.
 
-To run the lightweight profile, keep core GIS disabled and place the package
+To run GIS, place the package
 under the server base directory. `plugin.toml` is the package manifest used by
 the explicit `INSTALL PLUGIN` command; startup only restores plugins that were
 already persisted by that command. Loading the DSO no longer publishes public
@@ -934,7 +935,7 @@ and content-hash trust are intentionally deferred.
 
 ## SQL/LOB regression
 
-After completing a plugin-enabled, core-GIS-disabled production build, run:
+After completing a plugin-enabled production build, run:
 
 ```bash
 python3 rust/plugin-runtime/tests/gis_sql.py --build-dir build_plugin_overlay_verify
@@ -962,7 +963,7 @@ the rebuilt host and GIS DSO, rerun SQL smoke tests on the real server.
 
 ### Opt-in disposable-server acceptance runner
 
-With core GIS disabled, the implementation-only GIS module loaded, the SQL
+With the implementation-only GIS module loaded, the SQL
 package delivered under `--extension-dir`, and PyMySQL installed:
 
 ```bash

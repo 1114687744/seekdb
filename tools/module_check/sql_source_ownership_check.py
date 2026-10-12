@@ -102,12 +102,12 @@ def check(repo: Path) -> List[str]:
         errors.append(f"stale/non-production SQL inventory sources: {stale}")
 
     expected_counts = {
-        "SQL_UNITY_GROUPS": 1115,
+        "SQL_UNITY_GROUPS": 1063,
         "SQL_SIMD_UNITY_GROUPS": 3,
         "SQL_STANDALONE_SOURCES": 7,
         "SQL_EXTRA_SOURCES": 21,
         "SQL_PARSER_SOURCES": 15,
-        "SQL_GIS_PLUGIN_ADAPTER_SOURCES": 5,
+        "SQL_GIS_PLUGIN_ADAPTER_SOURCES": 2,
         "SQL_EXTENSION_RUNTIME_SOURCES": 4,
     }
     for name, expected in expected_counts.items():
@@ -121,8 +121,8 @@ def check(repo: Path) -> List[str]:
     baseline = set(path for name in INVENTORY_NAMES[:4] for path in sections[name])
     if not isinstance(replacements, list) or any(not isinstance(path, str) for path in replacements):
         errors.append("SQL GIS replacements must be a string list")
-    elif len(replacements) != 16 or len(set(replacements)) != len(replacements) or not set(replacements) <= baseline:
-        errors.append("SQL GIS replacements must reference 16 distinct baseline owners")
+    elif len(replacements) != 1 or len(set(replacements)) != len(replacements) or not set(replacements) <= baseline:
+        errors.append("SQL GIS replacements must reference 1 distinct baseline owners")
     return errors
 
 
@@ -136,7 +136,7 @@ def main() -> int:
         for error in errors:
             print(error, file=sys.stderr)
         return 1
-    print("sql source ownership: 1159 baseline + 9 conditional + 7 separate = 1175 workspace")
+    print("sql source ownership: 1109 baseline + 6 plugin + 7 separate = 1122 workspace")
     return 0
 
 

@@ -126,8 +126,8 @@ def main():
         if args.keep_artifacts:
             print("Retained GIS fixture artifacts: {}".format(stage), flush=True)
         obj, binary = stage / "gis_sql.o", stage / "gis_sql"
-        # Compile the original option parser under a private name: CORE_GIS=OFF
-        # deliberately does not link this legacy routine. Extract its exact
+        # Compile the original option parser under a private name: the core
+        # does not link this legacy routine. Extract its exact
         # body rather than maintaining a second handwritten test oracle.
         legacy = (source / "src/sql/engine/expr/ob_geo_expr_utils.cpp").read_text()
         begin = legacy.index("int ObGeoExprUtils::parse_axis_order(")

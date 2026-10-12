@@ -113,7 +113,6 @@ private:
   int deduce_type_visit_for_special_func(int64_t param_index, const ObRawExpr &expr, ObIExprResTypes &types);
   int set_agg_group_concat_result_type(ObAggFunRawExpr &expr, ObExprResType &result_type);
   int set_json_agg_result_type(ObAggFunRawExpr &expr, ObExprResType& result_type, bool &need_add_cast);
-  int set_asmvt_result_type(ObAggFunRawExpr &expr, ObExprResType& result_type);
   int set_agg_json_array_result_type(ObAggFunRawExpr &expr, ObExprResType &result_type);
 
   int set_agg_min_max_result_type(ObAggFunRawExpr &expr, ObExprResType &result_type,

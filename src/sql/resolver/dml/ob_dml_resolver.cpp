@@ -694,76 +694,6 @@ int ObDMLResolver::check_column_json_type(ParseNode *tab_col, bool &is_json_cst,
   return ret;
 }
 
-int ObDMLResolver::pre_process_mvt_agg(ParseNode &node)
-{
-  INIT_SUCC(ret);
-  if (node.type_ == T_FUN_SYS_ST_ASMVT) {
-    int ori_param_num = node.num_child_;
-    if (ori_param_num < 1) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (node.reserved_) {
-      // already processed, do nothing
-    } else if (OB_ISNULL(node.children_[0])) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (node.children_[0]->type_ != T_COLUMN_REF) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (OB_ISNULL(node.children_[0]->children_[2])) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (node.children_[0]->children_[2]->type_ != T_STAR) {
-      ret = OB_ERR_PARSER_SYNTAX;
-    } else {
-      ObQualifiedName column_ref;
-      ObNameCaseMode case_mode = OB_NAME_CASE_INVALID;
-      TableItem *table_item = NULL;
-      bool tab_has_alias = false;
-      ObSEArray<ColumnItem, 4> columns_list;
-      if (OB_FAIL(session_info_->get_name_case_mode(case_mode))) {
-      } else if (OB_FAIL(ObResolverUtils::resolve_column_ref(node.children_[0], case_mode, column_ref))) {
-      } else if (OB_FAIL(get_target_column_list(columns_list, column_ref.tbl_name_, false, tab_has_alias, table_item))) {
-      } else if (columns_list.count() < 1) {
-        // do nothing, as_mvt might be in sub_stmt
-      } else {
-        ParseNode **param_vec = NULL;
-        uint32_t para_idx = 0;
-        // *(row) + other params = column_ref + column_name + other params + other params cnt
-        uint32_t param_count =  columns_list.count() * 2 + ori_param_num;
-        ParseNode* param_cnt_node = NULL;
-        if (OB_FAIL(ret)) {
-        } else if (OB_ISNULL(param_vec = static_cast<ParseNode **>(allocator_->alloc(param_count * sizeof(ParseNode *))))) {
-          ret = OB_ALLOCATE_MEMORY_FAILED;
-        } else if (OB_FAIL(create_int_val_node(NULL, ori_param_num - 1, param_cnt_node))) {
-        } else {
-          param_vec[para_idx++] = param_cnt_node;
-          for (int i = 1; i < ori_param_num; i++) {
-            param_vec[para_idx++] = node.children_[i];
-          }
-        }
-
-        for (int i = 0; i < columns_list.count() && OB_SUCC(ret); i++) {
-          ParseNode* column_node = NULL;
-          ParseNode* column_name = NULL;
-          if (OB_FAIL(create_col_ref_node(node.children_[0]->children_[1], columns_list.at(i).column_name_, column_node))) {
-          } else if (OB_FAIL(create_char_node(columns_list.at(i).column_name_, column_name))) {
-          } else {
-            param_vec[para_idx++] = column_node;
-            param_vec[para_idx++] = column_name;
-          }
-        }
-        if (OB_SUCC(ret)) {
-          node.num_child_ = param_count;
-          node.children_ = param_vec;
-          node.reserved_ = 1;
-        }
-      }
-    }
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < node.num_child_; i++) {
-    if (OB_ISNULL(node.children_[i])) {
-    } else if (OB_FAIL(SMART_CALL(pre_process_mvt_agg(*node.children_[i])))) {
-    }
-  }
-  return ret;
-}
 
 // process json_expr in query sql
 int ObDMLResolver::pre_process_json_expr(ParseNode &node)
@@ -1011,8 +941,6 @@ int ObDMLResolver::resolve_sql_expr(const ParseNode &node, ObRawExpr *&expr,
         session_info_->get_cur_exec_ctx()->get_sql_ctx()->is_batch_params_execute();
 
     OC( (session_info_->get_name_case_mode)(ctx.case_mode_));
-    if (OB_SUCC(ret) && OB_FAIL(pre_process_mvt_agg(const_cast<ParseNode&>(node)))) {
-    }
     if (OB_SUCC(ret)) {
       OC( (expr_resolver.resolve)(&node,
                                   expr,
@@ -6521,7 +6449,7 @@ int ObDMLResolver::resolve_geo_mbr_column()
   // try to get mbr generated column
   for (int64_t j = 0; OB_SUCC(ret) && j < gen_col_exprs_.count(); ++j) {
     const ObRawExpr *dep_expr = gen_col_exprs_.at(j).dependent_expr_;
-    if (dep_expr->get_expr_type() == T_FUN_SYS_SPATIAL_MBR) {
+    if (dep_expr->is_index_value_expr(ObVarcharType)) {
       ObColumnRefRawExpr *left_expr = NULL;
       ObDMLStmt *stmt = gen_col_exprs_.at(j).stmt_;
       TableItem *table_item = gen_col_exprs_.at(j).table_item_;

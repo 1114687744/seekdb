@@ -65,8 +65,12 @@ R0 代码落点与诚实状态：
   本地 catalog-identity verifier、loader 和启动恢复；一期不做签名/信任链校验，仍只接受
   trusted directory 下且与 catalog manifest identity 对账的插件。
 - `cmake/Plugin.cmake` 及两类检查脚本：显式插件 target、SDK package、源码/链接/二进制门禁。
-- `SEEKDB_ENABLE_CORE_GIS`：兼容性开关；关闭时 `ob_share`/`ob_sql` 不编译 GIS 算法、SRS、
-  codec 和空间索引实现，SQL 入口统一走插件 SPI。
+- GIS 算法、SRS、codec 和空间索引实现由 `plugins/gis` 提供；内核保留插件接口适配。
+  不再支持 `SEEKDB_ENABLE_CORE_GIS=ON`。所有 GIS 标量函数（包括 `POINT`、集合构造函数）
+  均通过普通函数解析绑定数据库中的 native routine，再按 implementation ID 调用插件，
+  例如 `org.seekdb.gis.function.st_area`；不再保留专用表达式类或枚举。
+  空间索引内部使用通用 `__seekdb_index_value(source, type_witness)` 占位表达式。
+  原先返回不支持的 `_ST_AsMVT` 聚合内核路径已删除，不能与插件标量 `_ST_AsMVTGeom` 混淆。
 - `plugins/reference`、`plugins/sql_extension` 与 `unittest/share/test_plugin_*`：
   conformance、真实 `.so` 的类型/重载/table-function 游标、回滚 stop 失败、运行时 stop
   失败、并发 drain/disable/shutdown 等夹具。

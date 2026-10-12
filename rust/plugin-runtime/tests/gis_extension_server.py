@@ -13,7 +13,7 @@
 # limitations under the License.
 """Opt-in GIS SQL package regression on a disposable current-schema server.
 
-Requires the rebuilt implementation-only GIS DSO already loaded, core GIS off,
+Requires the rebuilt implementation-only GIS DSO already loaded,
 and --extension-dir configured for the shipped gis.control/gis--1.0.sql files.
 Creates unique databases/user; retains fixtures on failure. Never loads/unloads
 modules, restarts servers or changes global settings. No recovery, concurrent

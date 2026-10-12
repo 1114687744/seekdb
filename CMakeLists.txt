@@ -21,11 +21,11 @@ include(cmake/Plugin.cmake)
 option(SEEKDB_ENABLE_EXPERIMENTAL_PLUGINS
   "Build the in-process plugin runtime" ON)
 
-# GIS algorithms and codecs live in plugins/gis by default.  Enabling this
-# option is a compatibility profile for deployments that still need the old
-# in-core implementation; it must not be used by the lightweight default.
-option(SEEKDB_ENABLE_CORE_GIS
-  "Build the legacy GIS algorithms and codecs inside the core" OFF)
+# GIS algorithms and codecs are provided exclusively by plugins/gis.
+# Reject stale configurations rather than silently building a different profile.
+if(SEEKDB_ENABLE_CORE_GIS)
+  message(FATAL_ERROR "SEEKDB_ENABLE_CORE_GIS=ON is no longer supported; build the GIS plugin instead")
+endif()
 
 if(WIN32)
   find_program(LLVM_LIB_PROGRAM llvm-lib)
