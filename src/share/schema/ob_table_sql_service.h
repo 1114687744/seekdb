@@ -369,10 +369,6 @@ private:
   int add_constraints(common::ObISQLClient &sql_client, const ObTableSchema &table);
   int add_constraints_for_not_core(common::ObISQLClient &sql_client, const ObTableSchema &table);
   int batch_add_constraints_for_create_table(common::ObISQLClient &sql_client, const ObIArray<ObTableSchema> &tables);
-  int add_constraints_dml(const ObTableSchema &table,
-      ObDMLSqlSplicer &cst_dml,
-      ObDMLSqlSplicer &cst_col_dml,
-      int64_t &cst_col_count);
   // deal_whih_csts_when_drop_table_to_recyclebin
   int rename_csts_in_inner_table(common::ObISQLClient &sql_client,
                                  const ObTableSchema &table_schema,
@@ -403,23 +399,6 @@ private:
   static int gen_column_dml(const ObColumnSchemaV2 &column,
       share::ObDMLSqlSplicer &dml,
       const bool is_history = false);
-  int gen_constraint_dml(const ObConstraint &constraint, share::ObDMLSqlSplicer &dml);
-  int gen_constraint_column_dml(
-      const ObConstraint &constraint,
-      uint64_t column_id, share::ObDMLSqlSplicer &dml);
-
-  // modify constraint name in __all_constraint while drop table to recyclebin
-  int gen_constraint_update_name_dml(const ObString &cst_name,
-                                     const ObNameGeneratedType name_generated_type,
-                                     const int64_t new_schema_version,
-                                     const ObConstraint &constraint,
-                                     share::ObDMLSqlSplicer &dml);
-  // modify constraint name in __all_constraint_history while drop table to recyclebin
-  int gen_constraint_insert_new_name_row_dml(const ObString &cst_name,
-                                             const ObNameGeneratedType name_generated_type,
-                                             const int64_t new_schema_version,
-                                             const ObConstraint &constraint,
-                                             share::ObDMLSqlSplicer &dml);
   int gen_partition_option_dml(const ObTableSchema &table, share::ObDMLSqlSplicer &dml);
   int add_column(common::ObISQLClient &sql_client, const ObTableSchema &table);
 

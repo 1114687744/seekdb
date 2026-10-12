@@ -944,46 +944,21 @@ int ObTableSqlService::insert_single_constraint(ObISQLClient &sql_client,
 }
 
 int ObTableSqlService::revise_check_cst_column_info(
-    common::ObISQLClient &sql_client,
-    const ObTableSchema &table_schema,
+    common::ObISQLClient &sql_client, const ObTableSchema &table_schema,
     const ObIArray<ObConstraint> &csts)
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(check_ddl_allowed(table_schema))) {
-  } else if (0 == csts.count()) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("the count of csts is zero", K(ret));
-  } else {
-    ObDMLSqlSplicer dml;
-    int64_t affected_rows = 0;
-    
-    
-    ObDMLExecHelper exec(sql_client);
-    for (int64_t i = 0; OB_SUCC(ret) && i < csts.count(); ++i) {
-      dml.reset();
-      for (ObConstraint::const_cst_col_iterator iter = csts.at(i).cst_col_begin();
-           OB_SUCC(ret) && (iter != csts.at(i).cst_col_end());
-           ++iter) {
-        dml.reset();
-        if (OB_FAIL(gen_constraint_column_dml(csts.at(i), *iter, dml))) {
-        } else if (OB_FAIL(exec.exec_insert(
-            OB_ALL_CONSTRAINT_COLUMN_TNAME, dml, affected_rows))) {
-        } else if (!is_single_row(affected_rows)) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("affected_rows unexpected to be one", K(ret), K(affected_rows));
-        }
-        if (OB_SUCC(ret)) {
-          const int64_t is_deleted = 0;
-          if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-          } else if (OB_FAIL(exec.exec_insert(
-              OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME, dml, affected_rows))) {
-          } else if (!is_single_row(affected_rows)) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("affected_rows unexpected to be one", K(ret), K(affected_rows));
-          }
-        }
+  } else if (csts.empty()) { ret = OB_ERR_UNEXPECTED; }
+  else {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < csts.count(); ++i) {
+        ret = catalog.insert_constraint_columns(csts.at(i), false);
       }
-    }
+      return ret;
+    });
   }
   return ret;
 }
@@ -1294,284 +1269,91 @@ int ObTableSqlService::add_constraints(ObISQLClient &sql_client,
   return ret;
 }
 
-int ObTableSqlService::add_constraints_dml(
-    const ObTableSchema &table,
-    ObDMLSqlSplicer &cst_dml,
-    ObDMLSqlSplicer &cst_col_dml,
-    int64_t &cst_col_count)
-{
-  int ret = OB_SUCCESS;
-  const int64_t new_schema_version = table.get_schema_version();
-  
-  
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (is_inner_table(table.get_table_id())) {
-    // To avoid cyclic dependence
-    ret = OB_OP_NOT_ALLOW;
-    LOG_WARN("should not be here", KR(ret), K(table));
-  }
-  for (ObTableSchema::constraint_iterator cst_iter = table.constraint_begin_for_non_const_iter();
-       OB_SUCC(ret) && cst_iter != table.constraint_end_for_non_const_iter();
-       ++cst_iter) {
-    if (OB_ISNULL(*cst_iter)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("iter is NULL", KR(ret));
-    } else {
-      // generate sql of 'insert into __all_constraint_history' and 'insert into __all_constraint'
-      (*cst_iter)->set_schema_version(new_schema_version);
-      (void)0;
-      (*cst_iter)->set_table_id(table.get_table_id());
-      if (OB_FAIL(gen_constraint_dml(**cst_iter, cst_dml))) {
-      } else if (OB_FAIL(cst_dml.finish_row())) {
-      }
-      for (ObConstraint::const_cst_col_iterator cst_col_iter = (*cst_iter)->cst_col_begin();
-            OB_SUCC(ret) && (cst_col_iter != (*cst_iter)->cst_col_end());
-            ++cst_col_iter, ++cst_col_count) {
-        if (OB_FAIL(gen_constraint_column_dml(**cst_iter, *cst_col_iter, cst_col_dml))) {
-        } else if (OB_FAIL(cst_col_dml.finish_row())) {
-        }
-      }
-    }
-  }
-  return ret;
-}
+
 
 int ObTableSqlService::batch_add_constraints_for_create_table(
     common::ObISQLClient &sql_client, const ObIArray<ObTableSchema> &tables)
 {
   int ret = OB_SUCCESS;
-  if (tables.empty()) {
-  } else {
-    ObDMLSqlSplicer cst_dml;
-    ObDMLSqlSplicer cst_col_dml;
-    common::ObTimeGuard time_guard("batch_add_constraints_for_create_table", 1_ms);
-    
-    int64_t cst_col_count = 0;
-    int64_t cst_count = 0;
-    for (int64_t i = 0; i < tables.count() && OB_SUCC(ret); i++) {
-      const ObTableSchema &table = tables.at(i);
-      int64_t tmp = 0;
-      if (table.is_view_table() || table.get_constraint_count() <= 0) {
-      } else if (OB_FAIL(add_constraints_dml(table, cst_dml, cst_col_dml, tmp))) {
-        ObCStringHelper helper;
-        LOG_WARN("insert table schema failed, ", KR(ret), "table", helper.convert(table));
-      } else {
-        cst_count += table.get_constraint_count();
-        cst_col_count += tmp;
+  bool has_constraints = false;
+  for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
+    const auto &table = tables.at(i);
+    if (table.is_view_table() || table.get_constraint_count() == 0) { continue; }
+    if (OB_FAIL(check_ddl_allowed(table))) {
+    } else if (is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
+    else { has_constraints = true; }
+  }
+  if (OB_SUCC(ret) && has_constraints) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
+        const auto &table = tables.at(i);
+        if (!table.is_view_table() && table.get_constraint_count() > 0) { ret = catalog.insert_constraints(table); }
       }
-    }
-    time_guard.click("generate_dml") ;
-    if (FAILEDx(exec_dml(sql_client, OB_ALL_CONSTRAINT_TNAME, cst_dml, cst_count))) {
-      LOG_WARN("failed to insert all_cst", KR(ret), K(cst_count));
-    } else if (FALSE_IT(time_guard.click("insert_all_cst"))) {
-    } else if (OB_FAIL(cst_dml.set_default_columns("is_deleted", "0"))) {
-    } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_HISTORY_TNAME, cst_dml, cst_count))) {
-    } else if (FALSE_IT(time_guard.click("insert_all_cst_history"))) {
-    } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_COLUMN_TNAME,
-            cst_col_dml, cst_col_count))) {
-    } else if (FALSE_IT(time_guard.click("insert_all_cst_col"))) {
-    } else if (OB_FAIL(cst_col_dml.set_default_columns("is_deleted", "0"))) {
-    } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME,
-            cst_col_dml, cst_col_count))) {
-    } else if (FALSE_IT(time_guard.click("insert_all_cst_col_history"))) {
-    }
+      return ret;
+    });
   }
   return ret;
 }
 
 // create table add constraint
-int ObTableSqlService::add_constraints_for_not_core(ObISQLClient &sql_client,
-                                                    const ObTableSchema &table)
+int ObTableSqlService::add_constraints_for_not_core(ObISQLClient &sql_client, const ObTableSchema &table)
 {
   int ret = OB_SUCCESS;
-  
-  
-  int64_t cst_cols_num_in_table = 0;
-  ObDMLSqlSplicer cst_dml;
-  ObDMLSqlSplicer cst_col_dml;
   if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (is_inner_table(table.get_table_id())) {
-    // To avoid cyclic dependence
-    ret = OB_OP_NOT_ALLOW;
-    LOG_WARN("should not be here", KR(ret), K(table));
-  } else if (OB_FAIL(add_constraints_dml(table, cst_dml, cst_col_dml, cst_cols_num_in_table))) {
-  } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_TNAME, cst_dml,
-          table.get_constraint_count()))) {
-  } else if (OB_FAIL(cst_dml.set_default_columns("is_deleted", "0"))) {
-  } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_HISTORY_TNAME, cst_dml,
-          table.get_constraint_count()))) {
-  } else if (cst_col_dml.empty()) {
-  } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_COLUMN_TNAME,
-          cst_col_dml, cst_cols_num_in_table))) {
-  } else if (OB_FAIL(cst_col_dml.set_default_columns("is_deleted", "0"))) {
-  } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME,
-          cst_col_dml, cst_cols_num_in_table))) {
+  } else if (is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
+  else if (table.get_constraint_count() > 0) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_constraints(table); });
   }
   return ret;
 }
 
 int ObTableSqlService::rename_csts_in_inner_table(common::ObISQLClient &sql_client,
-                                                  const ObTableSchema &table_schema,
-                                                  const int64_t new_schema_version)
+    const ObTableSchema &table_schema, const int64_t new_schema_version)
 {
   int ret = OB_SUCCESS;
-  ObString new_cst_name;
-  ObSqlString constraint_history_sql;
-  
-  
-  ObTableSchema::const_constraint_iterator iter = table_schema.constraint_begin();
-  ObArenaAllocator allocator(ObModIds::OB_SCHEMA_OB_SCHEMA_ARENA);
-  ObDMLSqlSplicer dml_for_update;
-  ObDMLSqlSplicer dml_for_insert;
   if (OB_FAIL(check_ddl_allowed(table_schema))) {
+  } else if (table_schema.get_constraint_count() > 0) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      ObArenaAllocator allocator(ObModIds::OB_SCHEMA_OB_SCHEMA_ARENA);
+      int ret = OB_SUCCESS;
+      for (auto it = table_schema.constraint_begin(); OB_SUCC(ret) && it != table_schema.constraint_end(); ++it) {
+        ObString name;
+        if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(ObTableSchema::create_cons_name_automatically(name, table_schema.get_table_name_str(),
+                                                                     allocator, (*it)->get_constraint_type()))) {
+        } else { ret = catalog.rename_constraint(**it, name, new_schema_version); }
+      }
+      return ret;
+    });
   }
-  for (; OB_SUCC(ret) && iter != table_schema.constraint_end(); ++iter) {
-    dml_for_update.reuse();
-    dml_for_insert.reuse();
-    int64_t affected_rows = 0;
-    // `drop table` modify constraint_name but do not modify name_generated_type
-    const ObNameGeneratedType name_generated_type = (*iter)->get_name_generated_type();
-    if (OB_FAIL(ObTableSchema::create_cons_name_automatically(new_cst_name, table_schema.get_table_name_str(), allocator, (*iter)->get_constraint_type()))) {
-    } else if (OB_FAIL(gen_constraint_update_name_dml(new_cst_name, name_generated_type, new_schema_version, **iter, dml_for_update))) {
-    } else if (OB_FAIL(exec_update(sql_client, table_schema.get_table_id(),
-                                   OB_ALL_CONSTRAINT_TNAME, dml_for_update, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("insert succeeded but affected_rows is not one", K(ret), K(affected_rows));
-    } else if (OB_FAIL(gen_constraint_insert_new_name_row_dml(new_cst_name, name_generated_type, new_schema_version, **iter, dml_for_insert))) {
-    } else if (OB_FAIL(exec_insert(sql_client, table_schema.get_table_id(),
-                                   OB_ALL_CONSTRAINT_HISTORY_TNAME, dml_for_insert, affected_rows))) {
-    } else if (!is_single_row(affected_rows)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("affected_rows unexpected to be one", K(ret), K(affected_rows));
-    }
-  }
-
   return ret;
 }
 
 int ObTableSqlService::delete_constraint(common::ObISQLClient &sql_client,
-                                            const ObTableSchema &table_schema,
-                                            const int64_t new_schema_version)
+    const ObTableSchema &table_schema, const int64_t new_schema_version)
 {
   int ret = OB_SUCCESS;
-  
-  
-  const int64_t is_deleted = 1;
-  int64_t cst_cols_num_in_table = 0;
-  int64_t affected_rows = 0;
-  ObSqlString constraint_sql;
-  ObSqlString constraint_history_sql;
-  ObSqlString constraint_column_sql;
-  ObSqlString constraint_column_history_sql;
-  ObTableSchema::const_constraint_iterator cst_iter = table_schema.constraint_begin();
-
   if (OB_FAIL(check_ddl_allowed(table_schema, &sql_client))) {
-  }
-  for (; OB_SUCC(ret) && cst_iter != table_schema.constraint_end(); ++cst_iter) {
-    // generate sql of 'insert into __all_constraint_history' and 'delete from __all_constraint'
-    if (OB_ISNULL(*cst_iter)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("iter is NULL", K(ret));
-    } else if (cst_iter == table_schema.constraint_begin()) {
-      if (OB_FAIL(constraint_history_sql.assign_fmt(
-          "INSERT INTO %s(table_id, constraint_id, schema_version, is_deleted)"
-          " VALUES(%lu, %lu, %ld, %ld)",
-          OB_ALL_CONSTRAINT_HISTORY_TNAME,
-          ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-          (*cst_iter)->get_constraint_id(), new_schema_version, is_deleted))) {
-      } else if (OB_FAIL(constraint_sql.assign_fmt(
-            "DELETE FROM %s WHERE (table_id, constraint_id)"
-            " IN ((%lu, %lu)",
-            OB_ALL_CONSTRAINT_TNAME,
-            ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-            (*cst_iter)->get_constraint_id()))) {
-      }
-    } else {
-      if (OB_FAIL(constraint_history_sql.append_fmt(
-          ", (%lu, %lu, %ld, %ld)",
-          ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-          (*cst_iter)->get_constraint_id(), new_schema_version, is_deleted))) {
-      } else if (OB_FAIL(constraint_sql.append_fmt(
-          ", (%lu, %lu)",
-          ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-          (*cst_iter)->get_constraint_id()))) {
-      }
-    }
-    // generate sql of 'insert into __all_constraint_column_history' and 'delete from __all_constraint_column'
-    if (OB_SUCC(ret)) {
-      for (ObConstraint::const_cst_col_iterator cst_col_iter = (*cst_iter)->cst_col_begin();
-           OB_SUCC(ret) && (cst_col_iter != (*cst_iter)->cst_col_end());
-           ++cst_col_iter, ++cst_cols_num_in_table) {
-        if (constraint_column_sql.empty()) {
-          if (OB_FAIL(constraint_column_history_sql.assign_fmt(
-              "INSERT INTO %s(table_id, constraint_id, column_id, schema_version, is_deleted)"
-              " VALUES(%lu, %lu, %lu, %ld, %ld)",
-              OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME,
-              ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-              (*cst_iter)->get_constraint_id(), *cst_col_iter, new_schema_version, is_deleted))) {
-          } else if (OB_FAIL(constraint_column_sql.assign_fmt(
-              "DELETE FROM %s WHERE (table_id, constraint_id, column_id)"
-              " IN ((%lu, %lu, %lu)",
-              OB_ALL_CONSTRAINT_COLUMN_TNAME,
-              ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-              (*cst_iter)->get_constraint_id(),
-              *cst_col_iter))) {
-          }
-        } else {
-          if (OB_FAIL(constraint_column_history_sql.append_fmt(
-              ", (%lu, %lu, %lu, %ld, %ld)",
-              ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-              (*cst_iter)->get_constraint_id(), *cst_col_iter, new_schema_version, is_deleted))) {
-          } else if (OB_FAIL(constraint_column_sql.append_fmt(
-              ", (%lu, %lu, %lu)",
-              ObSchemaUtils::get_extract_schema_id((*cst_iter)->get_table_id()),
-              (*cst_iter)->get_constraint_id(),
-              *cst_col_iter))) {
-          }
+  } else if (table_schema.get_constraint_count() > 0) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (auto it = table_schema.constraint_begin(); OB_SUCC(ret) && it != table_schema.constraint_end(); ++it) {
+        int64_t deleted_columns = 0;
+        if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(catalog.erase_constraint(**it, new_schema_version, deleted_columns))) {
+        } else if (deleted_columns != (*it)->get_column_cnt()) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("constraint column deletion count differs", KR(ret), K(deleted_columns), K(**it));
         }
       }
-    }
+      return ret;
+    });
   }
-  if (OB_FAIL(ret)) {
-  } else if (!constraint_sql.empty() && OB_FAIL(constraint_sql.append_fmt(")"))) {
-    LOG_WARN("assign_fmt assign ) to end failed", K(ret), K(constraint_sql));
-  } else if (!constraint_column_sql.empty() && OB_FAIL(constraint_column_sql.append_fmt(")"))) {
-    LOG_WARN("assign_fmt assign ) to end failed", K(ret), K(constraint_column_sql));
-  }
-  // execute constraint_sql and constraint_history_sql
-  if (OB_SUCC(ret)) {
-    if (table_schema.get_constraint_count() > 0) {
-      if (OB_FAIL(sql_client.write(constraint_sql.ptr(), affected_rows))) {
-      } else if (table_schema.get_constraint_count() != affected_rows) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected row counts has deleted", K(ret), K(constraint_history_sql),
-                 K(table_schema.get_constraint_count()), K(affected_rows), K(table_schema));
-      } else if (OB_FAIL(sql_client.write(constraint_history_sql.ptr(), affected_rows))) {
-      } else if (table_schema.get_constraint_count() != affected_rows) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected row counts has inserted", K(ret), K(constraint_history_sql),
-                 K(table_schema.get_constraint_count()), K(affected_rows), K(table_schema));
-      }
-    }
-  }
-  // execute constraint_column_sql and constraint_column_history_sql
-  if (OB_SUCC(ret)) {
-    if (!constraint_column_sql.empty()) {
-      if (OB_FAIL(sql_client.write(constraint_column_sql.ptr(), affected_rows))) {
-      } else if (cst_cols_num_in_table != affected_rows) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected row counts has deleted", K(ret), K(cst_cols_num_in_table),
-                 K(affected_rows), K(table_schema), K(constraint_column_sql));
-      } else if (OB_FAIL(sql_client.write(constraint_column_history_sql.ptr(), affected_rows))) {
-      } else if (cst_cols_num_in_table != affected_rows) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected row counts has inserted", K(ret), K(cst_cols_num_in_table),
-                 K(affected_rows), K(table_schema), K(constraint_column_history_sql));
-      }
-    }
-  }
-
   return ret;
 }
 
@@ -1659,77 +1441,14 @@ int ObTableSqlService::supplement_for_core_table(ObISQLClient &sql_client,
 
 // alter table add check constraint
 int ObTableSqlService::add_single_constraint(ObISQLClient &sql_client,
-                                             const ObConstraint &constraint,
-                                             const bool only_history,
-                                             const bool need_to_deal_with_cst_cols,
-                                             const bool do_cst_revise)
+    const ObConstraint &constraint, const bool only_history,
+    const bool need_to_deal_with_cst_cols, const bool do_cst_revise)
 {
-  int ret = OB_SUCCESS;
   UNUSED(do_cst_revise);
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(sql_client);
-  int64_t affected_rows = 0;
-
-  if (OB_FAIL(gen_constraint_dml(constraint, dml))) {
-  } else {
-    ObDMLExecHelper exec(sql_client);
-    int64_t affected_rows = 0;
-    if (!only_history) {
-      const int64_t table_id = constraint.get_table_id();
-      if (OB_FAIL(exec_insert(sql_client, table_id,
-                              OB_ALL_CONSTRAINT_TNAME, dml, affected_rows))) {
-      } else if (!is_single_row(affected_rows)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-      }
-    }
-    if (OB_SUCC(ret)) {
-      const int64_t is_deleted = 0;
-      if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-      } else if (OB_FAIL(exec.exec_insert(OB_ALL_CONSTRAINT_HISTORY_TNAME, dml, affected_rows))) {
-      } else if (!is_single_row(affected_rows)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-      }
-    }
-  }
-
-  // __all_constraint_column and __all_constraint_column_history
-  if (OB_SUCC(ret)
-      && need_to_deal_with_cst_cols) {
-    // Because column schema won't change while alter table modify constraint states,
-    // it's no need to modify constraint_column.
-    for (ObConstraint::const_cst_col_iterator iter = constraint.cst_col_begin();
-         OB_SUCC(ret) && (iter != constraint.cst_col_end());
-         ++iter) {
-      dml.reset();
-      if (OB_FAIL(gen_constraint_column_dml(constraint, *iter, dml))) {
-      } else {
-        if (!only_history) {
-          if (OB_FAIL(exec.exec_insert(
-              OB_ALL_CONSTRAINT_COLUMN_TNAME, dml, affected_rows))) {
-          } else if (!is_single_row(affected_rows)) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-          }
-        }
-        if (OB_SUCC(ret)) {
-          const int64_t is_deleted = 0;
-          if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-          } else if (OB_FAIL(exec.exec_insert(
-              OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME, dml, affected_rows))) {
-          } else if (!is_single_row(affected_rows)) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("affected_rows unexpected to be one", K(affected_rows), K(ret));
-          }
-        }
-      }
-    }
-  }
-
-  return ret;
+  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    return catalog.insert_constraint(constraint, only_history, need_to_deal_with_cst_cols);
+  });
 }
 
 int ObTableSqlService::add_single_column(ObISQLClient &sql_client,
@@ -2049,53 +1768,17 @@ int ObTableSqlService::update_table_options(ObISQLClient &sql_client,
 
 // alter table drop constraint
 int ObTableSqlService::delete_single_constraint(
-    const int64_t new_schema_version,
-    common::ObISQLClient &sql_client,
-    const ObTableSchema &new_table_schema,
-    const ObConstraint &orig_constraint)
+    const int64_t new_schema_version, common::ObISQLClient &sql_client,
+    const ObTableSchema &new_table_schema, const ObConstraint &orig_constraint)
 {
   int ret = OB_SUCCESS;
-  const uint64_t table_id = new_table_schema.get_table_id();
-  const uint64_t constraint_id = orig_constraint.get_constraint_id();
-  const auto key = [&](auto &dml) {
-    int ret = OB_SUCCESS;
-    if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(table_id)))
-        || OB_FAIL(dml.add_pk_column("constraint_id", constraint_id))) {}
-    return ret;
-  };
-  int64_t affected_rows = 0;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
-  } else if (OB_FAIL(delete_catalog_fields_(sql_client, table_id, OB_ALL_CONSTRAINT_TID,
-                                           OB_ALL_CONSTRAINT_TNAME, key, affected_rows))) {
-  } else if (!is_single_row(affected_rows)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("no constraint deleted", K(affected_rows), K(ret));
-  } else if (OB_FAIL(delete_catalog_fields_(sql_client, table_id, OB_ALL_CONSTRAINT_COLUMN_TID,
-                                           OB_ALL_CONSTRAINT_COLUMN_TNAME, key, affected_rows))) {
-  }
-
-  if (OB_SUCC(ret)) {
-    ret = insert_history_fields_(sql_client, table_id, OB_ALL_CONSTRAINT_HISTORY_TID,
-        OB_ALL_CONSTRAINT_HISTORY_TNAME, [&](auto &dml) {
-      int ret = key(dml);
-      if (OB_SUCC(ret) && (OB_FAIL(dml.add_pk_column("schema_version", new_schema_version))
-          || OB_FAIL(dml.add_column("is_deleted", 1)))) {}
-      return ret;
-    }, affected_rows);
-    if (OB_SUCC(ret) && !is_single_row(affected_rows)) { ret = OB_ERR_UNEXPECTED; }
-  }
-  for (auto it = orig_constraint.cst_col_begin(); OB_SUCC(ret) && it != orig_constraint.cst_col_end(); ++it) {
-    ret = insert_history_fields_(sql_client, table_id, OB_ALL_CONSTRAINT_COLUMN_HISTORY_TID,
-        OB_ALL_CONSTRAINT_COLUMN_HISTORY_TNAME, [&](auto &dml) {
-      int ret = key(dml);
-      if (OB_SUCC(ret) && (OB_FAIL(dml.add_column("column_id", *it))
-          || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-          || OB_FAIL(dml.add_column("is_deleted", 1))
-          || OB_FAIL(dml.add_gmt_create())
-          || OB_FAIL(dml.add_gmt_modified()))) {}
-      return ret;
-    }, affected_rows);
-    if (OB_SUCC(ret) && !is_single_row(affected_rows)) { ret = OB_ERR_UNEXPECTED; }
+  } else {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int64_t deleted_columns = 0;
+      return catalog.erase_constraint(orig_constraint, new_schema_version, deleted_columns);
+    });
   }
 
   // log delete constraint
@@ -3216,99 +2899,11 @@ int ObTableSqlService::gen_column_dml(
   return ret;
 }
 
-int ObTableSqlService::gen_constraint_dml(
-    const ObConstraint &constraint,
-    ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                               constraint.get_table_id())))
-      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
-      || OB_FAIL(dml.add_column("schema_version", constraint.get_schema_version()))
-      || OB_FAIL(dml.add_column("constraint_type", constraint.get_constraint_type()))
-      || OB_FAIL(dml.add_column("constraint_name", ObHexEscapeSqlStr(constraint.get_constraint_name())))
-      || OB_FAIL(dml.add_column("check_expr", ObHexEscapeSqlStr(constraint.get_check_expr())))
-      || OB_FAIL(dml.add_column("rely_flag", constraint.get_rely_flag()))
-      || OB_FAIL(dml.add_column("enable_flag", constraint.get_enable_flag()))
-      || OB_FAIL(dml.add_column("validate_flag", constraint.get_validate_flag()))
-      || (OB_FAIL(dml.add_column("name_generated_type", constraint.get_name_generated_type())))
-      || OB_FAIL(dml.add_gmt_create())
-      || OB_FAIL(dml.add_gmt_modified())) {
-    LOG_WARN("dml add constraint failed", K(ret));
-  }
 
-  return ret;
-}
 
-int ObTableSqlService::gen_constraint_column_dml(const ObConstraint &constraint,
-                                                 uint64_t column_id,
-                                                 share::ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
 
-  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                               constraint.get_table_id())))
-      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
-      || OB_FAIL(dml.add_pk_column("column_id", column_id))
-      || OB_FAIL(dml.add_column("schema_version", constraint.get_schema_version()))
-      || OB_FAIL(dml.add_gmt_create())
-      || OB_FAIL(dml.add_gmt_modified())) {
-    LOG_WARN("dml add constraint column failed", K(ret));
-  }
 
-  return ret;
-}
 
-// Generate new constraint name while drop table to recyclebin.
-int ObTableSqlService::gen_constraint_update_name_dml(
-    const ObString &cst_name,
-    const ObNameGeneratedType name_generated_type,
-    const int64_t new_schema_version,
-    const ObConstraint &constraint,
-    ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-
-  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                               constraint.get_table_id())))
-      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
-      || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-      || OB_FAIL(dml.add_column("constraint_name", ObHexEscapeSqlStr(cst_name)))
-      || (OB_FAIL(dml.add_column("name_generated_type", name_generated_type)))
-      || OB_FAIL(dml.add_gmt_modified())) {
-    LOG_WARN("dml add constraint failed", K(ret));
-  }
-
-  return ret;
-}
-
-// Generate new constraint name while drop table to recyclebin.
-int ObTableSqlService::gen_constraint_insert_new_name_row_dml(
-    const ObString &cst_name,
-    const ObNameGeneratedType name_generated_type,
-    const int64_t new_schema_version,
-    const ObConstraint &constraint,
-    share::ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  const int64_t is_deleted = 0;
-
-  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                               constraint.get_table_id())))
-      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
-      || OB_FAIL(dml.add_column("schema_version", new_schema_version))
-      || OB_FAIL(dml.add_column("constraint_type", constraint.get_constraint_type()))
-      || OB_FAIL(dml.add_column("constraint_name", ObHexEscapeSqlStr(cst_name)))
-      || OB_FAIL(dml.add_column("check_expr", ObHexEscapeSqlStr(constraint.get_check_expr())))
-      || (OB_FAIL(dml.add_column("name_generated_type", name_generated_type)))
-      || OB_FAIL(dml.add_gmt_create())
-      || OB_FAIL(dml.add_gmt_modified())
-      || OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-    LOG_WARN("dml add constraint failed", K(ret));
-  }
-
-  return ret;
-}
 
 int ObTableSqlService::log_core_operation(
     common::ObISQLClient &sql_client,
@@ -3751,67 +3346,23 @@ int ObTableSqlService::delete_foreign_key(
 }
 
 int ObTableSqlService::update_check_constraint_state(
-    common::ObISQLClient &sql_client,
-    const ObTableSchema &table,
-    const ObConstraint &cst)
+    common::ObISQLClient &sql_client, const ObTableSchema &table, const ObConstraint &cst)
 {
   int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
-  
-  
-  ObDMLExecHelper exec(sql_client);
-
   if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (is_inner_table(table.get_table_id())) {
-    ret = OB_OP_NOT_ALLOW;
-    LOG_WARN("sys table doesn't have check constraints", K(ret), K(table));
-  } else {
-    dml.reset();
-    if (!cst.get_is_modify_rely_flag() // not modify rely attribute
-        && !cst.get_is_modify_enable_flag() // nor enable attribute
-        && !cst.get_is_modify_validate_flag() // nor validate attribute
-        && !cst.get_is_modify_check_expr()) { // nor check constraint expr
-      // do nothing
-    } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(cst.get_table_id())))
-        || OB_FAIL(dml.add_pk_column("constraint_id", cst.get_constraint_id()))
-        || OB_FAIL(dml.add_column("schema_version", cst.get_schema_version()))
-        || OB_FAIL(dml.add_column("check_expr", ObHexEscapeSqlStr(cst.get_check_expr())))
-        || OB_FAIL(dml.add_gmt_modified())
-        ) {
-      LOG_WARN("failed to add column", K(ret));
-    } else if (cst.get_is_modify_rely_flag() && OB_FAIL(dml.add_column("rely_flag", cst.get_rely_flag()))) {
-      LOG_WARN("failed to add rely_flag column", K(ret));
-    } else if (cst.get_is_modify_enable_flag() && OB_FAIL(dml.add_column("enable_flag", cst.get_enable_flag()))) {
-      LOG_WARN("failed to add enable_flag column", K(ret));
-    } else if (cst.get_is_modify_validate_flag() && OB_FAIL(dml.add_column("validate_flag", cst.get_validate_flag()))) {
-      LOG_WARN("failed to add validate_flag column", K(ret));
-    } else {
-      int64_t affected_rows = 0;
-      uint64_t table_id = cst.get_table_id();
-      if (OB_FAIL(exec_update(sql_client, table_id,
-                              OB_ALL_CONSTRAINT_TNAME, dml, affected_rows))) {
-      } else if (affected_rows > 1) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected error", K(affected_rows), K(ret));
-      } else if (OB_FAIL(add_single_constraint(sql_client, cst,
-                                        true, /* only_history */
-                                        false, /* need_to_deal_with_cst_cols */
-                                        false /* do_cst_revise */))) {
-      }
-    }
-    if (OB_FAIL(ret)) {
-    } else {
+  } else if (is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
+  else {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_constraint(cst); });
+    if (OB_SUCC(ret)) {
       ObSchemaOperation opt;
-      
       opt.database_id_ = table.get_database_id();
       opt.table_id_ = table.get_table_id();
       opt.op_type_ = OB_DDL_ALTER_TABLE;
       opt.schema_version_ = cst.get_schema_version();
-      if (OB_FAIL(log_operation_wrapper(opt, sql_client))) {
-      }
+      ret = log_operation_wrapper(opt, sql_client);
     }
   }
-
   return ret;
 }
 

@@ -21,6 +21,8 @@ def run(binary, selected=None):
             ('versions', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
              "CONSTRAINT ck CHECK (id >= 0)", ' PARTITION BY HASH(id) PARTITIONS 8', (2, 8, 1, 1, 0, 0)),
+            ('constraint', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "CONSTRAINT ck CHECK (id >= 0) NOT ENFORCED", '', (2, 0, 0, 1, 0, 0)),
             ('part2', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'",
              ' PARTITION BY RANGE(id) SUBPARTITION BY HASH(id) SUBPARTITIONS 2 '
              '(PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN MAXVALUE)',
@@ -169,6 +171,9 @@ def run(binary, selected=None):
             if label == 'part':
                 assert (f'NATIVE_SCHEMA_CATALOG_INDEX_METADATA_TX namespace={child_id} '
                         'stage=read_rollback ret=0') in trace, trace[-2000:]
+            if label == 'constraint':
+                trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
+                assert f'NATIVE_SCHEMA_CATALOG_CONSTRAINT namespace={child_id} stage=deleted ret=0' in trace
             if label == 'indexed':
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_INDEXED namespace={child_id} stage=erase_committed ret=0' in trace
@@ -205,7 +210,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

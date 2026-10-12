@@ -19,6 +19,7 @@ class ObTableLatestSchemaVersion;
 class ObSchemaIdVersion;
 class ObIndexSchemaInfo;
 class SchemaCatalogRow;
+class ObConstraint;
 struct VersionHisVal;
 } }
 namespace storage { class ObAccessService; }
@@ -134,6 +135,12 @@ public:
                    bool update_object_status_ignore_version = false);
   int insert_column(const share::schema::ObColumnSchemaV2 &, bool history);
   int insert_columns(const share::schema::ObTableSchema &);
+  int insert_constraint(const share::schema::ObConstraint &, bool only_history, bool with_columns);
+  int insert_constraint_columns(const share::schema::ObConstraint &, bool only_history);
+  int insert_constraints(const share::schema::ObTableSchema &);
+  int update_constraint(const share::schema::ObConstraint &);
+  int rename_constraint(const share::schema::ObConstraint &, const common::ObString &, int64_t schema_version);
+  int erase_constraint(const share::schema::ObConstraint &, int64_t schema_version, int64_t &deleted_columns);
   int close();
   const ns::NamespaceCatalogViews::Handle &view() const;
 private:

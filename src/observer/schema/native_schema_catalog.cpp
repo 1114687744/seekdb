@@ -1465,6 +1465,138 @@ int NativeSchemaCatalog::insert_columns(const ObTableSchema &table)
   return ret;
 }
 
+int NativeSchemaCatalog::insert_constraint(const ObConstraint &constraint, bool only_history, bool with_columns)
+{
+  int ret = OB_SUCCESS;
+  if (!only_history) {
+    ret = insert_fields(OB_ALL_CONSTRAINT_TID, [&](SchemaCatalogRow &fields) {
+      return SchemaCatalogFields::constraint(constraint, fields);
+    });
+  }
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_CONSTRAINT_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = SchemaCatalogFields::constraint(constraint, fields);
+      if (OB_SUCC(ret)) { ret = fields.add_column("is_deleted", 0); }
+      return ret;
+    });
+  }
+  if (OB_SUCC(ret) && with_columns) { ret = insert_constraint_columns(constraint, only_history); }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_constraint_columns(const ObConstraint &constraint, bool only_history)
+{
+  int ret = OB_SUCCESS;
+  for (auto it = constraint.cst_col_begin(); OB_SUCC(ret) && it != constraint.cst_col_end(); ++it) {
+    const auto fields = [&](SchemaCatalogRow &row) { return SchemaCatalogFields::constraint_column(constraint, *it, row); };
+    if (!only_history) { ret = insert_fields(OB_ALL_CONSTRAINT_COLUMN_TID, fields); }
+    if (OB_SUCC(ret)) {
+      ret = insert_fields(OB_ALL_CONSTRAINT_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &row) {
+        int ret = fields(row);
+        if (OB_SUCC(ret)) { ret = row.add_column("is_deleted", 0); }
+        return ret;
+      });
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_constraints(const ObTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  // Keep the caller's published objects stamped just as CREATE did before.
+  for (auto it = table.constraint_begin_for_non_const_iter();
+       OB_SUCC(ret) && it != table.constraint_end_for_non_const_iter(); ++it) {
+    if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    else {
+      (*it)->set_table_id(table.get_table_id());
+      (*it)->set_schema_version(table.get_schema_version());
+      ret = insert_constraint(**it, false, true);
+    }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::update_constraint(const ObConstraint &constraint)
+{
+  if (!constraint.get_is_modify_rely_flag() && !constraint.get_is_modify_enable_flag()
+      && !constraint.get_is_modify_validate_flag() && !constraint.get_is_modify_check_expr()) {
+    return OB_SUCCESS;
+  }
+  bool matched = false;
+  int ret = update_fields(OB_ALL_CONSTRAINT_TID, [&](SchemaCatalogRow &fields) {
+    int ret = OB_SUCCESS;
+    if (OB_FAIL(fields.add_pk_column("table_id", constraint.get_table_id()))
+        || OB_FAIL(fields.add_pk_column("constraint_id", constraint.get_constraint_id()))
+        || OB_FAIL(fields.add_column("schema_version", constraint.get_schema_version()))
+        || OB_FAIL(fields.add_column("check_expr", constraint.get_check_expr()))
+        || OB_FAIL(fields.add_gmt_modified())) {}
+    if (OB_SUCC(ret) && constraint.get_is_modify_rely_flag()) { ret = fields.add_column("rely_flag", constraint.get_rely_flag()); }
+    if (OB_SUCC(ret) && constraint.get_is_modify_enable_flag()) { ret = fields.add_column("enable_flag", constraint.get_enable_flag()); }
+    if (OB_SUCC(ret) && constraint.get_is_modify_validate_flag()) { ret = fields.add_column("validate_flag", constraint.get_validate_flag()); }
+    return ret;
+  }, matched);
+  if (OB_SUCC(ret)) { ret = insert_constraint(constraint, true, false); }
+  return ret;
+}
+
+int NativeSchemaCatalog::rename_constraint(const ObConstraint &constraint, const ObString &name, int64_t version)
+{
+  ObConstraint renamed;
+  int ret = renamed.assign(constraint);
+  if (OB_SUCC(ret)) { ret = renamed.set_constraint_name(name); }
+  renamed.set_schema_version(version);
+  bool matched = false;
+  if (OB_SUCC(ret)) {
+    ret = update_fields(OB_ALL_CONSTRAINT_TID, [&](SchemaCatalogRow &fields) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(fields.add_pk_column("table_id", renamed.get_table_id()))
+          || OB_FAIL(fields.add_pk_column("constraint_id", renamed.get_constraint_id()))
+          || OB_FAIL(fields.add_column("schema_version", version))
+          || OB_FAIL(fields.add_column("constraint_name", name))
+          || OB_FAIL(fields.add_column("name_generated_type", renamed.get_name_generated_type()))
+          || OB_FAIL(fields.add_gmt_modified())) {}
+      return ret;
+    }, matched);
+    if (OB_SUCC(ret) && !matched) { ret = OB_ERR_UNEXPECTED; }
+  }
+  // A rename publishes a complete history row, including the existing flags.
+  if (OB_SUCC(ret)) { ret = insert_constraint(renamed, true, false); }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_constraint(const ObConstraint &constraint, int64_t version, int64_t &deleted_columns)
+{
+  deleted_columns = 0;
+  const auto key = [&](SchemaCatalogRow &fields) {
+    int ret = fields.add_pk_column("table_id", constraint.get_table_id());
+    if (OB_SUCC(ret)) { ret = fields.add_pk_column("constraint_id", constraint.get_constraint_id()); }
+    return ret;
+  };
+  int64_t affected = 0;
+  int ret = erase_prefix(OB_ALL_CONSTRAINT_TID, key, affected);
+  if (OB_SUCC(ret) && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) { ret = erase_prefix(OB_ALL_CONSTRAINT_COLUMN_TID, key, deleted_columns); }
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_CONSTRAINT_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = key(fields);
+      if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("schema_version", version))
+          || OB_FAIL(fields.add_column("is_deleted", 1)))) {}
+      return ret;
+    });
+  }
+  for (auto it = constraint.cst_col_begin(); OB_SUCC(ret) && it != constraint.cst_col_end(); ++it) {
+    ret = insert_fields(OB_ALL_CONSTRAINT_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+      int ret = key(fields);
+      if (OB_SUCC(ret) && (OB_FAIL(fields.add_pk_column("column_id", *it))
+          || OB_FAIL(fields.add_pk_column("schema_version", version))
+          || OB_FAIL(fields.add_column("is_deleted", 1)))) {}
+      return ret;
+    });
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::insert(uint64_t inner_table_id, const ObNewRow &row)
 {
   bool existed = false;

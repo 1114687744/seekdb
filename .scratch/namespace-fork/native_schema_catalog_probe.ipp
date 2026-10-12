@@ -858,6 +858,109 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_BORROWED namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_constraint") != std::string::npos) {
+    ObArenaAllocator arena(ObMemAttr("ConstraintProbe"));
+    ObTableSchema *table = nullptr;
+    ret = catalog.get_table(table_id, INT64_MAX - 1, arena, table);
+    ObConstraint constraint;
+    if (ret == OB_SUCCESS && (table == nullptr || table->get_constraint_count() != 1)) { ret = OB_ERR_UNEXPECTED; }
+    if (ret == OB_SUCCESS) { ret = constraint.assign(**table->constraint_begin()); }
+    if (ret == OB_SUCCESS && constraint.get_enable_flag()) { ret = OB_ERR_UNEXPECTED; }
+    const int64_t version = constraint.get_schema_version() + 100;
+    constraint.set_constraint_id(constraint.get_constraint_id() + 1000000000);
+    constraint.set_schema_version(version);
+    constraint.set_rely_flag(true);
+    constraint.set_validate_flag(CST_FK_NO_VALIDATE);
+    if (ret == OB_SUCCESS) { ret = constraint.set_constraint_name(ObString::make_string("native_check")); }
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    auto begin = [&]() {
+      int rc = native.begin(owner, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](bool commit) {
+      int rc = owner.is_active() ? (commit ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+      const int closed = writer.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, const char *expected_name, bool enabled, int64_t v) {
+      ObArenaAllocator rows(ObMemAttr("ConstraintRead"));
+      ObTableSchema *actual = nullptr;
+      int rc = reader.get_table(table_id, INT64_MAX - 1, rows, actual);
+      const ObConstraint *found = rc == OB_SUCCESS ? actual->get_constraint(constraint.get_constraint_id()) : nullptr;
+      if (rc == OB_SUCCESS && expected_name == nullptr) {
+        if (found != nullptr) { rc = OB_ERR_UNEXPECTED; }
+      } else if (rc == OB_SUCCESS && (found == nullptr
+          || found->get_constraint_name_str() != ObString::make_string(expected_name)
+          || !found->get_rely_flag() || found->get_enable_flag() != enabled
+          || found->get_validate_flag() != CST_FK_NO_VALIDATE
+          || found->get_schema_version() != v || found->get_column_cnt() != constraint.get_column_cnt())) {
+        rc = OB_ERR_UNEXPECTED;
+      }
+      for (uint64_t inner : {OB_ALL_CONSTRAINT_TID, OB_ALL_CONSTRAINT_COLUMN_TID}) {
+        observer::NativeSchemaCatalog::Cursor scan;
+        ObObj key[2]; key[0].set_int(table_id); key[1].set_int(constraint.get_constraint_id());
+        if (rc == OB_SUCCESS) { rc = reader.open_prefix(inner, ObRowkey(key, 2), scan); }
+        const ObNewRow *row = nullptr;
+        int64_t count = 0;
+        while (rc == OB_SUCCESS && (rc = scan.next(row)) == OB_SUCCESS) { ++count; }
+        if (rc == OB_ITER_END) { rc = OB_SUCCESS; }
+        const int closed = scan.close();
+        if (rc == OB_SUCCESS) { rc = closed; }
+        const int64_t expected = expected_name == nullptr ? 0 : inner == OB_ALL_CONSTRAINT_TID ? 1 : constraint.get_column_cnt();
+        if (rc == OB_SUCCESS && count != expected) { rc = OB_ERR_UNEXPECTED; }
+      }
+      return rc;
+    };
+    auto verify_committed = [&](const char *expected_name, bool enabled, int64_t v) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      if (rc == OB_SUCCESS) { rc = verify(reader, expected_name, enabled, v); }
+      return rc;
+    };
+    const char *stage = "insert";
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_constraint(constraint, false, true); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, "native_check", false, version); }
+    if (ret == OB_SUCCESS) { ret = verify_committed(nullptr, false, 0); }
+    constraint.set_is_modify_enable_flag(true);
+    constraint.set_enable_flag(true);
+    constraint.set_schema_version(version + 1);
+    if (ret == OB_SUCCESS) { stage = "update"; ret = writer.update_constraint(constraint); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, "native_check", true, version + 1); }
+    if (ret == OB_SUCCESS) { stage = "rename"; ret = writer.rename_constraint(constraint, ObString::make_string("renamed_check"), version + 2); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, "renamed_check", true, version + 2); }
+    int64_t deleted_columns = 0;
+    if (ret == OB_SUCCESS) { stage = "erase"; ret = writer.erase_constraint(constraint, version + 3, deleted_columns); }
+    if (ret == OB_SUCCESS && deleted_columns != constraint.get_column_cnt()) { ret = OB_ERR_UNEXPECTED; }
+    if (ret == OB_SUCCESS) { ret = verify(writer, nullptr, false, 0); }
+    const int rollback = end(false);
+    if (ret == OB_SUCCESS) { ret = rollback; }
+    if (ret == OB_SUCCESS) { ret = verify_committed(nullptr, false, 0); }
+    constraint.set_schema_version(version);
+    constraint.set_enable_flag(false);
+    if (ret == OB_SUCCESS) { stage = "committed"; ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_constraint(constraint, false, true); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = verify_committed("native_check", false, version); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.erase_constraint(constraint, version + 1, deleted_columns); }
+    const int undo = end(false);
+    if (ret == OB_SUCCESS) { ret = undo; }
+    if (ret == OB_SUCCESS) { ret = verify_committed("native_check", false, version); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.erase_constraint(constraint, version + 1, deleted_columns); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "deleted"; ret = verify_committed(nullptr, false, 0); }
+    const int cleanup = end(false);
+    if (ret == OB_SUCCESS) { ret = cleanup; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CONSTRAINT namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_indexed") != std::string::npos) {
     ObArenaAllocator allocator(ObMemAttr("CatalogIdxProbe"));
     ObTableSchema fixed(&allocator);

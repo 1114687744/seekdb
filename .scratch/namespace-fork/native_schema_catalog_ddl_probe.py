@@ -5,6 +5,79 @@ import resource
 from fork_parent_truncate_probe import BootstrapExperiment, connect
 
 
+def exercise_constraints(query):
+    query('CREATE DATABASE native_constraints')
+    query('CREATE TABLE native_constraints.state_t(id INT PRIMARY KEY,v INT,'
+          'CONSTRAINT ck CHECK(v>=0) NOT ENFORCED,CONSTRAINT ck_id CHECK(id>0))')
+    query('INSERT INTO native_constraints.state_t VALUES(1,-1)')
+    query('UPDATE native_constraints.state_t SET v=1')
+    query('ALTER TABLE native_constraints.state_t ALTER CHECK ck ENFORCED')
+    tid = query("SELECT table_id FROM oceanbase.__all_table WHERE table_name='state_t'")[0][0]
+    assert query(f"SELECT enable_flag FROM oceanbase.__all_constraint WHERE table_id={tid} "
+                 "AND constraint_name='ck'") == ((1,),)
+    query('ALTER TABLE native_constraints.state_t ALTER CHECK ck NOT ENFORCED')
+    query('ALTER TABLE native_constraints.state_t CHANGE COLUMN v value INT')
+    query('ALTER TABLE native_constraints.state_t ADD CONSTRAINT ck_pair CHECK(id<=value)')
+    pair_id = query(f"SELECT constraint_id FROM oceanbase.__all_constraint WHERE table_id={tid} "
+                    "AND constraint_name='ck_pair'")[0][0]
+    assert query(f'SELECT COUNT(*) FROM oceanbase.__all_constraint_column WHERE table_id={tid} '
+                 f'AND constraint_id={pair_id}') == ((2,),)
+    query('ALTER TABLE native_constraints.state_t DROP CONSTRAINT ck_pair')
+    dropped = []
+    for recycle in (True, False):
+        name = 'recycled' if recycle else 'dropped'
+        query(f'CREATE TABLE native_constraints.{name}(id INT PRIMARY KEY,v INT,'
+              'CONSTRAINT ck_keep CHECK(v>=0) NOT ENFORCED,CONSTRAINT ck_positive CHECK(id>0))')
+        dropped_tid = query(f"SELECT table_id FROM oceanbase.__all_table WHERE table_name='{name}'")[0][0]
+        before = query('SELECT constraint_id,constraint_name,rely_flag,enable_flag,validate_flag,name_generated_type '
+                       f'FROM oceanbase.__all_constraint WHERE table_id={dropped_tid} ORDER BY constraint_id')
+        column_keys = query('SELECT constraint_id,column_id FROM oceanbase.__all_constraint_column '
+                            f'WHERE table_id={dropped_tid} ORDER BY constraint_id,column_id')
+        query('SET SESSION recyclebin=' + ('ON' if recycle else 'OFF'))
+        query(f'DROP TABLE native_constraints.{name}')
+        if recycle:
+            current = query('SELECT constraint_id,constraint_name,rely_flag,enable_flag,validate_flag,name_generated_type '
+                            f'FROM oceanbase.__all_constraint WHERE table_id={dropped_tid} ORDER BY constraint_id')
+            assert len(current) == len(before) == 2, (current, before)
+            for old, row in zip(before, current):
+                assert old[0] == row[0] and old[1] != row[1] and old[2:] == row[2:], (old, row)
+                history = query('SELECT constraint_id,constraint_name,rely_flag,enable_flag,validate_flag,name_generated_type '
+                                f'FROM oceanbase.__all_constraint_history WHERE table_id={dropped_tid} '
+                                f'AND constraint_id={row[0]} ORDER BY schema_version DESC LIMIT 1')
+                assert history == (row,), (history, row)
+            query('PURGE RECYCLEBIN')
+        dropped.append((dropped_tid, before, column_keys))
+    return tid, pair_id, dropped
+
+
+def verify_constraints(query, evidence):
+    tid, pair_id, dropped = evidence
+    assert query('SELECT id,value FROM native_constraints.state_t') == ((1, 1),)
+    current = query('SELECT constraint_id,constraint_name,check_expr,rely_flag,enable_flag,validate_flag '
+                    f'FROM oceanbase.__all_constraint WHERE table_id={tid} ORDER BY constraint_id')
+    assert len(current) == 2, current
+    for row in current:
+        if row[1] == 'ck':
+            assert row[4] == 0 and 'value' in row[2], row
+        history = query('SELECT constraint_id,constraint_name,check_expr,rely_flag,enable_flag,validate_flag '
+                        f'FROM oceanbase.__all_constraint_history WHERE table_id={tid} '
+                        f'AND constraint_id={row[0]} ORDER BY schema_version DESC LIMIT 1')
+        assert history == (row,), (history, row)
+    assert query(f'SELECT is_deleted FROM oceanbase.__all_constraint_history WHERE table_id={tid} '
+                 f'AND constraint_id={pair_id} ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+    for dropped_tid, constraints, column_keys in dropped:
+        for inner in ('__all_constraint', '__all_constraint_column'):
+            assert query(f'SELECT COUNT(*) FROM oceanbase.{inner} WHERE table_id={dropped_tid}') == ((0,),)
+        for row in constraints:
+            assert query('SELECT is_deleted FROM oceanbase.__all_constraint_history '
+                         f'WHERE table_id={dropped_tid} AND constraint_id={row[0]} '
+                         'ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+        for cid, col in column_keys:
+            assert query('SELECT is_deleted FROM oceanbase.__all_constraint_column_history '
+                         f'WHERE table_id={dropped_tid} AND constraint_id={cid} AND column_id={col} '
+                         'ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+
+
 def run(binary):
     experiment = BootstrapExperiment(binary, 'native_catalog_ddl', prototype=6)
     child = None
@@ -69,8 +142,10 @@ def run(binary):
         experiment.sql('PURGE RECYCLEBIN', child)
         experiment.sql('TRUNCATE TABLE native_ddl.p', child)
         experiment.sql('DROP TABLE native_ddl.p', child)
+        constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
 
         def verify():
+            verify_constraints(lambda statement: experiment.sql(statement, child), constraint_evidence)
             assert experiment.sql('SELECT id,v,u,n,e,c,LENGTH(body) FROM native_ddl.t') == (
                 (1, '初始', 18446744073709551615, None, '', 'b', 90000),)
             assert experiment.sql('SELECT id,title,extra,LENGTH(body) FROM native_ddl.t ORDER BY id', child) == (

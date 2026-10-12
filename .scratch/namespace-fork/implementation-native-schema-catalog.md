@@ -238,3 +238,20 @@
 
 - 删除阶段生产 Namespace 主备回归退出 0（132.65 秒），见 `gate-results/native-schema-catalog/native-delete-standby/results.json`。`native_catalog_delete_replay` 验证删列、删约束、LOB 离线 DDL、当前行清理与 history 删除记录回放；提升后再次校验数据和 PURGE 对象不存在，原有物化/LOB 回放、父 TRUNCATE/DROP、Namespace 删除及提升后 fork 也通过。
 - 本阶段修改及过程失败的用例已纳入四件套共用冷探针、生产 DDL 和 Namespace 主备脚本。未运行全量 mysqltest 或 sysbench；完整目标仍在进行。
+
+### 约束完整写入接入（实施中）
+
+- `NativeSchemaCatalog` 统一维护约束及其列关系的 current/history：插入、状态或表达式更新、改名、删除均借用 DDL owner。单条和批量入口复用相同操作；批量建表/删除约束只建立一个目录操作上下文。原有内表不允许用户约束的入口约束保持不变，没有新增 bootstrap 或 Namespace ID 写入分支。
+- `ObTableSqlService` 的建表约束、ALTER 添加/删除约束、状态更新、列关系修订、回收站改名和整表批量清理均改用原生目录，移除对应 SQL 字段生成与批量 SQL 拼接。权限检查和操作日志仍在上层。
+- 旧回收站改名的 history 字段生成漏写 rely/enable/validate，可能把非默认状态恢复成默认值。新的改名历史使用同一份完整约束字段映射，保留这些属性；生产用例比较 current 与最新 history 的全部状态字段。
+- 四件套新增冷 Namespace 的约束写入、状态更新、改名、关系行、未提交不可见及提交/回滚验证；实际 DDL 用例覆盖 NOT ENFORCED / ENFORCED、改列名后的表达式、添加双列 CHECK、回收站改名与 PURGE、直接 DROP、重启及主备回放/提升。首次编译及旧二进制对照验证运行中。
+
+- 上一阶段主备验证保留的二进制（`tools/obtest/bin/observer`）对照 `/tmp/native-schema-catalog-constraint-prior-repro1.log` 在回收站改名断言失败：同一 constraint 的 current enable/validate 为 0/0，最新 history 为 1/1，证实字段遗漏造成状态不一致。该回归已加入共用生产 DDL helper，并被主备脚本复用。`constraint-build1.log` 编译退出 0，开始当前版本冷探针及实际 DDL 验证。
+
+- `constraint-probe1.log` 的 typed/part/constraint 三个冷 Namespace 用例退出 0，实例 `namespace_fork_PROTOTYPE_native_schema_catalog_nyqb2oxj` 的 `NATIVE_SCHEMA_CATALOG_CONSTRAINT stage=deleted ret=0` 验证了非默认 rely/enable/validate、完整 history、关系行以及提交/回滚。`constraint-ddl1.log` 的真实 CREATE/ALTER/DROP/PURGE、改列表达式、父子隔离和崩溃重启通过；旧二进制失败的同一回收站状态断言已通过。测试钩子已移除，生产编译及主备验证继续。
+
+- `/tmp/native-schema-catalog-constraint-production-build1.log` 去除测试钩子后编译通过；`constraint-production-ddl1.log` 退出 0，再次覆盖完整约束 DDL、回收站状态一致性和重启。对源码按约束四张表的表名/ID 检索，`ObTableSqlService` 已不再直接拼接或写入约束 SQL；剩余表名引用是 SchemaService 初始化读取 helper，正常装载入口已走原生目录。主备回放验证仍在运行。
+
+- 首次 `native-constraint-standby` 回放检查失败在新增 helper 的首次 `SELECT native_constraints.state_t`（1146）。该检查漏掉了其他主备用例已有的 schema 可见性等待：日志回放水位达到目标不等于已装载 Namespace 的 schema cache 已刷新。新增同样的有界表结构/数据等待，再执行全部持久 current/history 断言；不把该首次失败记为通过。
+
+- 约束阶段生产 Namespace 主备回归退出 0（140.27 秒），见 `gate-results/native-schema-catalog/native-constraint-standby2/results.json`。新增 `native_catalog_constraint_replay` 及提升后复查通过，包括 current/history 状态、关系行删除标记、回收站改名和 PURGE；生产编译、冷 Namespace、DDL 与重启验证均已完成。完整目标继续推进分区和外键关系写入。

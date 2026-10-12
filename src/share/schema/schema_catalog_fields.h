@@ -3,6 +3,7 @@
 #define OCEANBASE_SHARE_SCHEMA_CATALOG_FIELDS_H_
 
 #include "share/schema/ob_table_schema.h"
+#include "share/schema/ob_constraint.h"
 #include "share/schema/ob_schema_utils.h"
 #include "share/ob_dml_sql_splicer.h"
 #include "share/ob_timezone_mgr.h"
@@ -10,7 +11,7 @@
 namespace oceanbase {
 namespace share {
 namespace schema {
-// The single field mapping for persisted table and column definitions. A sink
+// The single field mapping for persisted table, column and constraint definitions. A sink
 // may encode SQL or build native typed cells; it must own variable-length values.
 class SchemaCatalogFields final
 {
@@ -20,6 +21,10 @@ public:
                    RowWriter &, bool is_history);
   template<class RowWriter>
   static int column(const ObColumnSchemaV2 &, RowWriter &, bool is_history);
+  template<class RowWriter>
+  static int constraint(const ObConstraint &, RowWriter &);
+  template<class RowWriter>
+  static int constraint_column(const ObConstraint &, uint64_t column_id, RowWriter &);
 };
 
 template<class RowWriter>
@@ -248,6 +253,51 @@ int SchemaCatalogFields::column(
   }
   return ret;
 }
+
+template<class RowWriter>
+int SchemaCatalogFields::constraint(const ObConstraint &constraint, RowWriter &dml)
+{
+  using namespace common;
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
+                                               constraint.get_table_id())))
+      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
+      || OB_FAIL(dml.add_column("schema_version", constraint.get_schema_version()))
+      || OB_FAIL(dml.add_column("constraint_type", constraint.get_constraint_type()))
+      || OB_FAIL(dml.add_column("constraint_name", ObHexEscapeSqlStr(constraint.get_constraint_name())))
+      || OB_FAIL(dml.add_column("check_expr", ObHexEscapeSqlStr(constraint.get_check_expr())))
+      || OB_FAIL(dml.add_column("rely_flag", constraint.get_rely_flag()))
+      || OB_FAIL(dml.add_column("enable_flag", constraint.get_enable_flag()))
+      || OB_FAIL(dml.add_column("validate_flag", constraint.get_validate_flag()))
+      || (OB_FAIL(dml.add_column("name_generated_type", constraint.get_name_generated_type())))
+      || OB_FAIL(dml.add_gmt_create())
+      || OB_FAIL(dml.add_gmt_modified())) {
+    LOG_WARN("dml add constraint failed", K(ret));
+  }
+
+  return ret;
+}
+
+
+template<class RowWriter>
+int SchemaCatalogFields::constraint_column(const ObConstraint &constraint, uint64_t column_id, RowWriter &dml)
+{
+  using namespace common;
+  int ret = OB_SUCCESS;
+
+  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
+                                               constraint.get_table_id())))
+      || OB_FAIL(dml.add_pk_column("constraint_id", constraint.get_constraint_id()))
+      || OB_FAIL(dml.add_pk_column("column_id", column_id))
+      || OB_FAIL(dml.add_column("schema_version", constraint.get_schema_version()))
+      || OB_FAIL(dml.add_gmt_create())
+      || OB_FAIL(dml.add_gmt_modified())) {
+    LOG_WARN("dml add constraint column failed", K(ret));
+  }
+
+  return ret;
+}
+
 
 } // namespace schema
 } // namespace share

@@ -1,6 +1,7 @@
 import argparse, contextlib, json, time
 from pathlib import Path
 import pymysql
+from native_schema_catalog_ddl_probe import exercise_constraints, verify_constraints
 
 p=argparse.ArgumentParser(); p.add_argument('--initial-only',action='store_true'); args=p.parse_args()
 
@@ -90,6 +91,13 @@ with connect(42035) as root,connect(42036) as standby:
   wait(lambda:read_ns('replica_seed',f'SELECT is_deleted FROM oceanbase.__all_table_history '
                      f'WHERE table_id={purge_tid} ORDER BY schema_version DESC LIMIT 1'),((1,),))
   record('native_catalog_delete_replay')
+  constraint_evidence=exercise_constraints(lambda statement:sql(child,statement))
+  sync(root,standby)
+  # Replay SCN can lead this already-loaded Namespace's schema refresh.
+  # Wait for the final table shape before checking persistent metadata.
+  wait(lambda:read_ns('replica_seed','SELECT id,value FROM native_constraints.state_t'),((1,1),))
+  verify_constraints(lambda statement:read_ns('replica_seed',statement),constraint_evidence)
+  record('native_catalog_constraint_replay')
   sql(child,'USE replica_ns')
   sql(child,'SET SESSION foreign_key_checks=0')
   sql(child,'CREATE TABLE replica_ns.mock_child(id INT PRIMARY KEY,v INT,KEY ix(v),'
@@ -120,6 +128,7 @@ with connect(42035) as root,connect(42036) as standby:
  sql(root,'ALTER SYSTEM SWITCHOVER TO STANDBY')
  sql(standby,'ALTER SYSTEM SWITCHOVER TO PRIMARY')
  with connect(42036,'replica_seed') as child:
+  verify_constraints(lambda statement:sql(child,statement),constraint_evidence)
   assert sql(child,'SELECT id,v FROM replica_ns.native_delete')==((1,23),)
   assert sql(child,f'SELECT COUNT(*) FROM oceanbase.__all_table WHERE table_id={purge_tid}')==((0,),)
   sql(child,"insert into replica_ns.t values(4,40,'promoted child',8)")
