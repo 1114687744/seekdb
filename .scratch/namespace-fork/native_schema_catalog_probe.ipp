@@ -76,6 +76,179 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     });
   }
   if (ret == OB_SUCCESS && (table_rows < 1 || column_rows < expected_columns)) { ret = OB_ERR_UNEXPECTED; }
+  if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
+    ObArray<ObTableSchema> core;
+    ret = catalog.get_core_tables(INT64_MAX, core);
+    bool found_table = false, found_column = false;
+    int64_t columns = 0;
+    for (int64_t i = 0; ret == OB_SUCCESS && i < core.count(); ++i) {
+      const auto &actual = core.at(i);
+      ObTableSchema expected;
+      const auto creator = share::fixed_inner_table_creator(actual.get_table_id());
+      if (creator == nullptr) {
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_MISSING_CREATOR table=%lu\n", actual.get_table_id());
+        ret = OB_ERR_UNEXPECTED;
+      }
+      else { ret = creator(expected); }
+      if (ret == OB_SUCCESS && (!actual.is_valid()
+          || actual.get_table_name_str() != expected.get_table_name_str()
+          || actual.get_column_count() != expected.get_column_count()
+          || actual.get_rowkey_column_num() != expected.get_rowkey_column_num()
+          || actual.get_tablet_id() != expected.get_tablet_id())) {
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_DIFF table=%lu valid=%d name=%.*s/%.*s columns=%ld/%ld keys=%ld/%ld tablet=%lu/%lu\n",
+            actual.get_table_id(), actual.is_valid(), actual.get_table_name_str().length(),
+            actual.get_table_name_str().ptr(), expected.get_table_name_str().length(), expected.get_table_name_str().ptr(),
+            actual.get_column_count(), expected.get_column_count(), actual.get_rowkey_column_num(),
+            expected.get_rowkey_column_num(), actual.get_tablet_id().id(), expected.get_tablet_id().id());
+        ret = OB_ERR_UNEXPECTED;
+      }
+      for (auto column = actual.column_begin(); ret == OB_SUCCESS && column != actual.column_end(); ++column) {
+        const auto *fixed = expected.get_column_schema((*column)->get_column_id());
+        if (fixed == nullptr || fixed->get_column_name_str() != (*column)->get_column_name_str()
+            || fixed->get_data_type() != (*column)->get_data_type()
+            || fixed->get_rowkey_position() != (*column)->get_rowkey_position()) {
+          fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_COLUMN_DIFF table=%lu column=%lu name=%.*s type=%d key=%ld\n",
+              actual.get_table_id(), (*column)->get_column_id(), (*column)->get_column_name_str().length(),
+              (*column)->get_column_name_str().ptr(), (*column)->get_data_type(), (*column)->get_rowkey_position());
+          ret = OB_ERR_UNEXPECTED;
+        }
+      }
+      found_table |= actual.get_table_id() == OB_ALL_TABLE_TID;
+      found_column |= actual.get_table_id() == OB_ALL_COLUMN_TID;
+      columns += actual.get_column_count();
+    }
+    if (ret == OB_SUCCESS && (!found_table || !found_column)) { ret = OB_ERR_UNEXPECTED; }
+    ObArenaAllocator allocator(ObMemAttr("CoreCatalogTest"));
+    for (const uint64_t id : {OB_ALL_CORE_TABLE_TID, OB_ALL_TABLE_TID, OB_ALL_COLUMN_TID}) {
+      if (ret != OB_SUCCESS) { break; }
+      ObTableSchema *table = nullptr;
+      ret = catalog.get_table(id, INT64_MAX, allocator, table);
+      if (ret == OB_SUCCESS && (table == nullptr || !table->is_valid())) { ret = OB_ERR_UNEXPECTED; }
+      if (table != nullptr) { table->~ObTableSchema(); }
+    }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE namespace=%lu tables=%ld columns=%ld ret=%d\n",
+        namespace_id, core.count(), columns, ret);
+  }
+  if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
+    // Core row_id is an allocation identity, not schema version order. Insert
+    // versions in the opposite order and a tombstone, all rolled back below.
+    ObArenaAllocator allocator(ObMemAttr("CoreHistoryTest"));
+    ObArray<ObNewRow> sample;
+    ObTableSchema fixed;
+    ret = share::ObInnerTableSchema::all_core_table_schema(fixed);
+    int64_t value_column = -1;
+    if (ret == OB_SUCCESS) { ret = column_index(fixed, "column_value", value_column); }
+    ObObj keys[2];
+    keys[0].set_varchar(OB_ALL_TABLE_HISTORY_TNAME);
+    keys[0].set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+    int64_t selected_row = -1, max_row = -1, original_version = -1;
+    const char *stage = "find_source";
+    {
+      observer::NativeSchemaCatalog::Cursor cursor;
+      if (ret == OB_SUCCESS) { ret = catalog.open_prefix(OB_ALL_CORE_TABLE_TID, ObRowkey(keys, 1), cursor); }
+      const ObNewRow *row = nullptr;
+      int64_t current_row = -1, current_version = -1, current_table = -1;
+      auto consume = [&]() {
+        if (current_table == OB_ALL_TABLE_TID && current_version > original_version) {
+          selected_row = current_row; original_version = current_version;
+        }
+      };
+      while (ret == OB_SUCCESS && (ret = cursor.next(row)) == OB_SUCCESS) {
+        const int64_t row_id = row->cells_[1].get_int();
+        if (row_id != current_row) {
+          consume(); current_row = row_id; current_version = -1; current_table = -1;
+        }
+        max_row = std::max(max_row, row_id);
+        const ObString field = row->cells_[2].get_string();
+        if (field == ObString::make_string("table_id") || field == ObString::make_string("schema_version")) {
+          const ObString bytes = row->cells_[value_column].get_string();
+          const std::string number(bytes.ptr(), bytes.length());
+          const int64_t value = strtoll(number.c_str(), nullptr, 10);
+          (field == ObString::make_string("table_id") ? current_table : current_version) = value;
+        }
+      }
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; consume(); }
+    }
+    if (ret == OB_SUCCESS && (selected_row < 0 || original_version < 0)) { ret = OB_ERR_UNEXPECTED; }
+    {
+      observer::NativeSchemaCatalog::Cursor cursor;
+      keys[1].set_int(selected_row);
+      if (ret == OB_SUCCESS) { ret = catalog.open_prefix(OB_ALL_CORE_TABLE_TID, ObRowkey(keys, 2), cursor); }
+      const ObNewRow *row = nullptr;
+      while (ret == OB_SUCCESS && (ret = cursor.next(row)) == OB_SUCCESS) {
+        ObNewRow copy;
+        if ((ret = ob_write_row(allocator, *row, copy)) == OB_SUCCESS) { ret = sample.push_back(copy); }
+      }
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    }
+    ns::TabletAccess target;
+    stage = "materialize";
+    if (ret == OB_SUCCESS) {
+      ret = target.prepare_write(namespace_id, OB_ALL_CORE_TABLE_TID, fixed.get_tablet_id(),
+                                 data_plane::ObNamespaceAccessMode::LEASED);
+    }
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog borrowed(namespace_id, *access, *transactions);
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    if (ret == OB_SUCCESS) { ret = native.begin(owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(owner, [&](transaction::ObTxDesc &descriptor) {
+        return borrowed.attach(descriptor, deadline);
+      });
+    }
+    auto append = [&](int64_t row_id, int64_t version, const char *table_name, bool deleted) {
+      int rc = OB_SUCCESS;
+      char version_text[32];
+      snprintf(version_text, sizeof(version_text), "%ld", version);
+      for (int64_t i = 0; rc == OB_SUCCESS && i < sample.count(); ++i) {
+        ObNewRow copy;
+        rc = ob_write_row(allocator, sample.at(i), copy);
+        if (rc != OB_SUCCESS) { break; }
+        copy.cells_[1].set_int(row_id);
+        const ObString field = copy.cells_[2].get_string();
+        const char *value = field == ObString::make_string("schema_version") ? version_text
+            : field == ObString::make_string("table_name") ? table_name
+            : field == ObString::make_string("is_deleted") ? (deleted ? "1" : "0") : nullptr;
+        if (value != nullptr) { copy.cells_[value_column].set_string(ObVarcharType, ObString::make_string(value)); }
+        rc = borrowed.insert(OB_ALL_CORE_TABLE_TID, copy);
+      }
+      return rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, int64_t version, const char *expected) {
+      ObTableSchema *definition = nullptr;
+      int rc = reader.get_table(OB_ALL_TABLE_TID, version, allocator, definition);
+      if (expected == nullptr) { rc = rc == OB_TABLE_NOT_EXIST ? OB_SUCCESS : OB_ERR_UNEXPECTED; }
+      else if (rc == OB_SUCCESS && definition->get_table_name_str() != ObString::make_string(expected)) {
+        rc = OB_ERR_UNEXPECTED;
+      }
+      if (definition != nullptr) { definition->~ObTableSchema(); }
+      return rc;
+    };
+    if (ret == OB_SUCCESS) { stage = "append_new"; ret = append(max_row + 1, original_version + 2, "__native_core_new", false); }
+    if (ret == OB_SUCCESS) { stage = "append_old"; ret = append(max_row + 2, original_version + 1, "__native_core_old", false); }
+    if (ret == OB_SUCCESS) { stage = "read_latest"; ret = verify(borrowed, INT64_MAX, "__native_core_new"); }
+    if (ret == OB_SUCCESS) { stage = "read_history"; ret = verify(borrowed, original_version + 1, "__native_core_old"); }
+    if (ret == OB_SUCCESS) {
+      stage = "read_external";
+      observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+      ret = outside.begin_read(deadline);
+      if (ret == OB_SUCCESS) { ret = verify(outside, INT64_MAX, OB_ALL_TABLE_TNAME); }
+    }
+    if (ret == OB_SUCCESS) { stage = "append_deleted"; ret = append(max_row + 3, original_version + 3, "__native_core_deleted", true); }
+    if (ret == OB_SUCCESS) { stage = "read_deleted"; ret = verify(borrowed, INT64_MAX, nullptr); }
+    if (ret == OB_SUCCESS) { stage = "read_before_deleted"; ret = verify(borrowed, original_version + 2, "__native_core_new"); }
+    const int owner_end = owner.is_active() ? native.rollback(owner) : OB_SUCCESS;
+    const int participant_end = borrowed.close();
+    if (ret == OB_SUCCESS) { ret = owner_end == OB_SUCCESS ? participant_end : owner_end; }
+    if (ret == OB_SUCCESS) {
+      stage = "read_rollback";
+      observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+      ret = outside.begin_read(deadline);
+      if (ret == OB_SUCCESS) { ret = verify(outside, INT64_MAX, OB_ALL_TABLE_TNAME); }
+    }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_HISTORY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS) {
     VersionHisVal versions;
     ret = catalog.get_table_version_history(table_id, requested_version, versions);

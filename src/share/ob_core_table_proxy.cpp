@@ -32,18 +32,48 @@ using namespace common::sqlclient;
 namespace share
 {
 
+namespace {
+int store_core_string(ObIAllocator &allocator, const ObString &src, ObString &dest)
+{
+  if (src.ptr() == nullptr) { dest = src; return OB_SUCCESS; }
+  char *buf = static_cast<char *>(allocator.alloc(src.length() + 1));
+  if (buf == nullptr) { return OB_ALLOCATE_MEMORY_FAILED; }
+  MEMCPY(buf, src.ptr(), src.length());
+  buf[src.length()] = '\0';
+  dest = ObString(0, src.length(), buf);
+  return OB_SUCCESS;
+}
+} // namespace
+
+int ObCoreTableCell::assign(ObIAllocator &allocator, const ObCoreTableCell &src)
+{
+  int ret = OB_SUCCESS;
+  if (!src.is_valid()) { ret = OB_INVALID_ARGUMENT; }
+  else if (OB_FAIL(store_core_string(allocator, src.name_, name_))) {
+  } else if (OB_FAIL(store_core_string(allocator, src.value_, value_))) {
+  } else { is_hex_value_ = src.is_hex_value_; }
+  return ret;
+}
+
 int ObCoreTableProxy::Row::init(const int64_t row_id,
     ObCoreTableProxy &kv_proxy, const common::ObIArray<Cell> &cells)
+{
+  if (!kv_proxy.is_valid()) { reset(); return OB_INVALID_ARGUMENT; }
+  return init(row_id, kv_proxy.allocator_, cells);
+}
+
+int ObCoreTableProxy::Row::init(const int64_t row_id,
+    ObIAllocator &allocator, const common::ObIArray<Cell> &cells)
 {
   // allow init twice
   reset();
   int ret = OB_SUCCESS;
-  if (row_id < 0 || !kv_proxy.is_valid()) {
+  if (row_id < 0) {
     ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid argument", K(ret), K(row_id), K(kv_proxy));
+    LOG_WARN("invalid argument", K(ret), K(row_id));
   } else  {
     row_id_ = row_id;
-    kv_proxy_ = &kv_proxy;
+    allocator_ = &allocator;
 
     if (OB_FAIL(extend_cell_array(cells.count()))) {
     } else {
@@ -263,7 +293,7 @@ int ObCoreTableProxy::Row::extend_cell_array(const int64_t cnt)
     LOG_WARN("invalid argument", K(ret), K(cnt));
   } else {
     if (cnt > cell_cnt_) {
-      Cell *new_cells = static_cast<Cell *>(kv_proxy_->allocator_.alloc(sizeof(Cell) * cnt));
+      Cell *new_cells = static_cast<Cell *>(allocator_->alloc(sizeof(Cell) * cnt));
       if (NULL == new_cells) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
         LOG_ERROR("alloc cell array failed", K(ret), "size", sizeof(Cell) * cnt);
@@ -277,7 +307,7 @@ int ObCoreTableProxy::Row::extend_cell_array(const int64_t cnt)
           }
         }
         if (NULL != cells_) {
-          kv_proxy_->allocator_.free(cells_);
+          allocator_->free(cells_);
         }
         cells_ = new_cells;
       }
@@ -296,7 +326,7 @@ int ObCoreTableProxy::Row::update_cell(const Cell &cell)
   } else if (!cell.is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), K(cell));
-  } else if (OB_FAIL(kv_proxy_->store_cell(cell, new_cell))) {
+  } else if (OB_FAIL(new_cell.assign(*allocator_, cell))) {
   } else {
     Cell *c = NULL;
     if (OB_FAIL(get_cell(cell.name_.ptr(), c))) {
@@ -304,7 +334,7 @@ int ObCoreTableProxy::Row::update_cell(const Cell &cell)
         LOG_WARN("get cell failed", K(ret));
       } else { // not found
         LOG_WARN("update cell not found in row, we ignore this and continue",
-            K(cell), K_(row_id), "table_name", kv_proxy_->table_name_);
+            K(cell), K_(row_id));
         if (OB_FAIL(extend_cell_array(cell_cnt_ + 1))) {
         } else {
           c = std::lower_bound(cells_, cells_ + cell_cnt_, new_cell);
@@ -824,42 +854,9 @@ int ObCoreTableProxy::execute_delete_sql(const int64_t row_id)
   return ret;
 }
 
-int ObCoreTableProxy::store_string(const common::ObString &src, common::ObString &dest)
-{
-  int ret = OB_SUCCESS;
-  if (!is_valid()) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid argument", K(ret), KPC(this));
-  } else {
-    if (NULL == src.ptr()) { // null value
-      dest = src;
-    } else {
-      char *buf = static_cast<char *>(allocator_.alloc(src.length() + 1));
-      if (NULL == buf) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-        LOG_ERROR("all memory for store string failed", K(ret), "length", src.length() + 1);
-      } else {
-        MEMCPY(buf, src.ptr(), src.length());
-        buf[src.length()] = '\0';
-        dest = ObString(0, src.length(), buf);
-      }
-    }
-  }
-  return ret;
-}
-
 int ObCoreTableProxy::store_cell(const Cell &src, Cell &dest)
 {
-  int ret = OB_SUCCESS;
-  if (!is_valid() || !src.is_valid()) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid argument", K(ret), KPC(this), K(src));
-  } else if (OB_FAIL(store_string(src.name_, dest.name_))) {
-  } else if (OB_FAIL(store_string(src.value_, dest.value_))) {
-  } else {
-    dest.is_hex_value_ = src.is_hex_value_;
-  }
-  return ret;
+  return is_valid() ? dest.assign(allocator_, src) : OB_INVALID_ARGUMENT;
 }
 
 int ObCoreTableProxy::check_row_match(

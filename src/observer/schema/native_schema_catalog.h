@@ -68,6 +68,10 @@ public:
   enum class TableSource { HISTORY, CURRENT };
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
                 share::schema::ObTableSchema *&, TableSource = TableSource::HISTORY);
+  // Core definitions are cell records in __all_core_table. Its own definition
+  // is compiled; the returned persisted definitions exclude that fixed table.
+  int get_core_tables(int64_t schema_version,
+      common::ObIArray<share::schema::ObTableSchema> &);
   // Append simple table definitions and their partition/name relationships.
   // A null selection reads all tables (except the separately loaded core table);
   // an explicit empty selection reads none. All components share this view.

@@ -41,6 +41,8 @@ struct ObCoreTableCell
   bool operator <(const ObCoreTableCell o) const { return name_ < o.name_; }
 
   bool is_valid() const { return !name_.empty(); }
+  // Own NUL-terminated strings, preserving SQL NULL versus an empty value.
+  int assign(common::ObIAllocator &allocator, const ObCoreTableCell &src);
   TO_STRING_KV(K_(name), K_(value), K_(is_hex_value));
 };
 
@@ -117,12 +119,16 @@ public:
   class Row {
   public:
     Row() : inited_(false), row_id_(common::OB_INVALID_INDEX),
-            cells_(NULL), cell_cnt_(0), kv_proxy_(NULL)
+            cells_(NULL), cell_cnt_(0), allocator_(NULL)
     {}
     virtual ~Row() = default;
 
-    // set sorted cells, and cells are stored in ObCoreTableProxy
+    // Set sorted cells whose strings are already owned by the caller.
     int init(const int64_t row_id, ObCoreTableProxy &kv_proxy,
+        const common::ObIArray<Cell> &cells);
+    // Decode cells supplied by a native reader. Cell strings and this allocator
+    // must outlive the row; no SQL client is involved in row decoding.
+    int init(const int64_t row_id, common::ObIAllocator &allocator,
         const common::ObIArray<Cell> &cells);
     bool is_inited() const { return inited_; }
     void reset() { *this = Row(); }
@@ -155,7 +161,7 @@ public:
     // cells are sorted by name
     Cell *cells_;
     int64_t cell_cnt_;
-    ObCoreTableProxy *kv_proxy_;
+    common::ObIAllocator *allocator_;
   };
 
   ObCoreTableProxy(const char *table_name,
@@ -220,7 +226,6 @@ public:
 
   TO_STRING_KV(K_(table_name), K_(load_for_update), K_(cur_idx), K_(all_row));
 private:
-  int store_string(const common::ObString &src, common::ObString &dest);
 
   int load(const bool for_update);
   int add_row(const int64_t row_id, const common::ObIArray<Cell> &cells);

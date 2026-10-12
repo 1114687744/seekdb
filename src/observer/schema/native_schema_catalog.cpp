@@ -4,6 +4,8 @@
 #include "observer/schema/ob_schema_retrieve_utils.h"
 #include "share/schema/schema_catalog_fields.h"
 #include "share/schema/schema_catalog_row.h"
+#include "share/ob_core_table_proxy.h"
+#include <map>
 #include <unordered_map>
 #include <set>
 #include "rootserver/fork_table/namespace_tablet_access.h"
@@ -440,6 +442,127 @@ int collect_related_ids(NativeSchemaCatalog &catalog, uint64_t index_id,
   }
   return ret == OB_ITER_END ? OB_SUCCESS : ret;
 }
+
+// The core table stores one physical row per named cell. Group only one
+// logical row at a time, then reuse the existing cell decoder. Callback values
+// must be copied before it returns; both strings and cell storage are local.
+int read_core_rows(NativeSchemaCatalog &catalog, const char *table_name,
+    const std::function<int(const share::ObCoreTableProxy::Row &)> &visitor)
+{
+  ObObj key;
+  key.set_varchar(table_name);
+  key.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+  CatalogRows rows;
+  int ret = rows.open(catalog, OB_ALL_CORE_TABLE_TID, ObRowkey(&key, 1),
+                      INT64_MAX, false, 0, false, {}, false);
+  ObArenaAllocator allocator(ObMemAttr("CoreCatalogRow"));
+  ObArray<share::ObCoreTableCell> cells;
+  int64_t row_id = OB_INVALID_INDEX;
+  const auto consume = [&]() {
+    share::ObCoreTableProxy::Row row;
+    const int rc = row.init(row_id, allocator, cells);
+    return rc == OB_SUCCESS ? visitor(row) : rc;
+  };
+  while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+    int64_t next_id = OB_INVALID_INDEX;
+    ObString name, value;
+    if (OB_FAIL(rows.get_int("row_id", next_id))) {
+    } else if (OB_FAIL(rows.get_varchar("column_name", name))) {
+    } else {
+      ret = rows.get_varchar("column_value", value);
+      if (ret == OB_ERR_NULL_VALUE) { ret = OB_SUCCESS; }
+      else if (OB_SUCC(ret) && value.empty()) { value = ObString::make_string(""); }
+    }
+    if (OB_SUCC(ret) && row_id != OB_INVALID_INDEX && next_id != row_id) {
+      ret = consume();
+      cells.reuse();
+      allocator.reuse();
+    }
+    if (OB_SUCC(ret)) {
+      share::ObCoreTableCell source, cell;
+      row_id = next_id;
+      source.name_ = name;
+      source.value_ = value;
+      if (OB_FAIL(cell.assign(allocator, source))) {
+      } else { ret = cells.push_back(cell); }
+    }
+  }
+  if (ret == OB_ITER_END) {
+    ret = row_id == OB_INVALID_INDEX ? OB_SUCCESS : consume();
+  }
+  return ret;
+}
+
+template<typename T>
+struct CoreDefinition
+{
+  int64_t version = OB_INVALID_VERSION;
+  std::unique_ptr<T> value;
+};
+
+int read_core_tables(NativeSchemaCatalog &catalog, int64_t version,
+    ObIArray<ObTableSchema> &out, bool with_columns)
+{
+  std::map<uint64_t, CoreDefinition<ObTableSchema>> tables;
+  int ret = read_core_rows(catalog, OB_ALL_TABLE_HISTORY_TNAME,
+      [&](const share::ObCoreTableProxy::Row &row) {
+    int64_t v = 0;
+    uint64_t id = OB_INVALID_ID;
+    int rc = row.get_int("schema_version", v);
+    if (rc == OB_SUCCESS) { rc = row.get_uint("table_id", id); }
+    if (rc != OB_SUCCESS || v > version || id == OB_ALL_CORE_TABLE_TID) { return rc; }
+    auto &latest = tables[id];
+    if (v <= latest.version) { return OB_SUCCESS; }
+    std::unique_ptr<ObTableSchema> table(new (std::nothrow) ObTableSchema());
+    if (!table) { return OB_ALLOCATE_MEMORY_FAILED; }
+    bool deleted = false;
+    rc = ObSchemaRetrieveUtils::fill_table_schema(true, row, *table, deleted);
+    if (rc == OB_SUCCESS) {
+      latest.version = v;
+      latest.value = deleted ? nullptr : std::move(table);
+    }
+    return rc;
+  });
+  if (OB_SUCC(ret) && with_columns && !tables.empty()) {
+    std::map<std::pair<uint64_t, uint64_t>, CoreDefinition<ObColumnSchemaV2>> columns;
+    ret = read_core_rows(catalog, OB_ALL_COLUMN_HISTORY_TNAME,
+        [&](const share::ObCoreTableProxy::Row &row) {
+      int64_t v = 0;
+      uint64_t table = OB_INVALID_ID, column = OB_INVALID_ID;
+      int rc = row.get_int("schema_version", v);
+      if (rc == OB_SUCCESS) { rc = row.get_uint("table_id", table); }
+      if (rc == OB_SUCCESS) { rc = row.get_uint("column_id", column); }
+      if (rc != OB_SUCCESS || v > version) { return rc; }
+      const auto owner = tables.find(table);
+      if (owner == tables.end() || !owner->second.value) { return OB_SUCCESS; }
+      auto &latest = columns[{table, column}];
+      if (v <= latest.version) { return OB_SUCCESS; }
+      std::unique_ptr<ObColumnSchemaV2> definition(new (std::nothrow) ObColumnSchemaV2());
+      if (!definition) { return OB_ALLOCATE_MEMORY_FAILED; }
+      bool deleted = false;
+      rc = ObSchemaRetrieveUtils::fill_column_schema(true, row, *definition, deleted);
+      if (rc == OB_SUCCESS) {
+        latest.version = v;
+        latest.value = deleted ? nullptr : std::move(definition);
+      }
+      return rc;
+    });
+    for (const auto &column : columns) {
+      if (OB_FAIL(ret)) { break; }
+      if (column.second.value) {
+        ret = tables.at(column.first.first).value->add_column(*column.second.value);
+      }
+    }
+  }
+  for (const auto &table : tables) {
+    if (OB_FAIL(ret)) { break; }
+    if (!table.second.value) { continue; }
+    if (with_columns && table.second.value->get_column_count() <= 0) { ret = OB_ERR_UNEXPECTED; }
+    else { ret = out.push_back(*table.second.value); }
+  }
+  return ret;
+}
+
 template<typename Table>
 int read_partitions(NativeSchemaCatalog &catalog, int64_t version, bool history, Table &definition)
 {
@@ -494,6 +617,21 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
   const bool history = source == TableSource::HISTORY;
   if (version <= 0 || table_id == OB_INVALID_ID || (!history && version != INT64_MAX)) {
     return OB_INVALID_ARGUMENT;
+  }
+  if (is_core_table(table_id)) {
+    if (table_id == OB_ALL_CORE_TABLE_TID) {
+      ObTableSchema definition;
+      const int ret = share::ObInnerTableSchema::all_core_table_schema(definition);
+      return ret == OB_SUCCESS ? ObSchemaUtils::alloc_schema(allocator, definition, out) : ret;
+    }
+    ObArray<ObTableSchema> definitions;
+    int ret = get_core_tables(version, definitions);
+    for (int64_t i = 0; OB_SUCC(ret) && i < definitions.count(); ++i) {
+      if (definitions.at(i).get_table_id() == table_id) {
+        return ObSchemaUtils::alloc_schema(allocator, definitions.at(i), out);
+      }
+    }
+    return ret == OB_SUCCESS ? OB_TABLE_NOT_EXIST : ret;
   }
   auto open = [&](CatalogRows &rows, uint64_t current_id, uint64_t history_id,
       const ObRowkey &key, bool reverse = false, int64_t minimum = 0,
@@ -781,6 +919,12 @@ int NativeSchemaCatalog::get_simple_tables(int64_t version, ObIAllocator &alloca
     allocator.free(tables.at(i));
   }
   return ret;
+}
+
+int NativeSchemaCatalog::get_core_tables(int64_t version, ObIArray<ObTableSchema> &out)
+{
+  if (version <= 0) { return OB_INVALID_ARGUMENT; }
+  return read_core_tables(*this, version, out, true);
 }
 
 int NativeSchemaCatalog::get_table_version_history(uint64_t table_id, int64_t version,

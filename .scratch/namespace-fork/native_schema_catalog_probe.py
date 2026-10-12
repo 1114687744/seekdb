@@ -88,6 +88,12 @@ def run(binary, selected=None):
                                     f'WHERE table_id={table_id}')[0][0]
             original = experiment.sql(f'SELECT ori_schema_version FROM oceanbase.__all_ori_schema_version '
                                       f'WHERE table_id={table_id}')[0][0]
+            if label == 'plain':
+                core_tables = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_all_table '
+                                             'WHERE table_id<>1')[0][0]
+                core_columns = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_column_table '
+                    'WHERE table_id IN (SELECT table_id FROM oceanbase.__all_virtual_core_all_table '
+                    'WHERE table_id<>1)')[0][0]
             control.write_text(f'{name} {table_id} ' + ' '.join(map(str, expected))
                                + f' {requested_version}\n')
             experiment.sql(f'FORK NAMESPACE {name} FROM ns1')
@@ -111,6 +117,10 @@ def run(binary, selected=None):
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_TYPED namespace={child_id} stage=committed ret=0' in trace
             if label == 'plain':
+                assert (f'NATIVE_SCHEMA_CATALOG_CORE namespace={child_id} tables={core_tables} '
+                        f'columns={core_columns} ret=0') in trace, trace[-2000:]
+                assert (f'NATIVE_SCHEMA_CATALOG_CORE_HISTORY namespace={child_id} '
+                        'stage=read_rollback ret=0') in trace, trace[-2000:]
                 assert f'NATIVE_SCHEMA_CATALOG_TOMBSTONE namespace={child_id} ret=0' in trace
                 borrowed = [line for log in (experiment.base / 'log').glob('seekdb.log*')
                             for line in log.read_text(errors='replace').splitlines()

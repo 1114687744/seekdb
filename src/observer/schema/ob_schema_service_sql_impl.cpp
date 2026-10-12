@@ -368,23 +368,25 @@ int ObSchemaServiceSQLImpl::get_core_table_schemas_at_version(
     ObArray<ObTableSchema> &core_schemas)
 {
   int ret = OB_SUCCESS;
-  if (!check_inner_stat()) {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail", KR(ret), K(schema_status));
   } else if (schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid schema version", KR(ret), K(schema_version));
+  } else if (!lifecycle->is_bootstrapping()) {
+    core_schemas.reset();
+    ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_core_tables(schema_version, core_schemas);
+    });
   } else if (OB_FAIL(get_core_table_priorities(sql_client, schema_status, schema_version, core_schemas))) {
   } else if (core_schemas.count() > 0) {
-    if (OB_FAIL(get_core_table_columns(sql_client, schema_status, schema_version, core_schemas))) {
-    } else {
-      // mock partition array
-      for (int64_t i = 0; OB_SUCC(ret) && i < core_schemas.count(); i++) {
-        ObTableSchema &core_schema = core_schemas.at(i);
-        if (OB_FAIL(try_mock_partition_array(core_schema))) {
-        }
-      }
-    }
+    ret = get_core_table_columns(sql_client, schema_status, schema_version, core_schemas);
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < core_schemas.count(); ++i) {
+    ret = try_mock_partition_array(core_schemas.at(i));
   }
   return ret;
 }

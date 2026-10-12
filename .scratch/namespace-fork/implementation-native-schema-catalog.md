@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已接入，验证记录见文末。其余名称/当前版本查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`。核心表定义原生读取已通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。其余名称/当前版本查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -147,3 +147,15 @@
 - 上述备库历史 schema 场景中，主库子空间 4 的逻辑 tablet 1（物理 ID `4611686568183201793`）在 minor 合并多份 MINI 时反复报 `-4016`。报错位置 `ObMacroBlockWriter::check_order`：切换到下一行时，上一行未见 Last 标记；涉及 `__all_global_stat/change_stream_min_dep_lsn` 等 core 行。
 - major 准备等待期间，后台物化/接管持续推进，最终主库与备库 major、恢复、提升后 major 和用户数据/索引校验均完成。这个日志异常没有阻止本次用例完成，但不能据此认定 minor 正确，也尚未证明它由版本查询改动引入或此前已存在。
 - 已保留同一失败 DAG 的证据 `gate-results/native-schema-catalog/native-versions-standby/minor-core-error.txt`。后续需缩小到父子核心 tablet 的继承 MINI 与本地 MINI 合并，核对截取边界及多版本结束标记，并做基线对照。`schema_history` 场景已在四件套 direct 的 standby suite 中；当前断言覆盖合并完成和数据正确性，尚不能替代这条 minor 异常的定向断言。
+
+### 核心表定义读取接入
+
+- 核心表的定义实际保存为 `__all_core_table` 中的单元格记录。原生读取按 `(table_name, row_id)` 聚合一条逻辑记录，复用原来的 `ObCoreTableProxy::Row` 解码器；解码器仅需调用方分配器，不再要求 SQL proxy。每条逻辑记录处理后释放临时单元格，不保留整张 core 表的原始行。
+- 表和列分别选择目标 schema_version 以内的最大可见版本，并处理删除标记。物理 row_id 只表示记录身份，不能当作版本顺序。`__all_core_table` 自身仍由固定定义提供。
+- 正常 `get_core_table_schemas_at_version` 接入同一原生目录视图；目录建立前的 bootstrap 保留原入口，依据既有 Namespace lifecycle 判断，不按 Namespace ID 或失败结果回退。
+- `/tmp/native-schema-catalog-core-probe1.log` 在核心物理 tablet 的版本 0 上返回 -4002：原生 bind 错误地要求版本大于 0，已与既有 schema/DML 参数规则统一为允许 0、拒绝负数。
+- `/tmp/native-schema-catalog-core-probe2.log` 发现空 comment 被当作 SQL NULL（-4152）。普通字符串复制在长度 0 时清空指针，而 core 单元格以空指针表示 NULL；已复用保留空串/NULL 区别的单元格复制逻辑。
+- `core-probe3.log`、`core-probe4.log` 已读出 22 张核心表，但在与固定定义比对时失败。固定定义生成器的范围漏掉了 LOB 辅助表，已补充生成这一类定义。最终通过证据待补充，不能把这两次失败记为通过。
+- `plain` 用例新增核心表/列的逐项比对，数量与客户端虚拟核心表查询核对；另新增同事务插入乱序历史、删除标记、独立事务不可见及回滚测试。它们由四件套既有原生目录 probe 自动执行。
+- `/tmp/native-schema-catalog-core-build5.log` 编译通过。`/tmp/native-schema-catalog-core-probe5.log` 的 plain/part 通过；核心目录为 22 张表、284 列，逐项核对名称、列 ID/类型、主键位置、逻辑 tablet ID；`CORE_HISTORY ... stage=read_rollback ret=0` 验证物理 row_id 与逻辑版本逆序、旧版本读取、删除标记、外部隔离及回滚，两个孩子的服务槽位均为 0。
+- `/tmp/native-schema-catalog-core-production-build1.log` 移除测试钩子后的生产编译通过；`/tmp/native-schema-catalog-core-production-ddl1.log` 通过实际 DDL、索引、父子隔离和崩溃重启。Namespace 主备回归通过，结果见 `gate-results/native-schema-catalog/native-core-standby/results.json`；覆盖刷新与回放竞争、物化/LOB 事务回放、孩子 DDL、父 TRUNCATE/DROP 历史来源、Namespace 删除准入、提升后的装载/写入和再次 fork。

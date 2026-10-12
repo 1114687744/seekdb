@@ -93,7 +93,7 @@ int NativeInnerTable::bind(Table &table, const ObTabletID &tablet_id, const ObTa
   if (table.state_ != nullptr) {
     ret = OB_INIT_TWICE;
   } else if (!tablet_id.is_valid() || schema.get_table_id() == OB_INVALID_ID
-             || schema.get_schema_version() <= 0 || schema.get_rowkey_column_num() <= 0) {
+             || schema.get_schema_version() < 0 || schema.get_rowkey_column_num() <= 0) {
     ret = OB_INVALID_ARGUMENT;
   } else if (schema.is_partitioned_table()
              || (schema.is_index_table() && schema.get_index_type() != INDEX_TYPE_NORMAL_LOCAL)
