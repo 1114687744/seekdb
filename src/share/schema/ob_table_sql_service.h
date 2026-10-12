@@ -470,6 +470,12 @@ private:
   template<class FieldEncoder>
   int update_table_fields_(common::ObISQLClient &, uint64_t table_id,
                            const FieldEncoder &, int64_t &affected_rows);
+  template<class FieldEncoder>
+  int delete_catalog_fields_(common::ObISQLClient &, uint64_t table_id,
+      uint64_t inner_table_id, const char *table_name, const FieldEncoder &, int64_t &affected_rows);
+  template<class FieldEncoder>
+  int insert_history_fields_(common::ObISQLClient &, uint64_t table_id,
+      uint64_t inner_table_id, const char *table_name, const FieldEncoder &, int64_t &affected_rows);
   int exec_insert(common::ObISQLClient &sql_client,
                   const uint64_t table_id,
                   const char *table_name,

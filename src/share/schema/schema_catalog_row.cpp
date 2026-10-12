@@ -114,6 +114,20 @@ int SchemaCatalogRow::finish_update(ObNewRow &row, ObIArray<uint64_t> &column_id
   return ret;
 }
 
+int SchemaCatalogRow::finish_key_prefix(ObRowkey &key)
+{
+  key.reset();
+  if (schema_ == nullptr) { return OB_NOT_INIT; }
+  int64_t count = 0;
+  while (count < schema_->get_rowkey_column_num() && provided_.at(count)) { ++count; }
+  if (count == 0) { return OB_INVALID_ARGUMENT; }
+  for (int64_t i = count; i < provided_.count(); ++i) {
+    if (provided_.at(i)) { return OB_INVALID_ARGUMENT; }
+  }
+  key.assign(cells_.get_data(), count);
+  return OB_SUCCESS;
+}
+
 } // namespace schema
 } // namespace share
 } // namespace oceanbase

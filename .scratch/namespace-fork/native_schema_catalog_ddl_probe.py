@@ -18,6 +18,14 @@ def run(binary):
         experiment.sql("INSERT INTO native_ddl.t(id,body) VALUES(1,REPEAT('a',90000))")
         experiment.sql("CREATE TABLE native_ddl.p(id INT PRIMARY KEY,v VARCHAR(100),KEY ix(v),"
                        "CONSTRAINT ck CHECK(id >= 0)) PARTITION BY HASH(id) PARTITIONS 8")
+        experiment.sql('CREATE TABLE native_ddl.drop_columns(id INT PRIMARY KEY,v INT,body LONGTEXT,'
+                       'CONSTRAINT drop_ck CHECK(v >= 0))')
+        experiment.sql("INSERT INTO native_ddl.drop_columns VALUES(1,7,REPEAT('d',90000))")
+        drop_tid = experiment.sql("SELECT table_id FROM oceanbase.__all_table WHERE table_name='drop_columns'")[0][0]
+        dropped_cid = experiment.sql(f"SELECT column_id FROM oceanbase.__all_column WHERE table_id={drop_tid} "
+                                    "AND column_name='v'")[0][0]
+        constraint_id = experiment.sql(f'SELECT constraint_id FROM oceanbase.__all_constraint '
+                                      f'WHERE table_id={drop_tid}')[0][0]
         experiment.sql('USE native_ddl')
         experiment.sql('SET SESSION foreign_key_checks=0')
         experiment.sql('CREATE TABLE native_ddl.mock_child(id INT PRIMARY KEY,fk_id INT,KEY ix(fk_id),'
@@ -38,6 +46,27 @@ def run(binary):
         experiment.sql("ALTER TABLE native_ddl.t CHANGE COLUMN v title VARCHAR(120) DEFAULT '新默认'", child)
         experiment.sql("INSERT INTO native_ddl.t(id,body) VALUES(3,'new child')", child)
         experiment.sql('RENAME TABLE native_ddl.local_table TO native_ddl.local_renamed', child)
+        experiment.sql('ALTER TABLE native_ddl.drop_columns DROP CONSTRAINT drop_ck', child)
+        experiment.sql('ALTER TABLE native_ddl.drop_columns DROP COLUMN v', child)
+        assert experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_column FORCE INDEX(idx_tb_column_name) '
+                              f"WHERE table_id={drop_tid} AND column_name='v'", child) == ((0,),)
+        # Reuse the old name: a stale name-index entry must not survive deletion.
+        experiment.sql('ALTER TABLE native_ddl.drop_columns ADD v INT DEFAULT 23', child)
+        assert experiment.sql('SELECT column_id FROM oceanbase.__all_column FORCE INDEX(idx_tb_column_name) '
+                              f"WHERE table_id={drop_tid} AND column_name='v'", child)[0][0] != dropped_cid
+        experiment.sql('ALTER TABLE native_ddl.drop_columns DROP COLUMN body', child)
+        # Dropping LOB can rebuild the table; subsequent current-row checks use
+        # its new identity while history checks retain the original identity.
+        current_drop_tid = experiment.sql("SELECT table_id FROM oceanbase.__all_table "
+                                          "WHERE table_name='drop_columns'", child)[0][0]
+        experiment.sql('CREATE TABLE native_ddl.to_drop(id INT PRIMARY KEY,a INT,b INT,body LONGTEXT)', child)
+        purge_tid = experiment.sql("SELECT table_id FROM oceanbase.__all_table WHERE table_name='to_drop'", child)[0][0]
+        experiment.sql('SET SESSION recyclebin=ON', child)
+        experiment.sql('DROP TABLE native_ddl.to_drop', child)
+        assert experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_table '
+                              f'WHERE table_id={purge_tid}', child) == ((1,),)
+        # PURGE completes catalog deletion after the recycle-bin rename.
+        experiment.sql('PURGE RECYCLEBIN', child)
         experiment.sql('TRUNCATE TABLE native_ddl.p', child)
         experiment.sql('DROP TABLE native_ddl.p', child)
 
@@ -48,6 +77,28 @@ def run(binary):
                 (1, '初始', 17, 90000), (3, '新默认', 17, 9))
             assert experiment.sql('SELECT id,LENGTH(body) FROM native_ddl.local_renamed', child) == ((2, 120000),)
             assert experiment.sql('SELECT COUNT(*) FROM native_ddl.p') == ((0,),)
+            assert experiment.sql('SELECT id,v,LENGTH(body) FROM native_ddl.drop_columns') == ((1, 7, 90000),)
+            assert experiment.sql('SELECT id,v FROM native_ddl.drop_columns', child) == ((1, 23),)
+            assert experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_constraint '
+                                  f'WHERE table_id={drop_tid} AND constraint_id={constraint_id}', child) == ((0,),)
+            assert experiment.sql('SELECT is_deleted FROM oceanbase.__all_constraint_history '
+                                  f'WHERE table_id={drop_tid} AND constraint_id={constraint_id} '
+                                  'ORDER BY schema_version DESC LIMIT 1', child) == ((1,),)
+            assert experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_constraint_column '
+                                  f'WHERE table_id={drop_tid} AND constraint_id={constraint_id}', child) == ((0,),)
+            assert experiment.sql('SELECT is_deleted FROM oceanbase.__all_column_history '
+                                  f'WHERE table_id={drop_tid} AND column_id={dropped_cid} '
+                                  'ORDER BY schema_version DESC LIMIT 1', child) == ((1,),)
+            indexed = experiment.sql('SELECT column_id,column_name FROM oceanbase.__all_column FORCE INDEX(idx_tb_column_name) '
+                                     f"WHERE table_id={current_drop_tid} AND column_name='v'", child)
+            primary = experiment.sql('SELECT column_id,column_name FROM oceanbase.__all_column IGNORE INDEX(idx_tb_column_name) '
+                                     f"WHERE table_id={current_drop_tid} AND column_name='v'", child)
+            assert len(indexed) == 1 and indexed == primary, (indexed, primary)
+            for inner, predicate in (('__all_table', f'table_id={purge_tid}'),
+                                     ('__all_column', f'table_id={purge_tid}')):
+                assert experiment.sql(f'SELECT COUNT(*) FROM oceanbase.{inner} WHERE {predicate}', child) == ((0,),)
+            assert experiment.sql('SELECT is_deleted FROM oceanbase.__all_table_history '
+                                  f'WHERE table_id={purge_tid} ORDER BY schema_version DESC LIMIT 1', child) == ((1,),)
             for connection, expected_comment in ((None, 'parent changed'), (child, '')):
                 db_id = experiment.sql("SELECT database_id FROM oceanbase.__all_database "
                                        "WHERE database_name='native_ddl'", connection)[0][0]

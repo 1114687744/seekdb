@@ -65,6 +65,31 @@ with connect(42035) as root,connect(42036) as standby:
   sync(root,standby)
   wait(lambda:read_ns('replica_seed','select id,extra from replica_ns.t order by id'),((1,7),(3,7)))
   record('child_ddl_refresh')
+  sql(child,'CREATE TABLE replica_ns.native_delete(id INT PRIMARY KEY,v INT,body LONGTEXT,'
+            'CONSTRAINT delete_ck CHECK(v>=0))')
+  sql(child,"INSERT INTO replica_ns.native_delete VALUES(1,7,REPEAT('d',90000))")
+  delete_tid=sql(child,"SELECT table_id FROM oceanbase.__all_table WHERE table_name='native_delete'")[0][0]
+  deleted_cid=sql(child,f"SELECT column_id FROM oceanbase.__all_column WHERE table_id={delete_tid} AND column_name='v'")[0][0]
+  sql(child,'ALTER TABLE replica_ns.native_delete DROP CONSTRAINT delete_ck')
+  sql(child,'ALTER TABLE replica_ns.native_delete DROP COLUMN v')
+  sql(child,'ALTER TABLE replica_ns.native_delete ADD v INT DEFAULT 23')
+  sql(child,'ALTER TABLE replica_ns.native_delete DROP COLUMN body')
+  sql(child,'CREATE TABLE replica_ns.native_purge(id INT PRIMARY KEY,a INT,b INT)')
+  purge_tid=sql(child,"SELECT table_id FROM oceanbase.__all_table WHERE table_name='native_purge'")[0][0]
+  sql(child,'SET SESSION recyclebin=ON')
+  sql(child,'DROP TABLE replica_ns.native_purge')
+  assert sql(child,f'SELECT COUNT(*) FROM oceanbase.__all_table WHERE table_id={purge_tid}')==((1,),)
+  sql(child,'PURGE RECYCLEBIN')
+  sync(root,standby)
+  wait(lambda:read_ns('replica_seed','SELECT id,v FROM replica_ns.native_delete'),((1,23),))
+  wait(lambda:read_ns('replica_seed',f'SELECT is_deleted FROM oceanbase.__all_column_history '
+                     f'WHERE table_id={delete_tid} AND column_id={deleted_cid} '
+                     'ORDER BY schema_version DESC LIMIT 1'),((1,),))
+  wait(lambda:read_ns('replica_seed',f'SELECT COUNT(*) FROM oceanbase.__all_constraint WHERE table_id={delete_tid}'),((0,),))
+  wait(lambda:read_ns('replica_seed',f'SELECT COUNT(*) FROM oceanbase.__all_column WHERE table_id={purge_tid}'),((0,),))
+  wait(lambda:read_ns('replica_seed',f'SELECT is_deleted FROM oceanbase.__all_table_history '
+                     f'WHERE table_id={purge_tid} ORDER BY schema_version DESC LIMIT 1'),((1,),))
+  record('native_catalog_delete_replay')
   sql(child,'USE replica_ns')
   sql(child,'SET SESSION foreign_key_checks=0')
   sql(child,'CREATE TABLE replica_ns.mock_child(id INT PRIMARY KEY,v INT,KEY ix(v),'
@@ -95,6 +120,8 @@ with connect(42035) as root,connect(42036) as standby:
  sql(root,'ALTER SYSTEM SWITCHOVER TO STANDBY')
  sql(standby,'ALTER SYSTEM SWITCHOVER TO PRIMARY')
  with connect(42036,'replica_seed') as child:
+  assert sql(child,'SELECT id,v FROM replica_ns.native_delete')==((1,23),)
+  assert sql(child,f'SELECT COUNT(*) FROM oceanbase.__all_table WHERE table_id={purge_tid}')==((0,),)
   sql(child,"insert into replica_ns.t values(4,40,'promoted child',8)")
   assert sql(child,'select id,v,extra from replica_ns.t order by id')==((1,10,7),(3,30,7),(4,40,8))
   sql(child,'CREATE TABLE replica_ns.missing_parent(id INT PRIMARY KEY)')

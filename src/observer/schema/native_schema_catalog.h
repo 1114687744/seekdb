@@ -121,7 +121,12 @@ public:
   // Point UPDATE: require the full key, retain omitted fields, and report a
   // missing row as success with matched=false. Index changes share this owner.
   using FieldWriter = std::function<int(share::schema::SchemaCatalogRow &)>;
+  int insert_fields(uint64_t inner_table_id, const FieldWriter &);
   int update_fields(uint64_t inner_table_id, const FieldWriter &, bool &matched);
+  // Delete the nonempty key prefix visible to this operation, including own
+  // writes. The DDL owner supplies object-level serialization. Temporary keys
+  // live only for this call; row locks and index writes belong to the owner.
+  int erase_prefix(uint64_t inner_table_id, const FieldWriter &, int64_t &affected_rows);
   int update_table(const share::schema::ObTableSchema &, bool update_object_status_ignore_version = false);
   int update_column(const share::schema::ObColumnSchemaV2 &);
   int erase(uint64_t inner_table_id, const common::ObRowkey &, bool &existed);

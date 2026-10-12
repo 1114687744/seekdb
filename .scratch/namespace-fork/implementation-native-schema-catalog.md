@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列和单个约束删除已通过冷读取、生产 DDL/重启及主备回放验证，完整分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -212,3 +212,29 @@
 - 继续接入 `update_table_schema_version/update_data_table_schema_version/update_index_status/update_index_type`。通过局部模板编码器共用初始化 SQL 与正常原生字段映射；更新字段清单不包含 LOB。显式维护原先由 SQL `ON UPDATE` 提供的表 gmt_modified，并增加实际 DDL 后时间戳前进的断言。`partial-production-build1.log` 生产编译中，后接入入口尚未完成运行验证。
 
 - `/tmp/native-schema-catalog-partial-production-build1.log` 移除测试钩子后编译通过；`partial-production-ddl1.log` 退出 0，覆盖实际列改名、默认值更新、表改名、gmt_modified 前进、强制内表索引、父子隔离、崩溃重启与重启后解析缺失外键父表。Namespace 主备回归正在运行，尚未计为通过。
+
+- 部分更新的 Namespace 主备回归退出 0（127.25 秒），见 `gate-results/native-schema-catalog/native-partial-standby/results.json`。生产编译、DDL/重启和主备验证完成；代码已提交并推送 `9829966a8`。
+
+### 表、列和约束删除接入（实施中）
+
+- 原生目录增加按字段插入和非空主键前缀删除。删除只接受连续主键前缀，拒绝缺失前导键、非主键条件或空条件；完整主键直接点删，范围删除在本次受保护视图收集主键后关闭游标，再逐行加锁并维护索引。主键清单只活到本次调用结束；对象并发串行化沿用 DDL owner。
+- 普通表/列删除、表/列 history 删除标记、单个约束及其列关系删除接入同一个 DDL 事务。bootstrap 与 core 的既有表示仍显式处理；统计信息等其他内表写入未据此宣称完成。
+- 四件套冷用例增加前缀删除自身未提交写入、相邻对象保护、空条件/缺失键拒绝、索引一致性及提交/回滚。生产用例增加继承表删除约束、删除列后重用同名列、LOB 列删除及 PURGE 后的当前表/history/索引校验。尚未编译和运行验证。
+
+- `/tmp/native-schema-catalog-delete-build1.log` 编译通过。`delete-probe1.log` 的 typed 通过，indexed 新增前缀删除用例在合成行插入时返回 -4152；固定定义明确要求非空 `is_deleted`，用例漏填，已补充为 0，原生接口的非空约束保持不变。`delete-ddl1.log` 的 DDL 均执行成功，但删除列后重用名称的 FORCE INDEX 断言为空，正在通过逐步查询表 ID、主表与索引缩小原因；尚不能计为通过。
+
+- 最小复现 `/tmp/native-schema-catalog-delete-repro1.log` 证明删除 LOB 列走离线 DDL：表 ID 从 500003 换为 500007，主表与名称索引都正确返回新表的 v 列。修正生产用例在同名列复用之后才删除 LOB，并分别检查原对象的 history 与新对象的 current；新对象列 ID 可重新从 16 起分配，不能跨表比较 column_id。两项失败均为测试输入/断言错误，未据此改动存储逻辑。
+
+- `/tmp/native-schema-catalog-delete-build2.log` 编译通过；`delete-probe2.log` 的 typed/indexed/part/history/dropped/lob 六个冷用例退出 0，实例 `namespace_fork_PROTOTYPE_native_schema_catalog_egqbr6ne` 的 `PREFIX_DELETE stage=prefix_deleted ret=0` 覆盖了新增范围操作。`delete-ddl2.log` 的实际 DDL、父子隔离、删除标记、同名列复用、LOB 离线 DDL、PURGE 和崩溃重启通过。已去除探针钩子，继续生产版本和新增删除主备回放验证。
+
+- `/tmp/native-schema-catalog-delete-production-build1.log` 去除测试钩子后编译通过；`delete-production-ddl1.log` 退出 0。用例显式启用 recyclebin，确认 DROP 后原表目录行仍存在、PURGE 后删除，验证了最终删除入口。删除主备回放仍运行中。
+
+### 下一批仍须接入的写入入口
+
+- 约束：`add_constraints_for_not_core`、`rename_csts_in_inner_table`、`delete_constraint`（整表批量删除），以及约束属性更新。当前只接入了单约束删除。
+- 分区：`ObPartSqlHelper` 的批量 current/history 写入、增删/重命名 helper，`ObTableSqlService` 的分区选项更新、整表/指定分区删除。复用已有边界值编码，按一个 DDL owner 批量执行，避免每个分区保留一个目录操作上下文。
+- 外键与 mock 父表：对应 current/history 插入、更新、删除，以及直接 SQL 的批量操作。现有读取接入并不证明这些写入完成。
+- 以上之后继续审计完整表定义写入、关联内表及发布路径；生产操作日志和 core 单元格式入口尚有 SQL，不能按本阶段通过的用例宣称全部 SQL 依赖消除。
+
+- 删除阶段生产 Namespace 主备回归退出 0（132.65 秒），见 `gate-results/native-schema-catalog/native-delete-standby/results.json`。`native_catalog_delete_replay` 验证删列、删约束、LOB 离线 DDL、当前行清理与 history 删除记录回放；提升后再次校验数据和 PURGE 对象不存在，原有物化/LOB 回放、父 TRUNCATE/DROP、Namespace 删除及提升后 fork 也通过。
+- 本阶段修改及过程失败的用例已纳入四件套共用冷探针、生产 DDL 和 Namespace 主备脚本。未运行全量 mysqltest 或 sysbench；完整目标仍在进行。

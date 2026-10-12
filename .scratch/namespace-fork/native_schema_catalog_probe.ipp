@@ -1015,6 +1015,94 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS) { ret = writer.erase(OB_ALL_TABLE_HISTORY_TID, ObRowkey(sample.cells_, 2), existed); }
     if (ret == OB_SUCCESS) { ret = end(true); }
     if (ret == OB_SUCCESS) { stage = "erase_committed"; ret = verify_committed(nullptr, 0); }
+    auto prefix_count = [&](observer::NativeSchemaCatalog &reader, uint64_t inner, int64_t key_value, int64_t expected) {
+      observer::NativeSchemaCatalog::Cursor scan;
+      ObObj key; key.set_int(key_value);
+      int rc = reader.open_prefix(inner, ObRowkey(&key, 1), scan);
+      int64_t count = 0;
+      const ObNewRow *found = nullptr;
+      while (rc == OB_SUCCESS && (rc = scan.next(found)) == OB_SUCCESS) { ++count; }
+      if (rc == OB_ITER_END) { rc = count == expected ? OB_SUCCESS : OB_ERR_UNEXPECTED; }
+      const int close = scan.close();
+      return rc == OB_SUCCESS ? close : rc;
+    };
+    auto insert_prefix_rows = [&]() {
+      int rc = OB_SUCCESS;
+      for (int i = 0; rc == OB_SUCCESS && i < 3; ++i) {
+        rc = writer.insert_fields(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+          int rc = fields.add_pk_column("table_id", synthetic_id + (i == 2 ? 1 : 0));
+          if (rc == OB_SUCCESS) { rc = fields.add_pk_column("schema_version", version + i); }
+          if (rc == OB_SUCCESS) { rc = fields.add_column("is_deleted", 0); }
+          if (rc == OB_SUCCESS) { rc = fields.add_column("data_table_id", first_data); }
+          if (rc == OB_SUCCESS) { rc = fields.add_column("view_definition", ObString(first.size(), first.data())); }
+          return rc;
+        });
+      }
+      return rc;
+    };
+    auto delete_prefix = [&](int64_t key_value, int64_t expected) {
+      int64_t affected = -1;
+      int rc = writer.erase_prefix(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        return fields.add_pk_column("table_id", key_value);
+      }, affected);
+      return rc == OB_SUCCESS && affected != expected ? OB_ERR_UNEXPECTED : rc;
+    };
+    auto verify_prefix = [&](observer::NativeSchemaCatalog &reader, int64_t own, int64_t sibling) {
+      int rc = prefix_count(reader, OB_ALL_TABLE_HISTORY_TID, synthetic_id, own);
+      if (rc == OB_SUCCESS) { rc = prefix_count(reader, OB_ALL_TABLE_HISTORY_TID, synthetic_id + 1, sibling); }
+      if (rc == OB_SUCCESS) { rc = prefix_count(reader, OB_ALL_TABLE_HISTORY_IDX_DATA_TABLE_ID_TID, first_data, own + sibling); }
+      return rc;
+    };
+    auto verify_prefix_committed = [&](int64_t own, int64_t sibling) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      if (rc == OB_SUCCESS) { rc = verify_prefix(reader, own, sibling); }
+      return rc;
+    };
+    if (ret == OB_SUCCESS) { stage = "prefix_own_writes"; ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert_prefix_rows(); }
+    if (ret == OB_SUCCESS) {
+      int64_t affected = -1;
+      int rc = writer.erase_prefix(OB_ALL_TABLE_HISTORY_TID, [](SchemaCatalogRow &) { return OB_SUCCESS; }, affected);
+      if (rc != OB_INVALID_ARGUMENT || affected != 0) { ret = OB_ERR_UNEXPECTED; }
+      rc = writer.erase_prefix(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        return fields.add_pk_column("schema_version", version);
+      }, affected);
+      if (rc != OB_INVALID_ARGUMENT || affected != 0) { ret = OB_ERR_UNEXPECTED; }
+      rc = writer.erase_prefix(OB_ALL_TABLE_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_id", synthetic_id);
+        if (rc == OB_SUCCESS) { rc = fields.add_column("data_table_id", first_data); }
+        return rc;
+      }, affected);
+      if (rc != OB_INVALID_ARGUMENT || affected != 0) { ret = OB_ERR_UNEXPECTED; }
+    }
+    if (ret == OB_SUCCESS) { ret = verify_prefix(writer, 2, 1); }
+    if (ret == OB_SUCCESS) { ret = delete_prefix(synthetic_id, 2); }
+    if (ret == OB_SUCCESS) { ret = delete_prefix(synthetic_id, 0); }
+    if (ret == OB_SUCCESS) { ret = verify_prefix(writer, 0, 1); }
+    const int prefix_undo = end(false);
+    if (ret == OB_SUCCESS) { ret = prefix_undo; }
+    if (ret == OB_SUCCESS) { ret = verify_prefix_committed(0, 0); }
+    if (ret == OB_SUCCESS) { stage = "prefix_committed_rows"; ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert_prefix_rows(); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = delete_prefix(synthetic_id, 2); }
+    if (ret == OB_SUCCESS) { ret = verify_prefix(writer, 0, 1); }
+    if (ret == OB_SUCCESS) { ret = verify_prefix_committed(2, 1); }
+    const int prefix_rollback = end(false);
+    if (ret == OB_SUCCESS) { ret = prefix_rollback; }
+    if (ret == OB_SUCCESS) { ret = verify_prefix_committed(2, 1); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = delete_prefix(synthetic_id, 2); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = verify_prefix_committed(0, 1); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = delete_prefix(synthetic_id + 1, 1); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "prefix_deleted"; ret = verify_prefix_committed(0, 0); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_PREFIX_DELETE namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+    if (ret == OB_SUCCESS) { stage = "erase_committed"; }
     const int cleanup = end(false);
     if (ret == OB_SUCCESS) { ret = cleanup; }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_INDEXED namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);

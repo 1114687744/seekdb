@@ -39,6 +39,9 @@ public:
   // Require the complete primary key, but do not fill omitted values. Only
   // returned non-key column IDs participate in the update. Bytes remain owned.
   int finish_update(common::ObNewRow &, common::ObIArray<uint64_t> &column_ids);
+  // A nonempty, contiguous primary-key prefix. Reject other provided fields;
+  // omitting a key component must never silently broaden a deletion.
+  int finish_key_prefix(common::ObRowkey &);
 private:
   int set(const char *, const common::ObObj &);
   int set(int64_t position, const common::ObObj &);

@@ -173,6 +173,7 @@ def run(binary, selected=None):
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_INDEXED namespace={child_id} stage=erase_committed ret=0' in trace
                 assert f'NATIVE_SCHEMA_CATALOG_PARTIAL namespace={child_id} stage=partial_missing ret=0' in trace
+                assert f'NATIVE_SCHEMA_CATALOG_PREFIX_DELETE namespace={child_id} stage=prefix_deleted ret=0' in trace
             if label == 'lob':
                 assert f'NATIVE_SCHEMA_CATALOG_LOB_RETAIN namespace={child_id} ret=0' in trace
                 assert f'NATIVE_SCHEMA_CATALOG_PARTIAL_LATEST namespace={child_id} ret=0' in trace

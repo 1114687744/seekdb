@@ -1477,6 +1477,61 @@ int NativeSchemaCatalog::update(uint64_t inner_table_id, const ObNewRow &row)
   return mutate(inner_table_id, row, Mutation::UPDATE, existed);
 }
 
+int NativeSchemaCatalog::insert_fields(uint64_t inner_table_id, const FieldWriter &fill)
+{
+  if (!fill) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = prepare_write(inner_table_id, target);
+  SchemaCatalogRow fields;
+  ObNewRow row;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = fill(fields); }
+  if (OB_SUCC(ret)) { ret = fields.finish(row); }
+  if (OB_SUCC(ret)) { ret = insert(inner_table_id, row); }
+  return ret;
+}
+
+int NativeSchemaCatalog::erase_prefix(uint64_t inner_table_id, const FieldWriter &fill,
+    int64_t &affected_rows)
+{
+  affected_rows = 0;
+  if (!fill) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = prepare_write(inner_table_id, target);
+  SchemaCatalogRow fields;
+  ObRowkey prefix;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = fill(fields); }
+  if (OB_SUCC(ret)) { ret = fields.finish_key_prefix(prefix); }
+  // A point deletion needs no scan. For a range, close the read iterator
+  // before mutations, retaining only keys rather than complete metadata rows.
+  if (OB_SUCC(ret) && prefix.get_obj_cnt() == target->schema.get_rowkey_column_num()) {
+    bool existed = false;
+    ret = erase(inner_table_id, prefix, existed);
+    if (OB_SUCC(ret)) { affected_rows = existed ? 1 : 0; }
+  } else if (OB_SUCC(ret)) {
+    Cursor cursor;
+    ObArenaAllocator allocator(ObMemAttr("CatalogDelKeys"));
+    ObSEArray<ObRowkey, 16> keys;
+    const ObNewRow *row = nullptr;
+    ret = open_prefix(inner_table_id, prefix, cursor);
+    while (OB_SUCC(ret) && OB_SUCC(ret = cursor.next(row))) {
+      ObRowkey key;
+      if (OB_FAIL(ObRowkey(row->cells_, target->schema.get_rowkey_column_num()).deep_copy(key, allocator))) {
+      } else { ret = keys.push_back(key); }
+    }
+    if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    const int cleanup = cursor.close();
+    if (OB_SUCC(ret)) { ret = cleanup; }
+    for (int64_t i = 0; OB_SUCC(ret) && i < keys.count(); ++i) {
+      bool existed = false;
+      ret = erase(inner_table_id, keys.at(i), existed);
+      if (OB_SUCC(ret) && existed) { ++affected_rows; }
+    }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::update_fields(uint64_t inner_table_id, const FieldWriter &fill, bool &matched)
 {
   matched = false;
