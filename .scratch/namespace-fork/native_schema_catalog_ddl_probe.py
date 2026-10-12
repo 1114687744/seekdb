@@ -186,6 +186,98 @@ def verify_foreign_keys(query, evidence):
         assert latest and all(row == (1,) for row in latest), latest
 
 
+def prepare_partition_tables(query):
+    query('CREATE DATABASE native_part')
+    query('CREATE TABLE native_part.r(id INT PRIMARY KEY,v INT) PARTITION BY RANGE(id) '
+          '(PARTITION p0 VALUES LESS THAN(10),PARTITION p1 VALUES LESS THAN(20))')
+    query('INSERT INTO native_part.r VALUES(1,1),(11,2)')
+    query("CREATE TABLE native_part.l(id INT,k VARCHAR(32),PRIMARY KEY(id,k)) PARTITION BY LIST COLUMNS(k) "
+          "(PARTITION p0 VALUES IN('a''b','中文'),PARTITION p1 VALUES IN('plain'))")
+    query("INSERT INTO native_part.l VALUES(1,'a''b'),(2,'中文'),(3,'plain')")
+    query('CREATE TABLE native_part.t(id INT,s INT,v INT,PRIMARY KEY(id,s)) '
+          'PARTITION BY RANGE(id) SUBPARTITION BY LIST(s) SUBPARTITION TEMPLATE '
+          '(SUBPARTITION s0 VALUES IN(1,3),SUBPARTITION s1 VALUES IN(2,4)) '
+          '(PARTITION p0 VALUES LESS THAN(10),PARTITION p1 VALUES LESS THAN(20))')
+    query('INSERT INTO native_part.t VALUES(1,1,10),(11,2,20)')
+    query('CREATE TABLE native_part.n(id INT,s INT,v INT,PRIMARY KEY(id,s)) '
+          'PARTITION BY RANGE(id) SUBPARTITION BY RANGE(s) '
+          '(PARTITION p0 VALUES LESS THAN(10) '
+          '(SUBPARTITION s00 VALUES LESS THAN(10),SUBPARTITION s01 VALUES LESS THAN(20)),'
+          'PARTITION p1 VALUES LESS THAN(20) '
+          '(SUBPARTITION s10 VALUES LESS THAN(10),SUBPARTITION s11 VALUES LESS THAN(20)))')
+    query('INSERT INTO native_part.n VALUES(1,5,10),(1,15,20),(11,5,30)')
+    # Cross the former SQL batch boundary while retaining bounded native state.
+    query('CREATE TABLE native_part.h(id INT PRIMARY KEY,v INT) PARTITION BY HASH(id) PARTITIONS 130')
+    query('INSERT INTO native_part.h VALUES(1,1),(129,2),(260,3)')
+
+
+def exercise_partitions(query, prepared=False):
+    if not prepared:
+        prepare_partition_tables(query)
+    ids = dict(query('SELECT table_name,table_id FROM oceanbase.__all_table '
+                      "WHERE database_id=(SELECT database_id FROM oceanbase.__all_database WHERE database_name='native_part') "
+                      "AND table_name IN ('r','l','t','n','h')"))
+    assert len(ids) == 5, ids
+    query('ALTER TABLE native_part.r ADD PARTITION (PARTITION p2 VALUES LESS THAN(30))')
+    query('INSERT INTO native_part.r VALUES(24,3)')
+    query('ALTER TABLE native_part.r TRUNCATE PARTITION p0')
+    query('ALTER TABLE native_part.r DROP PARTITION p1')
+    query("ALTER TABLE native_part.l ADD PARTITION (PARTITION p2 VALUES IN('extra'))")
+    query("INSERT INTO native_part.l VALUES(4,'extra')")
+    query('ALTER TABLE native_part.l TRUNCATE PARTITION p0')
+    query('ALTER TABLE native_part.l DROP PARTITION p1')
+    query('ALTER TABLE native_part.t ADD PARTITION (PARTITION p2 VALUES LESS THAN(30))')
+    query('INSERT INTO native_part.t VALUES(21,3,30)')
+    query('ALTER TABLE native_part.t TRUNCATE PARTITION p0')
+    subname = query('SELECT sub_part_name FROM oceanbase.__all_sub_part '
+                    f"WHERE table_id={ids['t']} AND sub_part_idx=1 AND part_id="
+                    f"(SELECT part_id FROM oceanbase.__all_part WHERE table_id={ids['t']} AND part_name='p1')")[0][0]
+    query(f'ALTER TABLE native_part.t TRUNCATE SUBPARTITION `{subname}`')
+    query('ALTER TABLE native_part.t DROP PARTITION p0')
+    query('ALTER TABLE native_part.n MODIFY PARTITION p0 ADD SUBPARTITION '
+          '(SUBPARTITION s02 VALUES LESS THAN(30))')
+    query('INSERT INTO native_part.n VALUES(1,25,40)')
+    query('ALTER TABLE native_part.n TRUNCATE SUBPARTITION s00')
+    query('ALTER TABLE native_part.n DROP SUBPARTITION s01')
+    query('ALTER TABLE native_part.n ADD PARTITION (PARTITION p2 VALUES LESS THAN(30) '
+          '(SUBPARTITION s20 VALUES LESS THAN(10),SUBPARTITION s21 VALUES LESS THAN(20)))')
+    query('INSERT INTO native_part.n VALUES(21,15,50)')
+    query('ALTER TABLE native_part.n DROP PARTITION p1')
+    query('SET SESSION recyclebin=OFF')
+    query('DROP TABLE native_part.h')
+    return ids
+
+
+def verify_partitions(query, ids):
+    assert query('SELECT * FROM native_part.r ORDER BY id') == ((24, 3),)
+    assert query('SELECT * FROM native_part.l ORDER BY id') == ((4, 'extra'),)
+    assert query('SELECT * FROM native_part.t ORDER BY id,s') == ((21, 3, 30),)
+    assert query('SELECT * FROM native_part.n ORDER BY id,s') == ((1, 25, 40), (21, 15, 50))
+    for inner, keys in (('__all_part_info', ('table_id',)), ('__all_part', ('table_id','part_id')),
+                        ('__all_sub_part', ('table_id','part_id','sub_part_id')),
+                        ('__all_def_sub_part', ('table_id','sub_part_id'))):
+        columns = [row[0] for row in query(f'SHOW COLUMNS FROM oceanbase.{inner}')
+                   if row[0] not in ('gmt_create', 'gmt_modified')]
+        fields = ','.join(columns)
+        matches = ' AND '.join(f'v.{key}=h.{key}' for key in keys)
+        for name, tid in ids.items():
+            current = query(f'SELECT {fields} FROM oceanbase.{inner} WHERE table_id={tid} ORDER BY '+','.join(keys))
+            history = query('SELECT '+','.join('h.'+column for column in columns)+f' FROM oceanbase.{inner}_history h '
+                            f'WHERE h.table_id={tid} AND h.is_deleted=0 AND h.schema_version='
+                            f'(SELECT MAX(v.schema_version) FROM oceanbase.{inner}_history v WHERE {matches}) '
+                            'ORDER BY '+','.join('h.'+key for key in keys))
+            assert current == history, (name, inner, current, history)
+            index = {'__all_part': 'idx_part_name', '__all_sub_part': 'idx_sub_part_name',
+                     '__all_def_sub_part': 'idx_def_sub_part_name'}.get(inner)
+            if index:
+                indexed = query(f'SELECT {fields} FROM oceanbase.{inner} FORCE INDEX ({index}) '
+                                f'WHERE table_id={tid} ORDER BY '+','.join(keys))
+                assert indexed == current, (name, inner, indexed, current)
+            if name == 'h':
+                assert not current, (inner, current)
+    assert query(f"SELECT COUNT(*) FROM oceanbase.__all_part_history WHERE table_id={ids['h']} AND is_deleted=1") == ((130,),)
+
+
 def run(binary):
     experiment = BootstrapExperiment(binary, 'native_catalog_ddl', prototype=6)
     child = None
@@ -212,6 +304,7 @@ def run(binary):
         experiment.sql('CREATE TABLE native_ddl.mock_child(id INT PRIMARY KEY,fk_id INT,KEY ix(fk_id),'
                        'CONSTRAINT fk_mock FOREIGN KEY(fk_id) REFERENCES mock_parent(id))')
         experiment.sql('SET SESSION foreign_key_checks=1')
+        prepare_partition_tables(experiment.sql)
         experiment.sql('FORK NAMESPACE native_ddl_child FROM ns1')
         child = connect(experiment, 'root@native_ddl_child')
         experiment.sql('CREATE TABLE native_ddl.mock_parent(id INT PRIMARY KEY)')
@@ -250,10 +343,14 @@ def run(binary):
         experiment.sql('PURGE RECYCLEBIN', child)
         experiment.sql('TRUNCATE TABLE native_ddl.p', child)
         experiment.sql('DROP TABLE native_ddl.p', child)
+        partition_evidence = exercise_partitions(lambda statement: experiment.sql(statement, child), prepared=True)
         fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
 
         def verify():
+            verify_partitions(lambda statement: experiment.sql(statement, child), partition_evidence)
+            assert experiment.sql('SELECT * FROM native_part.r ORDER BY id') == ((1, 1), (11, 2))
+            assert experiment.sql('SELECT COUNT(*) FROM native_part.h') == ((3,),)
             verify_foreign_keys(lambda statement: experiment.sql(statement, child), fk_evidence)
             verify_constraints(lambda statement: experiment.sql(statement, child), constraint_evidence)
             assert experiment.sql('SELECT id,v,u,n,e,c,LENGTH(body) FROM native_ddl.t') == (

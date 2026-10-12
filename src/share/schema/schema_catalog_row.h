@@ -22,6 +22,7 @@ public:
   int init(const ObTableSchema &fixed_schema, int64_t statement_time);
   template<class T> int add_column(const char *name, const T &value)
   { common::ObObj cell; cell.set_int(static_cast<int64_t>(value)); return set(name, cell); }
+  int add_null_column(const char *name) { common::ObObj cell; cell.set_null(); return set(name, cell); }
   int add_column(const char *, const common::ObString &);
   int add_column(const char *, const char *);
   int add_column(const char *, const common::ObHexEscapeSqlStr &);

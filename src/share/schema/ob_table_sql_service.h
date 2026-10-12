@@ -213,7 +213,6 @@ public:
       const ObTableSchema &inc_table,
       const int64_t schema_version);
   int drop_inc_partition_add_extra_str(const ObTableSchema &inc_table,
-                                       ObSqlString &sql,
                                        ObSqlString &condition_str,
                                        ObSqlString &dml_info_cond_str);
   int drop_inc_partition(common::ObISQLClient &sql_client,
@@ -223,8 +222,7 @@ public:
   int drop_inc_sub_partition(common::ObISQLClient &sql_client,
                              const ObTableSchema &ori_table,
                              const ObTableSchema &inc_table);
-  int drop_inc_all_sub_partition_add_extra_str(const ObTableSchema &inc_table,
-                                               ObSqlString &sql);
+
   int drop_inc_all_sub_partition(common::ObISQLClient &sql_client,
                              const ObTableSchema &ori_table,
                              const ObTableSchema &inc_table,
@@ -408,8 +406,7 @@ private:
   int delete_from_all_optstat_user_prefs(ObISQLClient &sql_client,
                                          const uint64_t table_id);
   int update_partition_option_(ObISQLClient &sql_client,
-                               const ObTableSchema &table,
-                               ObDMLSqlSplicer &dml);
+                               const ObTableSchema &table);
 
 private:
   int log_operation_wrapper(

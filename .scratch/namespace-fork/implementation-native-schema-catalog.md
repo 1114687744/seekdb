@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区及其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入也已通过冷读取、生产 DDL/重启和主备验证，其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -274,3 +274,22 @@
 - 剩余写入清单补充：`ObPartitionSqlHelper` 批量与增量分区路径、`ObTableSqlService` 分区选项/删除、`update_view_columns`、`batch_insert_ori_schema_version`，以及完整定义关联入口（包括 trigger 服务）和操作日志/core 表示的边界审计。本阶段通过不能替代这些入口接入。
 
 - 外键阶段生产 Namespace 主备回归退出 0（139.30 秒），见 `gate-results/native-schema-catalog/native-fk-standby/results.json`。`native_catalog_foreign_key_replay` 和提升后的复查均通过：外键完整属性、真实父列 ID、旧列关系删除记录、占位表/列删除 history 一致；原有父 TRUNCATE/DROP、Namespace 删除、提升后写入及再次 fork 继续通过。过程失败用例保留在四件套共享脚本中；未运行全量 mysqltest 或 sysbench。
+
+### 分区完整写入接入（实施中）
+
+- 分区信息、一级/二级分区和模板定义的 current/history 创建、更新、删除标记及改名改用 `SchemaCatalogRow` 和 `NativeSchemaCatalog`；每批操作借用一个 DDL owner，原生 writer 同事务维护分区名称索引。删除 current 使用明确的表/分区/子分区主键范围，统计信息清理仍沿用原入口。
+- 分区选项字段提取供原生和既有初始化入口共用；分区边界的 SQL 字面量与二进制十六进制编码继续由既有转换器生成。原生行新增显式 NULL 写入，保留 NULL 和空字符串的区别。
+- 四件套共用脚本新增范围、列表（含中文和引号）、模板和非模板二级分区、130 个 hash 分区的批量建删，以及 fork 后增删和 TRUNCATE。验证逐表比较 current 和最新未删除 history 的全部非时间字段，并核对父子数据及重启、主备回放后状态。
+- `partition-build1.log` 首次编译失败：两个声明仍保留旧签名、统计信息辅助变量误加 const；修正后 `partition-build2.log` 编译通过。旧生产二进制对照 `partition-prior1.log` 全部通过（PARTITION_PRIOR_PASS）。
+- `partition-probe1.log` 的 hash/range/list 冷读取通过，但二级分区建表失败；`partition-ddl1.log` 在模板二级分区建表同样返回 4001。日志定位到 `source_partition_id`：固定定义为 VARCHAR，旧生成器传整数 -1，由 SQL 隐式转换。原生接入改为显式字符串 "-1"；不放宽原生字段类型检查。`partition-build3.log` 编译及后续回归尚待结果。
+- `partition-build3.log` 编译通过；`partition-probe2.log` 的 part/range_part/list_part/part2 全部通过，四个冷 Namespace 的 runtime 槽位均为 0。`partition-ddl2.log` 的实际 DDL、父子隔离、分区 current/history 对照及崩溃重启退出 0。生产回归进一步增加三个分区名称物理索引的 FORCE INDEX 对照；测试钩子已移除，生产编译及主备验证待完成。
+- `/tmp/native-schema-catalog-partition-production-build1.log` 生产编译通过；`partition-production-ddl1.log` 退出 0，包括分区名称 FORCE INDEX、current/history、父子隔离和崩溃恢复。生产 Namespace 主备验证仍在运行。
+
+### 分区阶段之后的收尾入口（仍属本轮目标）
+
+- `ObTableSqlService::update_view_columns`：视图列 current 的 upsert 和 history 批量写入仍执行 SQL。
+- `ObTableSqlService::batch_insert_ori_schema_version`：原始创建版本写入仍执行 SQL；读取已原生化。
+- `ObTriggerSqlService`：创建、替换、更新、删除、恢复和随表改名仍写 trigger current/history；表定义的 trigger 关联读取已经原生化。须核对本轮相关生产入口，不能以表/列及分区完成替代关联元数据完成。
+- DDL 操作记录及 core/bootstrap 边界仍须最终核对。`ObDDLSqlService::log_operation` 和建表批量 `ddl_operation_dml` 仍使用 SQL；它们参与定义发布和增量装载，须保证本轮正常表定义链路完整接入同一原生 owner。其他 schema 类型仍在范围之外。
+
+- 分区阶段生产 Namespace 主备回归退出 0（147.14 秒），见 `gate-results/native-schema-catalog/native-partition-standby/results.json`。`native_catalog_partition_replay` 及提升后复查通过，包含范围/列表/两类二级分区的 current/history 和名称索引，以及 130 个分区删除标记；原有父 TRUNCATE/DROP 历史来源、Namespace 删除、提升后写入及再次 fork 继续通过。测试和失败用例随四件套共用脚本提交；没有运行全量 mysqltest 或 sysbench。整体目标仍未完成。

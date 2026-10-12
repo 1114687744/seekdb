@@ -20,6 +20,8 @@ public:
   static int table(const ObTableSchema &, bool update_object_status_ignore_version,
                    RowWriter &, bool is_history);
   template<class RowWriter>
+  static int partition_options(const ObTableSchema &, RowWriter &);
+  template<class RowWriter>
   static int column(const ObColumnSchemaV2 &, RowWriter &, bool is_history);
   template<class RowWriter>
   static int foreign_key(const ObForeignKeyInfo &, RowWriter &);
@@ -135,6 +137,44 @@ int SchemaCatalogFields::table(
         SHARE_SCHEMA_LOG(WARN, "add column failed", K(ret));
       }
 
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::partition_options(const ObTableSchema &table, RowWriter &dml)
+{
+  int ret = OB_SUCCESS;
+
+  const uint64_t table_id = table.get_table_id();
+
+  const ObPartitionOption &part_option = table.get_part_option();
+  const ObSubPartitionOption &sub_part_option = table.get_sub_part_option();
+  const char *part_func_expr = part_option.get_part_func_expr_str().length() <= 0 ?
+  "" : part_option.get_part_func_expr_str().ptr();
+  const char *sub_part_func_expr = sub_part_option.get_part_func_expr_str().length() <= 0 ?
+  "" : sub_part_option.get_part_func_expr_str().ptr();
+  const int64_t part_num = part_option.get_part_num();
+  const int64_t sub_part_num = PARTITION_LEVEL_TWO == table.get_part_level()
+                               && table.has_sub_part_template_def() ?
+                               sub_part_option.get_part_num() : 0;
+  if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
+                                               table_id)))
+      || OB_FAIL(dml.add_column("part_level", table.get_part_level()))
+      || OB_FAIL(dml.add_column("part_func_type", part_option.get_part_func_type()))
+      || OB_FAIL(dml.add_column("part_func_expr", ObHexEscapeSqlStr(part_func_expr)))
+      || OB_FAIL(dml.add_column("part_num", part_num))
+      || OB_FAIL(dml.add_column("sub_part_func_type", sub_part_option.get_part_func_type()))
+      || OB_FAIL(dml.add_column("sub_part_func_expr", ObHexEscapeSqlStr(sub_part_func_expr)))
+      || OB_FAIL(dml.add_column("sub_part_num", sub_part_num))
+      || OB_FAIL(dml.add_column("schema_version", table.get_schema_version()))
+      || OB_FAIL(dml.add_column("partition_status", table.get_partition_status()))
+      || OB_FAIL(dml.add_column("partition_schema_version", table.get_partition_schema_version()))
+      || OB_FAIL(dml.add_column("sub_part_template_flags", table.get_sub_part_template_flags()))
+      || OB_FAIL(dml.add_gmt_create())
+      || (OB_FAIL(dml.add_column("table_flags", table.get_table_flags())))
+      || OB_FAIL(dml.add_gmt_modified())) {
+    LOG_WARN("add column failed", K(ret));
+  }
   return ret;
 }
 

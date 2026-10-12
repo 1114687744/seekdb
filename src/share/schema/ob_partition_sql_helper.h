@@ -24,15 +24,15 @@
 #include "lib/string/ob_sql_string.h"
 #include "share/schema/ob_table_schema.h"
 #include "share/schema/ob_schema_struct.h"
-#include "share/ob_dml_sql_splicer.h"
+#include "share/schema/schema_catalog_row.h"
 #include "share/inner_table/ob_inner_table_schema_constants.h"
 
 
 namespace oceanbase
 {
+namespace observer { class NativeSchemaCatalog; }
 namespace share
 {
-class ObDMLSqlSplicer;
 namespace schema
 {
 
@@ -47,7 +47,7 @@ public:
     MEMSET(b_list_val_, 0, common::OB_MAX_B_PARTITION_EXPR_LENGTH);
 
   }
-  int gen_dml(ObDMLSqlSplicer &dml);
+  int gen_dml(SchemaCatalogRow &dml);
 
 protected:
   struct PartInfo
@@ -85,7 +85,7 @@ protected:
                  K_(partition_type));
   };
   virtual int extract_part_info(PartInfo &part_info) = 0;
-  virtual int convert_to_dml(const PartInfo &part_info, ObDMLSqlSplicer &dml) = 0;
+  virtual int convert_to_dml(const PartInfo &part_info, SchemaCatalogRow &dml) = 0;
   int gen_high_bound_val_str(const common::ObRowkey &high_bound_val,
                              common::ObString &high_bound_val_str,
                              common::ObString &b_high_bound_val_str);
@@ -112,7 +112,7 @@ public:
   virtual ~ObAddIncPartDMLGenerator() {}
 protected:
   int extract_part_info(PartInfo &part_info);
-  int convert_to_dml(const PartInfo &part_info, ObDMLSqlSplicer &dml);
+  int convert_to_dml(const PartInfo &part_info, SchemaCatalogRow &dml);
 private:
   const ObPartitionSchema *ori_table_;
   const ObPartition &part_;
@@ -136,7 +136,7 @@ public:
   virtual ~ObAddIncSubPartDMLGenerator() {}
 protected:
   int extract_part_info(PartInfo &part_info);
-  int convert_to_dml(const PartInfo &part_info, ObDMLSqlSplicer &dml);
+  int convert_to_dml(const PartInfo &part_info, SchemaCatalogRow &dml);
 private:
   const ObPartitionSchema *ori_table_;
   const ObPartition &part_;
@@ -157,7 +157,7 @@ public:
   virtual ~ObDropIncPartDMLGenerator() {}
 protected:
   int extract_part_info(PartInfo &part_info);
-  int convert_to_dml(const PartInfo &part_info, ObDMLSqlSplicer &dml);
+  int convert_to_dml(const PartInfo &part_info, SchemaCatalogRow &dml);
 private:
   const ObPartition &part_;
   int64_t schema_version_;
@@ -173,7 +173,7 @@ public:
   virtual ~ObDropIncSubPartDMLGenerator() {}
 protected:
   int extract_part_info(PartInfo &part_info);
-  int convert_to_dml(const PartInfo &part_info, ObDMLSqlSplicer &dml);
+  int convert_to_dml(const PartInfo &part_info, SchemaCatalogRow &dml);
 private:
   const ObSubPartition &sub_part_;
   int64_t schema_version_;
@@ -191,57 +191,31 @@ public:
 protected:
   virtual bool is_deleted() const = 0;
   virtual int add_part_info_dml_column(const ObPartitionSchema *table,
-                                       ObDMLSqlSplicer &dml) = 0;
+                                       SchemaCatalogRow &dml) = 0;
   virtual int add_part_dml_column(const ObPartitionSchema *table,
                                   const ObPartition &part,
-                                  ObDMLSqlSplicer &dml) = 0;
+                                  SchemaCatalogRow &dml) = 0;
   virtual int add_subpart_dml_column(const ObPartitionSchema *table,
                                      const int64_t part_id,
                                      const int64_t subpart_id,
                                      const ObSubPartition &subpart,
-                                     ObDMLSqlSplicer &dml) = 0;
+                                     SchemaCatalogRow &dml) = 0;
   virtual int add_def_subpart_dml_column(const ObPartitionSchema *table,
                                          const int64_t def_subpart_idx,
                                          const ObSubPartition &subpart,
-                                         ObDMLSqlSplicer &dml) = 0;
+                                         SchemaCatalogRow &dml) = 0;
 
-  int iterate_part_info(const bool only_history, const bool include_hidden = true);
-  int iterate_all_part(const bool only_history, const bool include_hidden = true);
-  int iterate_all_sub_part(const bool only_history, const bool include_hidden = true);
-  int iterate_all_def_sub_part(const bool only_history, const bool include_hidden = true);
+  int write_all(bool only_history);
 private:
-  struct BatchInsertCtx {
-    BatchInsertCtx() { reset(); }
-    void reset() {
-      count_ = 0;
-      sql_.reset();
-      history_sql_.reset();
-    }
-    ObSqlString sql_;
-    ObSqlString history_sql_;
-    int64_t count_;
-    TO_STRING_KV(K(sql_), K(history_sql_), K(count_));
-  };
-  int write_batch_sql_(const bool only_history, BatchInsertCtx &ctx);
-  // `dml` is used to generate header and values
-  // insert values are stored in `sql`
-  int generate_batch_sql_(const ObDMLSqlSplicer &dml, const char *table_name, ObSqlString &sql);
-  int generate_and_batch_write_sqls_(
-      ObDMLSqlSplicer &dml,
-      const bool only_history,
-      const char *table_name,
-      const char *history_table_name,
-      BatchInsertCtx &ctx);
-  int iterate_part_info_(const bool only_history, const ObPartitionSchema *table,
-                         BatchInsertCtx &ctx, const bool include_hidden);
-  int iterate_all_part_(const bool only_history, const ObPartitionSchema *table,
-                        BatchInsertCtx &ctx, const bool include_hidden);
-  int iterate_all_sub_part_(const bool only_history, const ObPartitionSchema *table,
-                            BatchInsertCtx &ctx, const bool include_hidden);
-  int iterate_all_def_sub_part_(const bool only_history, const ObPartitionSchema *table,
-                                BatchInsertCtx &ctx, const bool include_hidden);
+  int iterate_part_info_(observer::NativeSchemaCatalog &, bool only_history,
+                        const ObPartitionSchema *, bool include_hidden);
+  int iterate_all_part_(observer::NativeSchemaCatalog &, bool only_history,
+                       const ObPartitionSchema *, bool include_hidden);
+  int iterate_all_sub_part_(observer::NativeSchemaCatalog &, bool only_history,
+                           const ObPartitionSchema *, bool include_hidden);
+  int iterate_all_def_sub_part_(observer::NativeSchemaCatalog &, bool only_history,
+                               const ObPartitionSchema *, bool include_hidden);
 protected:
-  static const int64_t MAX_DML_NUM = 128;
   ObSEArray<const ObPartitionSchema *, 1> tables_;
   common::ObISQLClient &sql_client_;
 };
@@ -259,48 +233,48 @@ public:
 protected:
   bool is_deleted() const { return false; }
   int add_part_info_dml_column(const ObPartitionSchema *table,
-                               ObDMLSqlSplicer &dml);
+                               SchemaCatalogRow &dml);
   int add_part_dml_column(const ObPartitionSchema *table,
                           const ObPartition &part,
-                          ObDMLSqlSplicer &dml);
+                          SchemaCatalogRow &dml);
   int add_subpart_dml_column(const ObPartitionSchema *table,
                              const int64_t part_id,
                              const int64_t subpart_id,
                              const ObSubPartition &subpart,
-                             ObDMLSqlSplicer &dml);
+                             SchemaCatalogRow &dml);
   int add_def_subpart_dml_column(const ObPartitionSchema *table,
                                  const int64_t def_subpart_idx,
                                  const ObSubPartition &subpart,
-                                 ObDMLSqlSplicer &dml);
+                                 SchemaCatalogRow &dml);
 private:
   //add part high bound val column to dml
   int add_part_high_bound_val_column(const ObPartitionSchema *table,
                                      const ObBasePartition &part,
-                                     ObDMLSqlSplicer &dml);
+                                     SchemaCatalogRow &dml);
   //add subpart high bound val column to dml
   int add_subpart_high_bound_val_column(const ObPartitionSchema *table,
                                      const ObBasePartition &part,
-                                     ObDMLSqlSplicer &dml);
+                                     SchemaCatalogRow &dml);
   template<class P>  //ObPartition or ObSubPartition
   int add_high_bound_val_column(
       const ObPartitionSchema *table,
       const P &partition,
-      ObDMLSqlSplicer &dml);
+      SchemaCatalogRow &dml);
 
   //add part high bound val column to dml
   int add_part_list_val_column(const ObPartitionSchema *table,
                                      const ObBasePartition &part,
-                                     ObDMLSqlSplicer &dml);
+                                     SchemaCatalogRow &dml);
   //add subpart high bound val column to dml
   int add_subpart_list_val_column(const ObPartitionSchema *table,
                                      const ObBasePartition &part,
-                                     ObDMLSqlSplicer &dml);
+                                     SchemaCatalogRow &dml);
 
   template<class P>  //ObPartition or ObSubPartition
   int add_list_val_column(
       const ObPartitionSchema *table,
       const P &partition,
-      ObDMLSqlSplicer &dml);
+      SchemaCatalogRow &dml);
 
 private:
   char *high_bound_val_;
@@ -320,19 +294,19 @@ public:
 protected:
   bool is_deleted() const { return true; }
   int add_part_info_dml_column(const ObPartitionSchema *table,
-                               ObDMLSqlSplicer &dml);
+                               SchemaCatalogRow &dml);
   int add_part_dml_column(const ObPartitionSchema *table,
                           const ObPartition &part,
-                          ObDMLSqlSplicer &dml);
+                          SchemaCatalogRow &dml);
   int add_subpart_dml_column(const ObPartitionSchema *table,
                              const int64_t part_id,
                              const int64_t subpart_id,
                              const ObSubPartition &subpart,
-                             ObDMLSqlSplicer &dml);
+                             SchemaCatalogRow &dml);
   int add_def_subpart_dml_column(const ObPartitionSchema *table,
                                  const int64_t def_subpart_idx,
                                  const ObSubPartition &subpart,
-                                 ObDMLSqlSplicer &dml);
+                                 SchemaCatalogRow &dml);
 private:
   DISALLOW_COPY_AND_ASSIGN(ObDropPartInfoHelper);
 };

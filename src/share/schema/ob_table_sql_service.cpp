@@ -210,49 +210,30 @@ int ObTableSqlService::delete_table_part_info(const ObTableSchema &table_schema,
                                               const int64_t new_schema_version,
                                               ObISQLClient &sql_client)
 {
-  int ret = OB_SUCCESS;
-  
-  
-  /*
-   * Because __all_part(_history)/__all_sub_part(_history)/__all_def_sub_part(_history) is not core table,
-   * to avoid cyclic dependence while refresh schema, all inner tables won't record any partition related schema in tables.
-   * As compensation, schema module mock inner table's partition schema while refresh schema.
-   * So far, we only support to define hash-like inner table.
-   */
-  if (OB_FAIL(check_ddl_allowed(table_schema, &sql_client))) {
-  } else if (!is_inner_table(table_schema.get_table_id())) {
-    if (table_schema.get_part_level() > 0 &&
-        !table_schema.is_vir_table() &&
-        !table_schema.is_view_table()) {
-      
-      bool is_two_level = PARTITION_LEVEL_TWO == table_schema.get_part_level() ? true : false;
-      const char *tname[] = {OB_ALL_PART_INFO_TNAME, OB_ALL_PART_TNAME, OB_ALL_SUB_PART_TNAME,
-                             OB_ALL_DEF_SUB_PART_TNAME};
-      ObSqlString sql;
-      int64_t affected_rows = 0;
-      //drop data in __all_part_info, __all_part, __all_subpart, __all_def_subpart,
-      for (int64_t i = 0; OB_SUCC(ret) && i < ARRAYSIZEOF(tname); i++) {
-        if (!is_two_level && (0 == STRCMP(tname[i], OB_ALL_SUB_PART_TNAME) ||
-              0 == STRCMP(tname[i], OB_ALL_DEF_SUB_PART_TNAME))) {
-          continue;
-        }
-        if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE table_id=%lu",
-                                   tname[i],
-                                   ObSchemaUtils::get_extract_schema_id(table_schema.get_table_id())))) {
-        } else if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-        } else {}
+  int ret = check_ddl_allowed(table_schema, &sql_client);
+  if (OB_SUCC(ret) && !is_inner_table(table_schema.get_table_id())
+      && table_schema.get_part_level() > 0 && !table_schema.is_vir_table() && !table_schema.is_view_table()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (uint64_t inner : {OB_ALL_PART_INFO_TID, OB_ALL_PART_TID, OB_ALL_SUB_PART_TID, OB_ALL_DEF_SUB_PART_TID}) {
+        if (OB_FAIL(ret)) { break; }
+        if (table_schema.get_part_level() != PARTITION_LEVEL_TWO
+            && (inner == OB_ALL_SUB_PART_TID || inner == OB_ALL_DEF_SUB_PART_TID)) { continue; }
+        int64_t affected = 0;
+        ret = catalog.erase_prefix(inner, [&](SchemaCatalogRow &fields) {
+          return fields.add_pk_column("table_id", table_schema.get_table_id());
+        }, affected);
       }
+      return ret;
+    });
+    if (OB_SUCC(ret)) {
+      ObTableSchema table;
+      ret = table.assign(table_schema);
       if (OB_SUCC(ret)) {
-        ObTableSchema new_table;
-        if (OB_FAIL(new_table.assign(table_schema))) {
-        } else {
-          new_table.set_schema_version(new_schema_version);
-          const ObPartitionSchema *new_table_schema = &new_table;
-          ObDropPartInfoHelper part_helper(sql_client);
-          if (OB_FAIL(part_helper.init(new_table_schema))) {
-          } else if (OB_FAIL(part_helper.delete_partition_info())) {
-          }
-        }
+        table.set_schema_version(new_schema_version);
+        ObDropPartInfoHelper helper(sql_client);
+        if (OB_FAIL(helper.init(&table))) {} else { ret = helper.delete_partition_info(); }
       }
     }
   }
@@ -260,7 +241,6 @@ int ObTableSqlService::delete_table_part_info(const ObTableSchema &table_schema,
 }
 
 int ObTableSqlService::drop_inc_partition_add_extra_str(const ObTableSchema &inc_table,
-                                                        ObSqlString &sql,
                                                         ObSqlString &condition_str,
                                                         ObSqlString &dml_info_cond_str)
 {
@@ -271,7 +251,6 @@ int ObTableSqlService::drop_inc_partition_add_extra_str(const ObTableSchema &inc
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("partition array is null", KR(ret), K(inc_table));
   } else if (OB_FAIL(condition_str.assign_fmt(" (0 = 1"))) {
-  } else if (OB_FAIL(sql.append_fmt(" AND (0 = 1"))) {
   } else if (OB_FAIL(dml_info_cond_str.append_fmt(" (0 = 1"))) {
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < inc_part_num; i++) {
@@ -279,7 +258,6 @@ int ObTableSqlService::drop_inc_partition_add_extra_str(const ObTableSchema &inc
     if (OB_ISNULL(part)) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("partition is null", KR(ret), K(i), K(inc_part_num), K(inc_table));
-    } else if (OB_FAIL(sql.append_fmt(" OR part_id = %lu", part->get_part_id()))) {
     } else if (OB_FAIL(condition_str.append_fmt(" OR partition_id = %lu",
                                                 part->get_part_id()))) {
     } else if (inc_table.get_part_level() == PARTITION_LEVEL_ONE &&
@@ -303,7 +281,6 @@ int ObTableSqlService::drop_inc_partition_add_extra_str(const ObTableSchema &inc
   }
   if (OB_SUCC(ret)) {
     if (OB_FAIL(condition_str.append_fmt(" )"))) {
-    } else if (OB_FAIL(sql.append_fmt(" )"))) {
     } else if (OB_FAIL(dml_info_cond_str.append_fmt(" )"))) {
     }
   }
@@ -315,53 +292,48 @@ int ObTableSqlService::drop_inc_partition(common::ObISQLClient &sql_client,
                                            const ObTableSchema &inc_table,
                                            bool is_truncate_table)
 {
-  int ret = OB_SUCCESS;
-  
+  int ret = check_ddl_allowed(ori_table);
   const uint64_t table_id = ori_table.get_table_id();
-  
-  if (OB_FAIL(check_ddl_allowed(ori_table))) {
-  } else if (!is_inner_table(ori_table.get_table_id())
-      && 0 < ori_table.get_part_level()
-      && !ori_table.is_vir_table()
-      && !ori_table.is_view_table()) {
-    
-    ObSqlString sql;
-    // used to sync partition level info.
-    ObSqlString condition_str;
-    // used to sync partition dml info.
-    ObSqlString dml_info_cond_str;
-    const int64_t inc_part_num = inc_table.get_partition_num();
-    ObPartition **part_array = inc_table.get_part_array();
-
-    // build sql string
-    if (OB_ISNULL(part_array)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("partition array is null", K(ret), K(inc_table));
-    } else if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE table_id=%lu",
-                                      OB_ALL_PART_TNAME,
-                                      ObSchemaUtils::get_extract_schema_id(table_id)))) {
-    } else if (!is_truncate_table) {
-      if (OB_FAIL(drop_inc_partition_add_extra_str(inc_table, sql, condition_str, dml_info_cond_str))) {
-      }
-    }
-    // delete stat info here.
+  if (OB_SUCC(ret) && !is_inner_table(table_id) && ori_table.get_part_level() > 0
+      && !ori_table.is_vir_table() && !ori_table.is_view_table()) {
+    ObSqlString condition, dml_condition;
+    auto **parts = inc_table.get_part_array();
+    if (parts == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    else if (!is_truncate_table) { ret = drop_inc_partition_add_extra_str(inc_table, condition, dml_condition); }
     if (OB_SUCC(ret)) {
-      ObSqlString *extra_str = condition_str.empty() ? NULL : &condition_str;
-      ObSqlString *extra_str2 = dml_info_cond_str.empty() ? NULL : &dml_info_cond_str;
-      if (OB_FAIL(delete_from_all_table_stat(sql_client, table_id, extra_str))) {
-      } else if (OB_FAIL(delete_from_all_column_stat(sql_client, table_id, extra_str))) {
-      } else if (OB_FAIL(delete_from_all_histogram_stat(sql_client, table_id, extra_str))) {
-      } else if (OB_FAIL(delete_from_all_monitor_modified(sql_client, table_id, extra_str2))) {
-      }
+      auto *stats = condition.empty() ? nullptr : &condition;
+      auto *modified = dml_condition.empty() ? nullptr : &dml_condition;
+      if (OB_FAIL(delete_from_all_table_stat(sql_client, table_id, stats))) {
+      } else if (OB_FAIL(delete_from_all_column_stat(sql_client, table_id, stats))) {
+      } else if (OB_FAIL(delete_from_all_histogram_stat(sql_client, table_id, stats))) {
+      } else { ret = delete_from_all_monitor_modified(sql_client, table_id, modified); }
     }
-
     if (OB_SUCC(ret)) {
-      int64_t affected_rows = 0;
-      if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-      } else if (affected_rows != inc_part_num) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected affected rows", K(ret), K(inc_part_num), K(affected_rows));
-      }
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) {
+        int ret = OB_SUCCESS;
+        int64_t total = 0;
+        if (is_truncate_table) {
+          ret = catalog.erase_prefix(OB_ALL_PART_TID, [&](SchemaCatalogRow &fields) {
+            return fields.add_pk_column("table_id", table_id);
+          }, total);
+        } else {
+          for (int64_t i = 0; OB_SUCC(ret) && i < inc_table.get_partition_num(); ++i) {
+            int64_t affected = 0;
+            if (parts[i] == nullptr) { ret = OB_ERR_UNEXPECTED; }
+            else {
+              ret = catalog.erase_prefix(OB_ALL_PART_TID, [&](SchemaCatalogRow &fields) {
+                int ret = fields.add_pk_column("table_id", table_id);
+                if (OB_SUCC(ret)) { ret = fields.add_pk_column("part_id", parts[i]->get_part_id()); }
+                return ret;
+              }, affected);
+              total += affected;
+            }
+          }
+        }
+        if (OB_SUCC(ret) && total != inc_table.get_partition_num()) { ret = OB_ERR_UNEXPECTED; }
+        return ret;
+      });
     }
   }
   return ret;
@@ -380,7 +352,6 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("table has not tablet", KR(ret));
   } else {
-    ObSqlString sql;
     ObSqlString condition_str;
     ObSqlString dml_info_cond_str;
     const int64_t inc_part_num = inc_table.get_partition_num();
@@ -391,9 +362,7 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
     if (OB_ISNULL(part_array)) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("partition array is null", K(ret), K(inc_table));
-    } else if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE table_id=%lu AND (0 = 1",
-                                      OB_ALL_SUB_PART_TNAME,
-                                      ObSchemaUtils::get_extract_schema_id(table_id)))) {
+
     } else if (OB_FAIL(condition_str.assign_fmt("( 1 = 0"))) {
     } else if (OB_FAIL(dml_info_cond_str.assign_fmt("( 1 = 0"))) {
     }
@@ -413,8 +382,7 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
           if (OB_ISNULL(subpart)) {
             ret = OB_ERR_UNEXPECTED;
             LOG_WARN("subpartition is null", K(ret), K(i), K(inc_part_num), K(inc_table));
-          } else if (OB_FAIL(sql.append_fmt(" OR (part_id = %lu AND sub_part_id = %lu)",
-                     subpart->get_part_id(), subpart->get_sub_part_id()))) {
+
           } else if (OB_FAIL(condition_str.append_fmt(" OR partition_id = %lu", subpart->get_sub_part_id()))) {
           } else if (OB_FAIL(dml_info_cond_str.append_fmt(" OR tablet_id = %lu", subpart->get_tablet_id().id()))) {
           }
@@ -422,8 +390,7 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
       }
     }
     if (OB_SUCC(ret)) {
-      if (OB_FAIL(sql.append_fmt(" )"))) {
-      } else if (OB_FAIL(condition_str.append_fmt(" )"))) {
+      if (OB_FAIL(condition_str.append_fmt(" )"))) {
       } else if (OB_FAIL(dml_info_cond_str.append_fmt(" )"))) {
       }
     }
@@ -438,8 +405,27 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
 
     if (OB_SUCC(ret)) {
       int64_t affected_rows = 0;
-      if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-      } else if (affected_rows != inc_subpart_num) {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) {
+        int ret = OB_SUCCESS;
+        for (int64_t i = 0; OB_SUCC(ret) && i < inc_part_num; ++i) {
+          const auto &part = *part_array[i];
+          for (int64_t j = 0; OB_SUCC(ret) && j < part.get_subpartition_num(); ++j) {
+            const auto &sub = *part.get_subpart_array()[j];
+            int64_t affected = 0;
+            ret = catalog.erase_prefix(OB_ALL_SUB_PART_TID, [&](SchemaCatalogRow &fields) {
+              int ret = OB_SUCCESS;
+              if (OB_FAIL(fields.add_pk_column("table_id", table_id))
+                  || OB_FAIL(fields.add_pk_column("part_id", sub.get_part_id()))
+                  || OB_FAIL(fields.add_pk_column("sub_part_id", sub.get_sub_part_id()))) {}
+              return ret;
+            }, affected);
+            affected_rows += affected;
+          }
+        }
+        return ret;
+      });
+      if (OB_SUCC(ret) && affected_rows != inc_subpart_num) {
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("unexpected affected rows", K(ret), K(inc_subpart_num), K(affected_rows));
       }
@@ -448,67 +434,34 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
   return ret;
 }
 
-int ObTableSqlService::drop_inc_all_sub_partition_add_extra_str(const ObTableSchema &inc_table,
-                                                                ObSqlString &sql)
-{
-  int ret = OB_SUCCESS;
-  ObPartition **part_array = inc_table.get_part_array();
-  const int64_t inc_part_num = inc_table.get_partition_num();
-  if (OB_ISNULL(part_array)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("partition array is null", KR(ret), K(inc_table));
-  } else if (OB_FAIL(sql.append(" AND (0 = 1"))) {
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < inc_part_num; i++) {
-    ObPartition *part = part_array[i];
-    if (OB_ISNULL(part)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("partition is null", KR(ret), K(i), K(inc_part_num), K(inc_table));
-    } else if (OB_FAIL(sql.append_fmt(" OR (part_id = %lu)", part->get_part_id()))) {
-    }
-  }
-  if (OB_SUCC(ret)) {
-    if (OB_FAIL(sql.append_fmt(" )"))) {
-    }
-  }
-  return ret;
-}
 
 int ObTableSqlService::drop_inc_all_sub_partition(common::ObISQLClient &sql_client,
                                                   const ObTableSchema &ori_table,
                                                   const ObTableSchema &inc_table,
                                                   bool is_truncate_table)
 {
-  int ret = OB_SUCCESS;
-  
-  
-  if (OB_FAIL(check_ddl_allowed(ori_table))) {
-  } else if (!ori_table.has_tablet()) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("table has not tablet", KR(ret));
-  } else {
-    
-    ObSqlString sql;
-    const int64_t inc_part_num = inc_table.get_partition_num();
-    ObPartition **part_array = inc_table.get_part_array();
-
-    // build sql string
-    if (OB_ISNULL(part_array)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("partition array is null", K(ret), K(inc_table));
-    } else if (OB_FAIL(sql.assign_fmt("DELETE FROM %s WHERE table_id=%lu",
-                                      OB_ALL_SUB_PART_TNAME,
-                                      ObSchemaUtils::get_extract_schema_id(ori_table.get_table_id())))) {
-    } else if (!is_truncate_table) {
-      if (OB_FAIL(drop_inc_all_sub_partition_add_extra_str(inc_table, sql))) {
+  int ret = check_ddl_allowed(ori_table);
+  if (OB_SUCC(ret) && !ori_table.has_tablet()) { ret = OB_INVALID_ARGUMENT; }
+  if (OB_SUCC(ret) && inc_table.get_part_array() == nullptr) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      const int64_t count = is_truncate_table ? 1 : inc_table.get_partition_num();
+      for (int64_t i = 0; OB_SUCC(ret) && i < count; ++i) {
+        const auto *part = is_truncate_table ? nullptr : inc_table.get_part_array()[i];
+        int64_t affected = 0;
+        if (!is_truncate_table && part == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else {
+          ret = catalog.erase_prefix(OB_ALL_SUB_PART_TID, [&](SchemaCatalogRow &fields) {
+            int ret = fields.add_pk_column("table_id", ori_table.get_table_id());
+            if (OB_SUCC(ret) && !is_truncate_table) { ret = fields.add_pk_column("part_id", part->get_part_id()); }
+            return ret;
+          }, affected);
+        }
       }
-    }
-
-    if (OB_SUCC(ret)) {
-      int64_t affected_rows = 0;
-      if (OB_FAIL(sql_client.write(sql.ptr(), affected_rows))) {
-      }
-    }
+      return ret;
+    });
   }
   return ret;
 }
@@ -2229,40 +2182,7 @@ int ObTableSqlService::update_table_attribute(ObISQLClient &sql_client,
 
 int ObTableSqlService::gen_partition_option_dml(const ObTableSchema &table, ObDMLSqlSplicer &dml)
 {
-  int ret = OB_SUCCESS;
-  
-  const uint64_t table_id = table.get_table_id();
-  
-  const ObPartitionOption &part_option = table.get_part_option();
-  const ObSubPartitionOption &sub_part_option = table.get_sub_part_option();
-  const char *part_func_expr = part_option.get_part_func_expr_str().length() <= 0 ?
-  "" : part_option.get_part_func_expr_str().ptr();
-  const char *sub_part_func_expr = sub_part_option.get_part_func_expr_str().length() <= 0 ?
-  "" : sub_part_option.get_part_func_expr_str().ptr();
-  const int64_t part_num = part_option.get_part_num();
-  const int64_t sub_part_num = PARTITION_LEVEL_TWO == table.get_part_level()
-                               && table.has_sub_part_template_def() ?
-                               sub_part_option.get_part_num() : 0;
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                               table_id)))
-      || OB_FAIL(dml.add_column("part_level", table.get_part_level()))
-      || OB_FAIL(dml.add_column("part_func_type", part_option.get_part_func_type()))
-      || OB_FAIL(dml.add_column("part_func_expr", ObHexEscapeSqlStr(part_func_expr)))
-      || OB_FAIL(dml.add_column("part_num", part_num))
-      || OB_FAIL(dml.add_column("sub_part_func_type", sub_part_option.get_part_func_type()))
-      || OB_FAIL(dml.add_column("sub_part_func_expr", ObHexEscapeSqlStr(sub_part_func_expr)))
-      || OB_FAIL(dml.add_column("sub_part_num", sub_part_num))
-      || OB_FAIL(dml.add_column("schema_version", table.get_schema_version()))
-      || OB_FAIL(dml.add_column("partition_status", table.get_partition_status()))
-      || OB_FAIL(dml.add_column("partition_schema_version", table.get_partition_schema_version()))
-      || OB_FAIL(dml.add_column("sub_part_template_flags", table.get_sub_part_template_flags()))
-      || OB_FAIL(dml.add_gmt_create())
-      || (OB_FAIL(dml.add_column("table_flags", table.get_table_flags())))
-      || OB_FAIL(dml.add_gmt_modified())) {
-    LOG_WARN("add column failed", K(ret));
-  }
-  return ret;
+  return SchemaCatalogFields::partition_options(table, dml);
 }
 
 int ObTableSqlService::update_partition_option(ObISQLClient &sql_client,
@@ -2270,10 +2190,8 @@ int ObTableSqlService::update_partition_option(ObISQLClient &sql_client,
                                                const ObString *ddl_stmt_str)
 {
   int ret = OB_SUCCESS;
-  ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (OB_FAIL(gen_partition_option_dml(table, dml))) {
-  } else if (OB_FAIL(update_partition_option_(sql_client, table, dml))) {
+  } else if (OB_FAIL(update_partition_option_(sql_client, table))) {
   }
 
   if (OB_SUCC(ret)) {
@@ -2296,43 +2214,38 @@ int ObTableSqlService::update_partition_option(ObISQLClient &sql_client,
 {
   int ret = OB_SUCCESS;
   table.set_schema_version(new_schema_version);
-  ObDMLSqlSplicer dml;
 
   if (OB_FAIL(check_ddl_allowed(table))) {
-  } else if (OB_FAIL(gen_partition_option_dml(table, dml))) {
-  } else if (OB_FAIL(update_partition_option_(sql_client, table, dml))) {
+  } else if (OB_FAIL(update_partition_option_(sql_client, table))) {
   }
   return ret;
 }
 
 int ObTableSqlService::update_partition_option_(ObISQLClient &sql_client,
-                                                const ObTableSchema &table,
-                                                ObDMLSqlSplicer &dml)
+                                                const ObTableSchema &table)
 {
+  if (!is_core_table(table.get_table_id()) && !GCTX.in_bootstrap_) {
+    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      bool matched = false;
+      int ret = catalog.update_fields(OB_ALL_TABLE_TID, [&](SchemaCatalogRow &fields) {
+        return SchemaCatalogFields::partition_options(table, fields);
+      }, matched);
+      if (OB_SUCC(ret)) { ret = catalog.insert_table(table, true); }
+      return ret;
+    });
+  }
   int ret = OB_SUCCESS;
-  
-  
-  const uint64_t table_id = table.get_table_id();
-  int64_t affected_rows = 0;
-  const char *table_name = NULL;
-
-  if (is_core_table(table_id)) {
-    // The full versioned row is appended below.
-  } else if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-  } else if (OB_FAIL(exec_update(sql_client, table_id,
-                                 table_name, dml, affected_rows))) {
-  } else if (affected_rows > 1) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("unexpected error", K(affected_rows), KR(ret));
+  if (!is_core_table(table.get_table_id())) {
+    ObDMLSqlSplicer dml;
+    int64_t affected = 0;
+    const char *table_name = nullptr;
+    if (OB_FAIL(gen_partition_option_dml(table, dml))) {
+    } else if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
+    } else if (OB_FAIL(exec_update(sql_client, table.get_table_id(), table_name, dml, affected))) {
+    } else if (affected > 1) { ret = OB_ERR_UNEXPECTED; }
   }
-
-  // add updated table to __all_table_history
-  if (OB_SUCC(ret)) {
-    const bool only_history = true;
-    const bool update_object_status_ignore_version = false;
-    if (OB_FAIL(add_table(sql_client, table, update_object_status_ignore_version, only_history))) {
-    } else {}
-  }
+  if (OB_SUCC(ret)) { ret = add_table(sql_client, table, false, true); }
   return ret;
 }
 
@@ -2340,75 +2253,38 @@ int ObTableSqlService::update_all_part_for_subpart(ObISQLClient &sql_client,
                                                    const ObTableSchema &table,
                                                    const ObIArray<ObPartition*> &update_part_array)
 {
-  int ret = OB_SUCCESS;
-
-  
-  const uint64_t table_id = table.get_table_id();
-  
-
-  ObDMLSqlSplicer dml;
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  } else {
-    for (int64_t i = 0; OB_SUCC(ret) && i < update_part_array.count(); i++) {
-      ObPartition *inc_part = update_part_array.at(i);
-      if (OB_ISNULL(inc_part)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("inc_part_array[i] is NULL", K(ret), K(i));
-      } else {
-        if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                     table_id)))
-            || OB_FAIL(dml.add_pk_column("part_id", inc_part->get_part_id()))
-            || OB_FAIL(dml.add_column("sub_part_num", inc_part->get_sub_part_num()))
-            || OB_FAIL(dml.add_column("schema_version", table.get_schema_version()))
-            || OB_FAIL(dml.add_gmt_modified())) {
-          LOG_WARN("add column failed", K(ret));
-        } else {
-          int64_t affected_rows = 0;
-          if (OB_FAIL(exec_update(sql_client, table_id,
-                                  OB_ALL_PART_TNAME, dml, affected_rows))) {
-          } else if (affected_rows > 1) {
-            ret = OB_ERR_UNEXPECTED;
-            LOG_WARN("unexpected error", K(affected_rows), KR(ret));
+  int ret = check_ddl_allowed(table);
+  if (OB_SUCC(ret) && !update_part_array.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < update_part_array.count(); ++i) {
+        const auto *part = update_part_array.at(i);
+        if (part == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else {
+          bool matched = false;
+          ret = catalog.update_fields(OB_ALL_PART_TID, [&](SchemaCatalogRow &fields) {
+            int ret = OB_SUCCESS;
+            if (OB_FAIL(fields.add_pk_column("table_id", table.get_table_id()))
+                || OB_FAIL(fields.add_pk_column("part_id", part->get_part_id()))
+                || OB_FAIL(fields.add_column("sub_part_num", part->get_sub_part_num()))
+                || OB_FAIL(fields.add_column("schema_version", table.get_schema_version()))
+                || OB_FAIL(fields.add_gmt_modified())) {}
+            return ret;
+          }, matched);
+          if (OB_SUCC(ret)) {
+            HEAP_VAR(ObAddIncPartDMLGenerator, generator, &table, *part, -1, -1, table.get_schema_version()) {
+              ret = catalog.insert_fields(OB_ALL_PART_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+                int ret = generator.gen_dml(fields);
+                if (OB_SUCC(ret)) { ret = fields.add_column("is_deleted", false); }
+                return ret;
+              });
+            }
           }
         }
       }
-    }
-  }
-
-  if (OB_FAIL(ret) || update_part_array.count() == 0) {
-  } else {
-    
-    ObDMLSqlSplicer history_dml;
-    for (int64_t i = 0; OB_SUCC(ret) && i < update_part_array.count(); i++) {
-      ObPartition *inc_part = update_part_array.at(i);
-      if (OB_ISNULL(inc_part)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("inc_part_array[i] is NULL", K(ret), K(i));
-      } else {
-        HEAP_VAR(ObAddIncPartDMLGenerator, part_dml_gen,
-                 &table, *inc_part, -1, -1, table.get_schema_version()) {
-          if (OB_FAIL(part_dml_gen.gen_dml(history_dml))) {
-          } else if (OB_FAIL(history_dml.add_column("is_deleted", false))) {
-          } else if (OB_FAIL(history_dml.finish_row())) {
-          }
-        }
-      }
-    }
-    if (OB_SUCC(ret) && update_part_array.count() != 0) {
-      int64_t affected_rows = 0;
-      ObSqlString part_history_sql;
-      if (OB_FAIL(history_dml.splice_batch_insert_sql(
-                  share::OB_ALL_PART_HISTORY_TNAME,
-                  part_history_sql))) {
-      } else if (OB_FAIL(sql_client.write(
-                                      part_history_sql.ptr(),
-                                      affected_rows))) {
-      } else if (affected_rows != update_part_array.count()) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("history affected_rows is unexpected", K(ret),
-                 K(update_part_array.count()), K(affected_rows));
-      }
-    }
+      return ret;
+    });
   }
   return ret;
 }
