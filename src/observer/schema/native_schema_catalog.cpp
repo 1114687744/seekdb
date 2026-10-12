@@ -783,6 +783,78 @@ int NativeSchemaCatalog::get_simple_tables(int64_t version, ObIAllocator &alloca
   return ret;
 }
 
+int NativeSchemaCatalog::get_table_version_history(uint64_t table_id, int64_t version,
+    VersionHisVal &out)
+{
+  out.reset();
+  if (table_id == OB_INVALID_ID || version <= 0) { return OB_INVALID_ARGUMENT; }
+  ObObj id;
+  id.set_int(table_id);
+  const ObRowkey prefix(&id, 1);
+  CatalogRows rows;
+  int ret = rows.open(*this, OB_ALL_TABLE_HISTORY_TID, prefix, version, true);
+  while (OB_SUCC(ret) && out.valid_cnt_ < MAX_CACHED_VERSION_CNT && OB_SUCC(rows.next())) {
+    if (out.valid_cnt_ == 0) { ret = rows.get_bool("is_deleted", out.is_deleted_); }
+    if (OB_SUCC(ret)) { ret = rows.get_int("schema_version", out.versions_[out.valid_cnt_]); }
+    if (OB_SUCC(ret)) { ++out.valid_cnt_; }
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  const int cleanup = rows.close();
+  if (OB_SUCC(ret)) { ret = cleanup; }
+  if (OB_SUCC(ret) && out.valid_cnt_ > 0) {
+    // MIN covers all visible history, not just the newest cached versions.
+    // Its first ascending row is enough; both cursors use this operation's view.
+    CatalogRows first;
+    if (OB_FAIL(first.open(*this, OB_ALL_TABLE_HISTORY_TID, prefix, version))) {
+    } else if (OB_FAIL(first.next())) {
+    } else { ret = first.get_int("schema_version", out.min_version_); }
+  }
+  if (OB_SUCC(ret)) { out.snapshot_version_ = version; }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_table_latest_schema_versions(const ObIArray<uint64_t> &table_ids,
+    ObIArray<ObTableLatestSchemaVersion> &out)
+{
+  out.reset();
+  if (table_ids.empty()) { return OB_INVALID_ARGUMENT; }
+  std::set<uint64_t> ids;
+  for (int64_t i = 0; i < table_ids.count(); ++i) {
+    if (table_ids.at(i) == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+    ids.insert(table_ids.at(i));
+  }
+  int ret = out.reserve(ids.size());
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ObObj key;
+    key.set_int(id);
+    CatalogRows rows;
+    if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_HISTORY_TID, ObRowkey(&key, 1),
+                         INT64_MAX, true, 0, true))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_table_latest_schema_versions(rows, out); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_original_table_version(uint64_t table_id, int64_t &out)
+{
+  out = OB_INVALID_VERSION;
+  if (table_id == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+  ObObj key;
+  key.set_int(table_id);
+  CatalogRows rows;
+  int ret = rows.open(*this, OB_ALL_ORI_SCHEMA_VERSION_TID, ObRowkey(&key, 1),
+                      INT64_MAX, false, 0, false, {}, false);
+  if (OB_SUCC(ret)) { ret = rows.next(); }
+  if (OB_SUCC(ret)) { ret = rows.get_int("ori_schema_version", out); }
+  if (OB_SUCC(ret) && out <= 0) { ret = OB_ERR_UNEXPECTED; }
+  if (OB_SUCC(ret)) {
+    const int next = rows.next();
+    if (next != OB_ITER_END) { ret = next == OB_SUCCESS ? OB_ERR_UNEXPECTED : next; }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::insert_table(const ObTableSchema &table, bool history,
     bool update_object_status_ignore_version)
 {

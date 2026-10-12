@@ -5182,14 +5182,20 @@ int ObSchemaServiceSQLImpl::get_ori_schema_version(
     int64_t &ori_schema_version)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = mysql_proxy_ == nullptr ? nullptr
+      : observer::namespace_worker_prototype::namespace_schema_lifecycle(mysql_proxy_->target_namespace());
   const int64_t snapshot_timestamp = schema_status.snapshot_timestamp_;
   ori_schema_version = OB_INVALID_VERSION;
 
-  if (!check_inner_stat()) {
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_INNER_STAT_ERROR;
     LOG_WARN("inner stat error", K(ret));
   } else if (is_core_table(table_id)) {
     // To avoid cyclic dependence, system table won't record ori_schema_version.
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = with_schema_catalog(*mysql_proxy_, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_original_table_version(table_id, ori_schema_version);
+    });
   } else {
     SMART_VAR(ObMySQLProxy::MySQLResult, res) {
       ObMySQLResult *result = NULL;
@@ -5276,6 +5282,18 @@ int ObSchemaServiceSQLImpl::construct_schema_version_history(
     VersionHisVal &version_his_val)
 {
   int ret = OB_SUCCESS;
+  if (version_his_key.schema_type_ == TABLE_SCHEMA) {
+    auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+        sql_client.target_namespace());
+    if (!check_inner_stat() || lifecycle == nullptr) { return OB_NOT_INIT; }
+    if (!lifecycle->is_bootstrapping()) {
+      return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+        // This parameter is a logical schema version; the read SCN belongs to
+        // schema_status and the catalog's protected view.
+        return catalog.get_table_version_history(version_his_key.schema_id_, snapshot_version, version_his_val);
+      });
+    }
+  }
   SMART_VAR(ObMySQLProxy::MySQLResult, res) {
     ObMySQLResult *result = NULL;
     ObSqlString sql;
@@ -5476,10 +5494,19 @@ int ObSchemaServiceSQLImpl::get_table_latest_schema_versions(
     common::ObIArray<ObTableLatestSchemaVersion> &table_schema_versions)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   table_schema_versions.reset();
   if (OB_UNLIKELY(table_ids.empty())) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid args", KR(ret), K(table_ids));
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_table_latest_schema_versions(table_ids, table_schema_versions);
+    });
   } else if (OB_FAIL(table_schema_versions.reserve(table_ids.count()))) {
   } else {
     int64_t start_idx = 0;

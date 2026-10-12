@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已接入，验证记录见文末。名称/版本查询和其余 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已接入，验证记录见文末。其余名称/当前版本查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -130,3 +130,20 @@
 - `/tmp/native-schema-catalog-simple-probe1.log` 通过 part/part2/fk/self_fk/drop_fk/old_fk/history，冷 Namespace 的服务槽位保持 0。`/tmp/native-schema-catalog-simple-borrowed1.log` 通过 plain：借用 DDL owner 读取未提交改名，独立事务不可见，回滚后恢复原值；完整与简单定义均检查。
 - `/tmp/native-schema-catalog-simple-ddl1.log` 通过 DDL、索引、父子隔离和崩溃重启。实例日志确认生产 `fetch_tables` 已使用原生全量与增量入口；约 645 张表的全量刷新观察值为几十毫秒，仅代表该测试数据量。
 - `/tmp/native-schema-catalog-simple-production-build1.log`：移除测试钩子后生产编译通过。`/tmp/native-schema-catalog-simple-production-ddl1.log` 的生产 DDL、父子隔离及崩溃重启通过。主备回归通过，结果见 `gate-results/native-schema-catalog/native-simple-standby/results.json`；包括备库刷新、物化/LOB 回放、子空间 DDL、父 TRUNCATE/DROP、提升后装载与写入、再次 fork。
+
+### 表版本查询接入
+
+- 简单定义刷新已提交并推送 `7c976ece1`。
+- `construct_schema_version_history` 的 TABLE_SCHEMA 分支、`get_table_latest_schema_versions`、`get_ori_schema_version` 在目录初始化完成后改走原生目录。前者的 snapshot_version 参数实际是逻辑 schema 版本，SCN 仍由受保护读取视图决定。
+- 最近版本缓存仍保留最新 16 条及最新删除标记；min_version 取完整可见历史的最小值。原生读取使用同一视图下的逆序有限扫描和正序首行，避免为 MIN 遍历该表全部历史。批量最新版本去重并保留删除记录；原始版本读取 `__all_ori_schema_version`，不把它推算成最早 history 版本。
+- `/tmp/native-schema-catalog-versions-build1.log` 编译通过。首次测试命令 `versions-probe1.log` 因 argparse 的 case 选项漏加 versions 退出，尚未启动实例；补齐选项后 `versions-probe2.log` 通过 plain/versions/history/old_fk。
+- versions 用例实际产生 41 条表历史：与 SQL 聚合结果核对最小值、最新值和原始值，验证最近 16 条的完整顺序。plain 新增未提交的 history 删除记录，验证借用事务可见、独立读取不可见、回滚恢复。冷服务槽位保持 0。四件套默认原生目录 probe 自动包含新增用例。
+- `/tmp/native-schema-catalog-versions-production-build1.log` 移除测试钩子后生产编译通过；`/tmp/native-schema-catalog-versions-production-ddl1.log` 的 DDL、父子隔离及崩溃重启通过。备库历史 schema 用例退出 0（348.90 秒），结果见 `gate-results/native-schema-catalog/native-versions-standby/results.json`；覆盖 12 个用户物理 tablet、主备 major、备库崩溃恢复、提升后 DDL 与 major，以及 Namespace 1/4 的历史 checksum。
+- 仍需接入表/索引/约束/外键的名称查询、当前表版本查询、索引信息查询，以及既有清单中的完整 DDL 写入；本轮目标仍未完成。
+- 核心表定义还有独立读取：`get_core_table_priorities/get_core_table_columns` 使用 `ObCoreTableProxy::load`，后者仍对 `__all_core_table` 执行 SQL。正常装载不能漏掉这条路径；后续应复用固定内表定义和现有 core 行解码，避免通过虚拟表查询核心定义。初始化阶段与目录已经建立后的访问必须分清。
+
+#### 待定位：核心 tablet 的 minor 行版本结束标记
+
+- 上述备库历史 schema 场景中，主库子空间 4 的逻辑 tablet 1（物理 ID `4611686568183201793`）在 minor 合并多份 MINI 时反复报 `-4016`。报错位置 `ObMacroBlockWriter::check_order`：切换到下一行时，上一行未见 Last 标记；涉及 `__all_global_stat/change_stream_min_dep_lsn` 等 core 行。
+- major 准备等待期间，后台物化/接管持续推进，最终主库与备库 major、恢复、提升后 major 和用户数据/索引校验均完成。这个日志异常没有阻止本次用例完成，但不能据此认定 minor 正确，也尚未证明它由版本查询改动引入或此前已存在。
+- 已保留同一失败 DAG 的证据 `gate-results/native-schema-catalog/native-versions-standby/minor-core-error.txt`。后续需缩小到父子核心 tablet 的继承 MINI 与本地 MINI 合并，核对截取边界及多版本结束标记，并做基线对照。`schema_history` 场景已在四件套 direct 的 standby suite 中；当前断言覆盖合并完成和数据正确性，尚不能替代这条 minor 异常的定向断言。

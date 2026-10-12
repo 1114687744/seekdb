@@ -45,6 +45,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     return rc != OB_SUCCESS ? rc : index < 0 ? OB_ERR_UNEXPECTED : OB_SUCCESS;
   };
   int64_t table_rows = 0, column_rows = 0;
+  ObArray<int64_t> expected_versions;
   for (int pass = 0; ret == OB_SUCCESS && pass < 2; ++pass) {
     const uint64_t inner_id = pass == 0 ? OB_ALL_TABLE_HISTORY_TID : OB_ALL_COLUMN_HISTORY_TID;
     const int key_count = pass == 0 ? 2 : 3;
@@ -63,11 +64,51 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
           && (row.cells_[name_index].is_null() || row.cells_[name_index].get_string().empty())) {
         rc = OB_ERR_UNEXPECTED;
       }
+      if (rc == OB_SUCCESS && pass == 0) {
+        int64_t version_index = -1;
+        rc = column_index(schema, "schema_version", version_index);
+        if (rc == OB_SUCCESS && row.cells_[version_index].get_int() <= requested_version) {
+          rc = expected_versions.push_back(row.cells_[version_index].get_int());
+        }
+      }
       if (rc == OB_SUCCESS) { ++(pass == 0 ? table_rows : column_rows); }
       return rc;
     });
   }
   if (ret == OB_SUCCESS && (table_rows < 1 || column_rows < expected_columns)) { ret = OB_ERR_UNEXPECTED; }
+  if (ret == OB_SUCCESS) {
+    VersionHisVal versions;
+    ret = catalog.get_table_version_history(table_id, requested_version, versions);
+    const int64_t expected_count = std::min<int64_t>(MAX_CACHED_VERSION_CNT, expected_versions.count());
+    if (ret == OB_SUCCESS && (versions.valid_cnt_ != expected_count || versions.is_deleted_
+        || versions.snapshot_version_ != requested_version
+        || versions.min_version_ != expected_versions.at(0))) { ret = OB_ERR_UNEXPECTED; }
+    for (int64_t i = 0; ret == OB_SUCCESS && i < expected_count; ++i) {
+      if (versions.versions_[i] != expected_versions.at(expected_versions.count() - 1 - i)) {
+        ret = OB_ERR_UNEXPECTED;
+      }
+    }
+    ObSEArray<uint64_t, 3> ids;
+    ObArray<ObTableLatestSchemaVersion> latest;
+    if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+    if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+    if (ret == OB_SUCCESS) { ret = ids.push_back(1000000000); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_latest_schema_versions(ids, latest); }
+    if (ret == OB_SUCCESS && (latest.count() != 1 || latest.at(0).get_table_id() != table_id
+        || latest.at(0).is_deleted() || latest.at(0).get_schema_version() < versions.versions_[0])) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    int64_t original = 0;
+    if (ret == OB_SUCCESS) { ret = catalog.get_original_table_version(table_id, original); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_VERSIONS namespace=%lu count=%d min=%ld latest=%ld original=%ld ret=%d\n",
+        namespace_id, versions.valid_cnt_, versions.min_version_,
+        latest.empty() ? 0 : latest.at(0).get_schema_version(), original, ret);
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_version_history(1000000000, INT64_MAX, versions); }
+    if (ret == OB_SUCCESS && (versions.valid_cnt_ != 0 || versions.min_version_ != OB_INVALID_VERSION
+        || versions.is_deleted_ || catalog.get_original_table_version(1000000000, original) != OB_ITER_END)) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+  }
   if (ret == OB_SUCCESS) {
     observer::NativeSchemaCatalog::Cursor first, second;
     ObObj key; key.set_int(table_id);
@@ -260,6 +301,37 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
       ret = outside.begin_read(deadline);
       if (ret == OB_SUCCESS) { ret = verify_name(outside, "t"); }
+    }
+    if (ret == OB_SUCCESS) {
+      stage = "version_tombstone";
+      int64_t version_index = -1, deleted_index = -1;
+      ret = column_index(fixed, "schema_version", version_index);
+      if (ret == OB_SUCCESS) { ret = column_index(fixed, "is_deleted", deleted_index); }
+      int64_t deleted_version = 0;
+      if (ret == OB_SUCCESS) {
+        deleted_version = changed.cells_[version_index].get_int() + 1;
+        changed.cells_[version_index].set_int(deleted_version);
+        changed.cells_[deleted_index].set_int(1);
+        ret = borrowed.insert(OB_ALL_TABLE_HISTORY_TID, changed);
+      }
+      VersionHisVal history;
+      if (ret == OB_SUCCESS) { ret = borrowed.get_table_version_history(table_id, INT64_MAX, history); }
+      if (ret == OB_SUCCESS && (!history.is_deleted_ || history.valid_cnt_ < 2
+          || history.versions_[0] != deleted_version)) { ret = OB_ERR_UNEXPECTED; }
+      ObSEArray<uint64_t, 1> ids;
+      ObArray<ObTableLatestSchemaVersion> latest;
+      if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+      if (ret == OB_SUCCESS) { ret = borrowed.get_table_latest_schema_versions(ids, latest); }
+      if (ret == OB_SUCCESS && (latest.count() != 1 || !latest.at(0).is_deleted()
+          || latest.at(0).get_schema_version() != deleted_version)) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) {
+        observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+        ret = outside.begin_read(deadline);
+        if (ret == OB_SUCCESS) { ret = outside.get_table_version_history(table_id, INT64_MAX, history); }
+        if (ret == OB_SUCCESS && (history.is_deleted_ || history.valid_cnt_ < 1
+            || history.versions_[0] >= deleted_version)) { ret = OB_ERR_UNEXPECTED; }
+      }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_TOMBSTONE namespace=%lu ret=%d\n", namespace_id, ret);
     }
     const int owner_end = owner.is_active() ? native.rollback(owner) : OB_SUCCESS;
     const int participant_end = borrowed.close();

@@ -10,7 +10,13 @@
 
 namespace oceanbase {
 namespace common { class ObISQLClient; }
-namespace share { namespace schema { class ObTableSchema; class ObColumnSchemaV2; class ObSimpleTableSchemaV2; } }
+namespace share { namespace schema {
+class ObTableSchema;
+class ObColumnSchemaV2;
+class ObSimpleTableSchemaV2;
+class ObTableLatestSchemaVersion;
+struct VersionHisVal;
+} }
 namespace storage { class ObAccessService; }
 namespace transaction { class ObTransService; class ObTxDesc; }
 namespace observer {
@@ -68,6 +74,13 @@ public:
   int get_simple_tables(int64_t schema_version, common::ObIAllocator &,
       common::ObIArray<share::schema::ObSimpleTableSchemaV2 *> &,
       const common::ObIArray<uint64_t> *table_ids = nullptr);
+  // Logical history selection is bounded by schema_version, independently of
+  // the transaction's protected SCN. Deleted versions remain visible here.
+  int get_table_version_history(uint64_t table_id, int64_t schema_version,
+      share::schema::VersionHisVal &);
+  int get_table_latest_schema_versions(const common::ObIArray<uint64_t> &table_ids,
+      common::ObIArray<share::schema::ObTableLatestSchemaVersion> &);
+  int get_original_table_version(uint64_t table_id, int64_t &schema_version);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.
