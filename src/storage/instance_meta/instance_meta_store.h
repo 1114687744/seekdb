@@ -20,7 +20,7 @@
 #include <functional>
 #include <memory>
 #include "common/ob_tablet_id.h"
-#include "data_plane/transaction/ob_tx_read_snapshot.h"
+#include "storage/access/native_inner_table.h"
 #include "lib/string/ob_string.h"
 #include "share/instance_meta/instance_meta_collection.h"
 
@@ -37,7 +37,6 @@ using share::instance_meta::MetaCollection;
 
 class InstanceMetaStore final
 {
-  struct ReadSnapshots;
 public:
   static constexpr int64_t MAX_KEY_LENGTH = 512;
   static constexpr int64_t MAX_VALUE_LENGTH = 64 * 1024;
@@ -48,41 +47,20 @@ public:
   public:
     Transaction();
     ~Transaction(); // Rolls back an owned transaction, or detaches a borrowed one.
-    bool is_active() const { return descriptor_ != nullptr; }
+    bool is_active() const { return native_.is_active(); }
     bool is_directory_gc() const { return directory_gc_; }
-    const share::SCN &snapshot_version() const { return snapshot_.core_.version_; }
+    const share::SCN &snapshot_version() const { return native_.snapshot_version(); }
   private:
     friend class InstanceMetaStore;
     InstanceMetaStore *owner_;
-    transaction::ObTxDesc *descriptor_;
-    transaction::ObTxReadSnapshot snapshot_;
-    int64_t deadline_;
-    bool read_only_;
-    bool scanning_;
+    NativeInnerTable::Transaction native_;
     bool directory_guard_;
     bool directory_gc_;
-    bool borrowed_;
-    Transaction *previous_;
-    Transaction *next_;
     DISALLOW_COPY_AND_ASSIGN(Transaction);
   };
 
-  // A retained KV snapshot outlives its selecting transaction without holding
-  // the directory GC gate or a native transaction descriptor. It protects
-  // historical row versions, including deletes replayed from another server.
-  class Snapshot final
-  {
-  public:
-    ~Snapshot();
-    const share::SCN &version() const { return version_; }
-  private:
-    friend class InstanceMetaStore;
-    Snapshot(std::shared_ptr<ReadSnapshots> readers, const share::SCN &version);
-    std::shared_ptr<ReadSnapshots> readers_;
-    share::SCN version_;
-    DISALLOW_COPY_AND_ASSIGN(Snapshot);
-  };
-  using SnapshotHandle = std::shared_ptr<const Snapshot>;
+  using Snapshot = NativeInnerTable::Snapshot;
+  using SnapshotHandle = NativeInnerTable::SnapshotHandle;
   int retain_snapshot(const Transaction &tx, SnapshotHandle &snapshot);
 
   // Bounds apply to the key within one collection. Empty byte strings are
@@ -148,24 +126,18 @@ public:
            const RowVisitor &visitor);
 
 private:
-  enum class Write { INSERT, PUT, ERASE, LOCK };
+  enum class Write { INSERT, PUT };
   struct State;
-  int check(const Transaction &tx, MetaCollection collection, const common::ObString &key,
-            bool write) const;
+  int check(const Transaction &tx, MetaCollection collection, const common::ObString &key) const;
   int read(Transaction &tx, MetaCollection collection, const common::ObString &key,
-           common::ObIAllocator &allocator, common::ObString &value, bool latest);
-  int scan_rows(Transaction &tx, MetaCollection collection, const KeyRange &range,
-                const RowVisitor &visitor, bool latest);
+           common::ObIAllocator &allocator, common::ObString &value, bool lock);
   int write(Transaction &tx, MetaCollection collection, const common::ObString &key,
             const common::ObString &value, Write operation);
   int end(Transaction &tx, bool commit);
-  int begin_impl(Transaction &tx, int64_t deadline, bool read_only,
-                 bool directory_gc, transaction::ObTxDesc *borrowed = nullptr,
-                 const SnapshotAcquirer *acquire = nullptr);
-  void reset_transaction(Transaction &tx);
+  int begin_impl(Transaction &tx, int64_t deadline, bool directory_gc,
+                 const std::function<int()> &begin_native);
   void release_directory_guard(Transaction &tx);
-  ObAccessService &access_;
-  transaction::ObTransService &transactions_;
+  NativeInnerTable table_;
   State *state_;
   DISALLOW_COPY_AND_ASSIGN(InstanceMetaStore);
 };

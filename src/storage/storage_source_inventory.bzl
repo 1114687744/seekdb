@@ -948,6 +948,7 @@ STORAGE_UNITY_GROUPS = [
         name = "ob_storage_tx_storage_0",
         language = "c++",
         srcs = [
+            "src/storage/access/native_inner_table.cpp",
             "src/storage/instance_meta/instance_meta_store.cpp",
             "src/storage/instance_meta/storage_schema_history.cpp",
             "src/storage/tx_storage/ob_access_service.cpp",

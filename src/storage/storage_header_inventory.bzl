@@ -135,6 +135,7 @@ STORAGE_PUBLIC_HEADER_ROOTS = [
 ]
 
 STORAGE_INTERFACE_CLOSURE_HEADERS = [
+    "access/native_inner_table.h",
     "access/ob_advance_scan_helper.h",
     "access/ob_block_row_store.h",
     "access/ob_fuse_row_cache_fetcher.h",
