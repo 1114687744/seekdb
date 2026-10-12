@@ -46,8 +46,12 @@ public:
   static const uint64_t LS_TX_CTX_TABLET_ID    = MIN_LS_INNER_TABLET_ID + 1;
   static const uint64_t LS_TX_DATA_TABLET_ID   = MIN_LS_INNER_TABLET_ID + 2;
   static const uint64_t LS_LOCK_TABLET_ID      = MIN_LS_INNER_TABLET_ID + 3;
-  static const uint64_t LS_INSTANCE_META_TABLET_ID = MIN_LS_INNER_TABLET_ID + 4;
+  static const uint64_t LS_NAMESPACE_TABLET_ID = MIN_LS_INNER_TABLET_ID + 4;
   static const uint64_t LS_STORAGE_SCHEMA_TABLET_ID = MIN_LS_INNER_TABLET_ID + 5;
+  static const uint64_t LS_NAMESPACE_NAME_TABLET_ID = MIN_LS_INNER_TABLET_ID + 6;
+  static const uint64_t LS_CATALOG_PAGE_TABLET_ID = MIN_LS_INNER_TABLET_ID + 7;
+  static const uint64_t LS_INSTANCE_COUNTER_TABLET_ID = MIN_LS_INNER_TABLET_ID + 8;
+  static const uint64_t LS_SNAPSHOT_COORDINATION_TABLET_ID = MIN_LS_INNER_TABLET_ID + 9;
   static const uint64_t MAX_LS_INNER_TABLET_ID = OB_MAX_LS_INNER_TABLE_ID;
 
 public:
@@ -73,7 +77,8 @@ public:
   bool is_ls_tx_data_tablet() const { return (LS_TX_DATA_TABLET_ID == id_); }
   bool is_ls_tx_ctx_tablet() const { return (LS_TX_CTX_TABLET_ID == id_); }
   bool is_ls_lock_tablet() const { return (LS_LOCK_TABLET_ID == id_); }
-  bool is_ls_instance_meta_tablet() const { return LS_INSTANCE_META_TABLET_ID == id_; }
+  bool is_ls_instance_meta_tablet() const { return LS_NAMESPACE_TABLET_ID == id_
+      || (id_ >= LS_NAMESPACE_NAME_TABLET_ID && id_ <= LS_SNAPSHOT_COORDINATION_TABLET_ID); }
   bool is_ls_storage_schema_tablet() const { return LS_STORAGE_SCHEMA_TABLET_ID == id_; }
   // These tablets store engine records in specialized memtables. Other
   // LS-owned tablets use ordinary transactional rows and retain MVCC history.

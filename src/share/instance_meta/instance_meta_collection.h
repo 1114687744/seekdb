@@ -15,14 +15,10 @@ namespace share
 namespace instance_meta
 {
 
-// Persistent collection identities. These are not SQL schema object IDs.
+// Remaining physical-layout KV collections; instance directory records use
+// the independent tables declared in instance_meta_schema.h.
 enum class MetaCollection : uint64_t
 {
-  NAMESPACES = 1,
-  NAMESPACE_NAMES = 2,
-  PAGES = 5,
-  COUNTERS = 6,
-  SNAPSHOT_COORDINATION = 7,
   STORAGE_LAYOUTS = 8,
   TABLE_STORAGE_LAYOUTS = 9,
 };

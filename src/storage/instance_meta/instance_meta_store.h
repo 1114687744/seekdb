@@ -23,6 +23,7 @@
 #include "storage/access/native_inner_table.h"
 #include "lib/string/ob_string.h"
 #include "share/instance_meta/instance_meta_collection.h"
+#include "share/instance_meta/instance_meta_schema.h"
 
 namespace oceanbase
 {
@@ -34,6 +35,7 @@ namespace storage
 class ObAccessService;
 
 using share::instance_meta::MetaCollection;
+using share::instance_meta::InstanceTable;
 
 class InstanceMetaStore final
 {
@@ -82,8 +84,9 @@ public:
 
   InstanceMetaStore(ObAccessService &access, transaction::ObTransService &transactions);
   ~InstanceMetaStore();
-  int init(const common::ObTabletID &tablet_id);
-  static int build_schema(const common::ObTabletID &tablet_id,
+  int init_directory();
+  int init_layouts();
+  static int build_schema(InstanceTable table,
                           share::schema::ObTableSchema &schema);
 
   int begin(Transaction &tx, int64_t deadline, bool read_only = false);
@@ -125,7 +128,20 @@ public:
   int scan(Transaction &tx, MetaCollection collection, const KeyRange &range,
            const RowVisitor &visitor);
 
+  enum class Read { SNAPSHOT, CURRENT, FOR_UPDATE };
+  using NativeRowVisitor = NativeInnerTable::RowVisitor;
+  int get(Transaction &, InstanceTable, const common::ObObj &key,
+          common::ObIAllocator &, common::ObNewRow &, Read mode = Read::SNAPSHOT);
+  int insert(Transaction &, InstanceTable, const common::ObNewRow &);
+  int put(Transaction &, InstanceTable, const common::ObNewRow &);
+  int erase(Transaction &, InstanceTable, const common::ObObj &key, bool &existed);
+  // The five directory tables have a single typed primary-key column.
+  int scan(Transaction &, InstanceTable, const NativeRowVisitor &,
+           const common::ObObj *exclusive_lower = nullptr);
+
 private:
+  int init(InstanceTable first, InstanceTable last);
+  int check(const Transaction &, InstanceTable) const;
   enum class Write { INSERT, PUT };
   struct State;
   int check(const Transaction &tx, MetaCollection collection, const common::ObString &key) const;
@@ -138,6 +154,7 @@ private:
                  const std::function<int()> &begin_native);
   void release_directory_guard(Transaction &tx);
   NativeInnerTable table_;
+  NativeInnerTable::Table bound_tables_[static_cast<int>(InstanceTable::COUNT)];
   State *state_;
   DISALLOW_COPY_AND_ASSIGN(InstanceMetaStore);
 };

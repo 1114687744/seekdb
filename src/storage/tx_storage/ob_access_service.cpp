@@ -171,12 +171,12 @@ int ObAccessService::init(
         new (std::nothrow) InstanceMetaStore(*this, *transactions)))) {
     } else if (!instance_meta_store_) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
-    } else if (OB_FAIL(instance_meta_store_->init(ObTabletID(ObTabletID::LS_INSTANCE_META_TABLET_ID)))) {
+    } else if (OB_FAIL(instance_meta_store_->init_directory())) {
     } else if (FALSE_IT(storage_schema_store_.reset(
         new (std::nothrow) InstanceMetaStore(*this, *transactions)))) {
     } else if (!storage_schema_store_) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
-    } else if (OB_FAIL(storage_schema_store_->init(ObTabletID(ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID)))) {
+    } else if (OB_FAIL(storage_schema_store_->init_layouts())) {
     } else {
       ls_svr_ = ls_service;
       is_inited_ = true;

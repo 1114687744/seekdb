@@ -58,8 +58,13 @@ public:
   using SnapshotAcquirer = std::function<int(int64_t &)>;
   using NamespacePhysicalProbe = std::function<int(uint64_t, bool &)>;
 
-  InstanceNamespaceMetadata(storage::InstanceMetaStore &store, Transaction &transaction)
-      : store_(store), transaction_(transaction) {}
+  // Historical roots need the pinned MVCC view, including logically deleted
+  // pages. A writer holding the Namespace root lock follows current immutable
+  // pages; its transaction excludes page GC until commit/detach.
+  enum class PageRead { SNAPSHOT, LOCKED_ROOT };
+  InstanceNamespaceMetadata(storage::InstanceMetaStore &store, Transaction &transaction,
+                            PageRead pages = PageRead::SNAPSHOT)
+      : store_(store), transaction_(transaction), page_read_(pages) {}
 
   int get_namespace(uint64_t id, InstanceNamespaceRecord &record, bool lock = false);
   int find_namespace(const std::string &name, uint64_t &id);
@@ -136,6 +141,7 @@ private:
                               const std::vector<uint64_t> &garbage);
   storage::InstanceMetaStore &store_;
   Transaction &transaction_;
+  PageRead page_read_;
 };
 
 class InstanceCatalogPageStore final : public ns::ICatalogPageStore

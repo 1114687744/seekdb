@@ -228,7 +228,7 @@ int NamespaceSchemaPublication::initialize(share::schema::ObSchemaGetterGuard &g
     common::ObMySQLProxy &proxy)
 {
   using namespace common;
-  InstanceNamespaceMetadata metadata(store_, transaction_);
+  InstanceNamespaceMetadata metadata(store_, transaction_, InstanceNamespaceMetadata::PageRead::LOCKED_ROOT);
   InstanceNamespaceRecord record;
   common::ObArray<const share::schema::ObTableSchema *> tables;
   ObMySQLTransaction sql;
@@ -271,7 +271,7 @@ int NamespaceSchemaPublication::stage(common::ObMySQLTransaction &sql,
 {
   using namespace common;
   using namespace share::schema;
-  InstanceNamespaceMetadata metadata(store_, transaction_);
+  InstanceNamespaceMetadata metadata(store_, transaction_, InstanceNamespaceMetadata::PageRead::LOCKED_ROOT);
   InstanceNamespaceRecord record;
   auto *access = share::server_service<ObAccessService>();
   if (access == nullptr) { return OB_NOT_INIT; }

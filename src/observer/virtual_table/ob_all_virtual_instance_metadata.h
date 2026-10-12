@@ -45,7 +45,8 @@ private:
   storage::InstanceMetaStore::Transaction tx_;
   bool started_;
   bool has_lower_;
-  uint64_t collection_id_;
+  int64_t table_index_;
+  common::ObObj last_key_cell_;
   std::string last_key_;
   std::string key_json_;
   std::string key_hex_;

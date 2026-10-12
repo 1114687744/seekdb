@@ -55,61 +55,68 @@ InstanceMetaStore::InstanceMetaStore(ObAccessService &access, ObTransService &tr
 {}
 InstanceMetaStore::~InstanceMetaStore() { delete state_; }
 
-int InstanceMetaStore::build_schema(const ObTabletID &tablet_id, ObTableSchema &schema)
+int InstanceMetaStore::build_schema(InstanceTable table, ObTableSchema &schema)
 {
+  using namespace share::instance_meta;
+  const auto *definition = instance_table_definition(table);
+  if (definition == nullptr) { return OB_INVALID_ARGUMENT; }
   int ret = OB_SUCCESS;
   schema.reset();
-  schema.set_table_id(tablet_id.id());
-  schema.set_tablet_id(tablet_id);
+  schema.set_table_id(definition->tablet_id);
+  schema.set_tablet_id(ObTabletID(definition->tablet_id));
   schema.set_database_id(OB_SYS_DATABASE_ID);
   schema.set_schema_version(SCHEMA_VERSION);
   schema.set_table_type(SYSTEM_TABLE);
-  schema.set_rowkey_column_num(2);
-  schema.set_max_used_column_id(OB_APP_MIN_COLUMN_ID + 2);
+  schema.set_rowkey_column_num(definition->key_columns);
+  schema.set_max_used_column_id(OB_APP_MIN_COLUMN_ID + definition->field_count - 1);
   schema.set_micro_index_clustered(false);
   schema.set_row_store_type(FLAT_ROW_STORE);
-  if (!tablet_id.is_valid()) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(schema.set_table_name("instance_metadata"))) {
-  } else {
-    const char *names[] = {"collection_id", "key", "value"};
-    for (int64_t i = 0; OB_SUCC(ret) && i < 3; ++i) {
-      ObColumnSchemaV2 column;
-      column.set_table_id(tablet_id.id());
-      column.set_column_id(OB_APP_MIN_COLUMN_ID + i);
-      column.set_schema_version(SCHEMA_VERSION);
-      column.set_nullable(false);
-      column.set_rowkey_position(i < 2 ? i + 1 : 0);
-      column.set_order_in_rowkey(ASC);
-      ObObjMeta type;
-      if (i == 0) { type.set_uint64(); }
-      else { type.set_varbinary(); }
-      column.set_meta_type(type);
-      column.set_data_length(i == 0 ? int64_t(sizeof(uint64_t))
-                                   : (i == 1 ? MAX_KEY_LENGTH : MAX_VALUE_LENGTH));
-      if (OB_FAIL(column.set_column_name(names[i]))) {
-      } else if (OB_FAIL(schema.add_column(column))) {
-      }
+  ret = schema.set_table_name(definition->name);
+  for (int64_t i = 0; OB_SUCC(ret) && i < definition->field_count; ++i) {
+    const auto &field = definition->fields[i];
+    ObColumnSchemaV2 column;
+    column.set_table_id(schema.get_table_id());
+    column.set_column_id(OB_APP_MIN_COLUMN_ID + i);
+    column.set_schema_version(SCHEMA_VERSION);
+    column.set_nullable(false);
+    column.set_rowkey_position(i < definition->key_columns ? i + 1 : 0);
+    column.set_order_in_rowkey(ASC);
+    ObObjMeta type;
+    switch (field.type) {
+      case FieldType::UINT64: type.set_uint64(); break;
+      case FieldType::INT64: type.set_int(); break;
+      // Bytewise names preserve the directory's existing exact name identity.
+      case FieldType::TEXT: type.set_varbinary(); break;
+      case FieldType::BYTES: type.set_varbinary(); break;
+    }
+    column.set_meta_type(type);
+    column.set_data_length(field.length > 0 ? field.length : int64_t(sizeof(uint64_t)));
+    if (OB_FAIL(column.set_column_name(field.name))) {
+    } else if (OB_FAIL(schema.add_column(column))) {
     }
   }
   return ret;
 }
 
-int InstanceMetaStore::init(const ObTabletID &tablet_id)
+int InstanceMetaStore::init_directory()
+{ return init(InstanceTable::NAMESPACES, InstanceTable::SNAPSHOT_COORDINATION); }
+int InstanceMetaStore::init_layouts()
+{ return init(InstanceTable::STORAGE_LAYOUT_KV, InstanceTable::STORAGE_LAYOUT_KV); }
+
+int InstanceMetaStore::init(InstanceTable first, InstanceTable last)
 {
+  if (state_ != nullptr) { return OB_INIT_TWICE; }
   int ret = OB_SUCCESS;
-  ObArenaAllocator allocator(ObMemAttr("InstanceMeta"));
-  ObTableSchema schema(&allocator);
-  State *state = nullptr;
-  if (state_ != nullptr) { ret = OB_INIT_TWICE; }
-  else if (nullptr == (state = new (std::nothrow) State())) { ret = OB_ALLOCATE_MEMORY_FAILED; }
-  else if (OB_FAIL(build_schema(tablet_id, schema))) {
-  } else if (OB_FAIL(table_.init(tablet_id, schema))) {
-  } else {
-    state_ = state;
-    state = nullptr;
+  State *state = new (std::nothrow) State();
+  if (state == nullptr) { return OB_ALLOCATE_MEMORY_FAILED; }
+  for (int i = static_cast<int>(first); OB_SUCC(ret) && i <= static_cast<int>(last); ++i) {
+    ObArenaAllocator allocator(ObMemAttr("InstanceMeta"));
+    ObTableSchema schema(&allocator);
+    if (OB_FAIL(build_schema(static_cast<InstanceTable>(i), schema))) {
+    } else if (OB_FAIL(table_.bind(bound_tables_[i], schema.get_tablet_id(), schema))) {
+    }
   }
-  delete state;
+  if (OB_SUCC(ret)) { state_ = state; } else { delete state; }
   return ret;
 }
 
@@ -233,6 +240,57 @@ int InstanceMetaStore::retain_snapshot(const Transaction &tx, SnapshotHandle &sn
 int InstanceMetaStore::min_retained_snapshot(share::SCN &snapshot)
 { return table_.min_retained_snapshot(snapshot); }
 
+int InstanceMetaStore::check(const Transaction &tx, InstanceTable table) const
+{
+  if (state_ == nullptr) { return OB_NOT_INIT; }
+  return tx.owner_ == this && tx.is_active()
+      && share::instance_meta::instance_table_definition(table) != nullptr
+      ? OB_SUCCESS : OB_INVALID_ARGUMENT;
+}
+
+int InstanceMetaStore::get(Transaction &tx, InstanceTable target, const ObObj &key,
+    ObIAllocator &allocator, ObNewRow &row, Read mode)
+{
+  const int ret = check(tx, target);
+  if (ret != OB_SUCCESS) { return ret; }
+  const auto &bound = bound_tables_[static_cast<int>(target)];
+  ObObj key_cell = key;
+  ObRowkey rowkey(&key_cell, 1);
+  return mode == Read::FOR_UPDATE ? table_.get_for_update(tx.native_, bound, rowkey, allocator, row)
+      : mode == Read::CURRENT ? table_.get_current(tx.native_, bound, rowkey, allocator, row)
+      : table_.get(tx.native_, bound, rowkey, allocator, row);
+}
+int InstanceMetaStore::insert(Transaction &tx, InstanceTable target, const ObNewRow &row)
+{
+  const int ret = check(tx, target);
+  return ret == OB_SUCCESS ? table_.insert(tx.native_, bound_tables_[static_cast<int>(target)], row) : ret;
+}
+int InstanceMetaStore::put(Transaction &tx, InstanceTable target, const ObNewRow &row)
+{
+  const int ret = check(tx, target);
+  return ret == OB_SUCCESS ? table_.put(tx.native_, bound_tables_[static_cast<int>(target)], row) : ret;
+}
+int InstanceMetaStore::erase(Transaction &tx, InstanceTable target, const ObObj &key, bool &existed)
+{
+  const int ret = check(tx, target);
+  ObObj key_cell = key;
+  return ret == OB_SUCCESS ? table_.erase(tx.native_, bound_tables_[static_cast<int>(target)],
+                                         ObRowkey(&key_cell, 1), existed) : ret;
+}
+int InstanceMetaStore::scan(Transaction &tx, InstanceTable target, const NativeRowVisitor &visitor,
+    const ObObj *exclusive_lower)
+{
+  const int ret = check(tx, target);
+  if (ret != OB_SUCCESS) { return ret; }
+  ObObj lower, upper;
+  lower.set_min_value(); upper.set_max_value();
+  if (exclusive_lower != nullptr) { lower = *exclusive_lower; }
+  ObNewRange range;
+  range.start_key_.assign(&lower, 1);
+  range.end_key_.assign(&upper, 1);
+  return table_.scan(tx.native_, bound_tables_[static_cast<int>(target)], range, visitor);
+}
+
 int InstanceMetaStore::check(const Transaction &tx, MetaCollection collection,
     const ObString &key) const
 {
@@ -261,7 +319,7 @@ int InstanceMetaStore::scan(Transaction &tx, MetaCollection collection,
     keys.end_key_.assign(upper, 2);
     if (range.include_lower) { keys.border_flag_.set_inclusive_start(); }
     if (range.include_upper) { keys.border_flag_.set_inclusive_end(); }
-    ret = table_.scan(tx.native_, keys, [&](const ObNewRow &row, bool &stop) {
+    ret = table_.scan(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], keys, [&](const ObNewRow &row, bool &stop) {
       if (row.count_ != 3 || row.cells_[0].is_null() || row.cells_[1].is_null()
           || row.cells_[2].is_null() || row.cells_[0].get_uint64() != static_cast<uint64_t>(collection)) {
         return OB_ERR_UNEXPECTED;
@@ -283,8 +341,8 @@ int InstanceMetaStore::read(Transaction &tx, MetaCollection collection, const Ob
     cells[1].set_varbinary(key);
     ObRowkey rowkey(cells, 2);
     ObNewRow row;
-    ret = lock ? table_.get_for_update(tx.native_, rowkey, allocator, row)
-               : table_.get(tx.native_, rowkey, allocator, row);
+    ret = lock ? table_.get_for_update(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], rowkey, allocator, row)
+               : table_.get(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], rowkey, allocator, row);
     if (OB_SUCC(ret)) { value = row.cells_[2].get_string(); }
   }
   return ret;
@@ -310,7 +368,7 @@ int InstanceMetaStore::write(Transaction &tx, MetaCollection collection, const O
     cells[2].set_varbinary(value);
     ObNewRow row;
     row.assign(cells, 3);
-    ret = operation == Write::INSERT ? table_.insert(tx.native_, row) : table_.put(tx.native_, row);
+    ret = operation == Write::INSERT ? table_.insert(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], row) : table_.put(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], row);
   }
   return ret;
 }
@@ -328,7 +386,7 @@ int InstanceMetaStore::erase(Transaction &tx, MetaCollection collection, const O
     ObObj cells[2];
     cells[0].set_uint64(static_cast<uint64_t>(collection));
     cells[1].set_varbinary(key);
-    ret = table_.erase(tx.native_, ObRowkey(cells, 2), existed);
+    ret = table_.erase(tx.native_, bound_tables_[static_cast<int>(InstanceTable::STORAGE_LAYOUT_KV)], ObRowkey(cells, 2), existed);
   }
   return ret;
 }

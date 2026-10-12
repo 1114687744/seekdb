@@ -48,8 +48,12 @@ const uint64_t ObLS::INNER_TABLET_ID_LIST[TOTAL_INNER_TABLET_NUM] = {
     common::ObTabletID::LS_TX_CTX_TABLET_ID,
     common::ObTabletID::LS_TX_DATA_TABLET_ID,
     common::ObTabletID::LS_LOCK_TABLET_ID,
-    common::ObTabletID::LS_INSTANCE_META_TABLET_ID,
+    common::ObTabletID::LS_NAMESPACE_TABLET_ID,
     common::ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID,
+    common::ObTabletID::LS_NAMESPACE_NAME_TABLET_ID,
+    common::ObTabletID::LS_CATALOG_PAGE_TABLET_ID,
+    common::ObTabletID::LS_INSTANCE_COUNTER_TABLET_ID,
+    common::ObTabletID::LS_SNAPSHOT_COORDINATION_TABLET_ID,
 };
 
 ObLS::ObLS()
@@ -129,15 +133,15 @@ int ObLS::create_ls_inner_tablet(const SCN &create_scn)
   if (OB_FAIL(tx_table_.create_tablet(create_scn))) {
   } else if (OB_FAIL(lock_table_.create_tablet(create_scn))) {
   } else {
-    const uint64_t metadata_tablets[] = {common::ObTabletID::LS_INSTANCE_META_TABLET_ID,
-                                       common::ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID};
-    for (uint64_t id : metadata_tablets) {
+    for (int i = 0; i < static_cast<int>(InstanceTable::COUNT); ++i) {
+      const auto table = static_cast<InstanceTable>(i);
+      const auto &definition = *share::instance_meta::instance_table_definition(table);
       if (OB_FAIL(ret)) { break; }
       common::ObArenaAllocator allocator(common::ObMemAttr("InstanceMeta"));
       share::schema::ObTableSchema schema;
       ObCreateTabletSchema physical_schema;
-      const common::ObTabletID tablet(id);
-      if (OB_FAIL(InstanceMetaStore::build_schema(tablet, schema))) {
+      const common::ObTabletID tablet(definition.tablet_id);
+      if (OB_FAIL(InstanceMetaStore::build_schema(table, schema))) {
       } else if (OB_FAIL(physical_schema.init(allocator, schema, false))) {
       } else if (OB_FAIL(create_ls_inner_tablet(tablet, LS_INNER_TABLET_FROZEN_SCN,
                                                physical_schema, create_scn))) {
@@ -158,10 +162,11 @@ int ObLS::remove_ls_inner_tablet()
   int ret = OB_SUCCESS;
   if (OB_FAIL(tx_table_.remove_tablet())) {
   } else if (OB_FAIL(lock_table_.remove_tablet())) {
-  } else if (OB_FAIL(remove_ls_inner_tablet(
-      common::ObTabletID(common::ObTabletID::LS_INSTANCE_META_TABLET_ID)))) {
-  } else if (OB_FAIL(remove_ls_inner_tablet(
-      common::ObTabletID(common::ObTabletID::LS_STORAGE_SCHEMA_TABLET_ID)))) {
+  } else {
+    for (int i = 0; OB_SUCC(ret) && i < static_cast<int>(InstanceTable::COUNT); ++i) {
+      const auto *definition = share::instance_meta::instance_table_definition(static_cast<InstanceTable>(i));
+      ret = remove_ls_inner_tablet(common::ObTabletID(definition->tablet_id));
+    }
   }
   return ret;
 }

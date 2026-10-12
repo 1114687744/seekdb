@@ -32,10 +32,11 @@ namespace storage
 {
 class ObAccessService;
 
-// Native access to one explicitly bound, fixed-layout inner tablet. The caller
+// Native access to explicitly bound, fixed-layout inner tablets. The caller
 // admits the physical target and keeps it alive; this module does not resolve
 // Namespace inheritance or create tablets. No SQL runtime is required.
-// One instance owns the tablet's reader registry and outlives its transactions.
+// One instance owns a shared reader registry for all its bound tablets and
+// outlives its tables and transactions.
 // The tablet's compaction retention must include min_retained_snapshot(); the
 // existing instance-metadata adapter provides that integration for its tablets.
 //
@@ -43,11 +44,25 @@ class ObAccessService;
 // remaining columns in schema order. Every write supplies a complete row.
 // The first implementation supports integer and binary string columns, NULL
 // for nullable non-key columns, and ascending primary keys. Unsupported table
-// features are rejected at init; no SQL expressions/defaults are evaluated.
+// features are rejected at bind; no SQL expressions/defaults are evaluated.
 class NativeInnerTable final
 {
   struct ReadSnapshots;
 public:
+  // A bound physical table; its definition and plans are prepared once.
+  class Table final
+  {
+  public:
+    Table();
+    ~Table();
+  private:
+    friend class NativeInnerTable;
+    struct State;
+    State *state_;
+    const NativeInnerTable *owner_;
+    DISALLOW_COPY_AND_ASSIGN(Table);
+  };
+
   class Transaction final
   {
   public:
@@ -90,7 +105,7 @@ public:
 
   NativeInnerTable(ObAccessService &, transaction::ObTransService &);
   ~NativeInnerTable();
-  int init(const common::ObTabletID &, const share::schema::ObTableSchema &);
+  int bind(Table &, const common::ObTabletID &, const share::schema::ObTableSchema &);
 
   int begin(Transaction &, int64_t deadline, bool read_only = false);
   // acquire selects a new timestamp or one already protected by its owner.
@@ -109,30 +124,33 @@ public:
   int retain_snapshot(const Transaction &, SnapshotHandle &);
   int min_retained_snapshot(share::SCN &);
 
-  int get(Transaction &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
-  int get_for_update(Transaction &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
+  int get(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
+  // Current committed rows plus own writes. Caller must establish why a
+  // moving read is valid (e.g. immutable objects protected against GC).
+  int get_current(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
+  int get_for_update(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
   // Both endpoints have one cell per key column; MIN/MAX cells express open
-  // prefix bounds. The range's table_id is ignored: init binds the target.
-  int scan(Transaction &, const common::ObNewRange &, const RowVisitor &, bool reverse = false);
-  int insert(Transaction &, const common::ObNewRow &);
-  int put(Transaction &, const common::ObNewRow &);
-  int erase(Transaction &, const common::ObRowkey &, bool &existed);
+  // prefix bounds. The range's table_id is ignored: bind selects the target.
+  int scan(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool reverse = false);
+  int insert(Transaction &, const Table &, const common::ObNewRow &);
+  int put(Transaction &, const Table &, const common::ObNewRow &);
+  int erase(Transaction &, const Table &, const common::ObRowkey &, bool &existed);
 
 private:
   enum class Write { INSERT, PUT, ERASE, LOCK };
-  struct State;
   int check(const Transaction &, bool write) const;
-  int check_cells(const common::ObObj *, int64_t count, bool key, bool bounds) const;
-  int read(Transaction &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &, bool latest);
-  int scan_rows(Transaction &, const common::ObNewRange &, const RowVisitor &, bool latest, bool reverse);
-  int write(Transaction &, const common::ObNewRow &, Write);
+  int check_table(const Table &) const;
+  int check_cells(const Table &, const common::ObObj *, int64_t count, bool key, bool bounds) const;
+  int read(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &, bool latest);
+  int scan_rows(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool latest, bool reverse);
+  int write(Transaction &, const Table &, const common::ObNewRow &, Write);
   int begin_impl(Transaction &, int64_t deadline, bool read_only,
                  transaction::ObTxDesc *borrowed = nullptr, const SnapshotAcquirer *acquire = nullptr);
   int end(Transaction &, bool commit);
   void reset_transaction(Transaction &);
   ObAccessService &access_;
   transaction::ObTransService &transactions_;
-  State *state_;
+  std::shared_ptr<ReadSnapshots> readers_;
   DISALLOW_COPY_AND_ASSIGN(NativeInnerTable);
 };
 } // namespace storage

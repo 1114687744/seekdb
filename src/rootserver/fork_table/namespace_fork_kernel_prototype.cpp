@@ -1505,7 +1505,8 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
   };
   InstanceMetaStore::Transaction directory_tx;
   ObMySQLTransaction trans;
-  rootserver::InstanceNamespaceMetadata metadata(*directory_kv_store(), directory_tx);
+  rootserver::InstanceNamespaceMetadata metadata(*directory_kv_store(), directory_tx,
+      rootserver::InstanceNamespaceMetadata::PageRead::LOCKED_ROOT);
   bool already = false;
   const int64_t deadline = directory_deadline();
   // CREATE MDS and source roots share the connection's native

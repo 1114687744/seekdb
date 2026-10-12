@@ -64,7 +64,7 @@ SHARE_PUBLIC_HEADER_ROOTS = [
     "geo/ob_wkb_byte_order_visitor.h",
     "geo/ob_wkb_to_json_bin_visitor.h",
     "instance_meta/instance_meta_collection.h",
-    "instance_meta/instance_meta_key_codec.h",
+    "instance_meta/instance_meta_schema.h",
     "instance_meta/instance_meta_value_codec.h",
     "inner_table/ob_dump_inner_table_schema.h",
     "inner_table/ob_load_inner_table_schema.h",
