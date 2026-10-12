@@ -52,7 +52,7 @@ native-source packages require this service and its complete SQL object set, not
 a placeholder base script. Ordinary SQL-source packages retain static files and
 optional declarations. Updates use explicit migration scripts. This is not yet a
 runtime-session catalog service; query callback DDL still needs transaction
-integration. See the [full contract](../../docs/developer-guide/zh/plugin-catalog-install.md).
+integration. See the full contract (`plugin-catalog-install.md`, external documentation).
 
 ## Cooperative query status
 
@@ -68,7 +68,7 @@ estimates are optional for control-only services. Older table services retain th
 v1 context. On callback failure, the SQL host closes the cursor, releases its
 leases, and keeps the original error until rescan/close. The real Rust text scalar
 and word scanner poll within long computations. See
-[the contract](../../docs/developer-guide/zh/plugin-query-control.md).
+the contract (`plugin-query-control.md`, external documentation).
 
 ## Caller-session SQL in table callbacks
 
@@ -77,7 +77,7 @@ open/next. The Rust SDK offers borrowed `QueryContext`/`Rows::execute_sql` and
 explicit `WITH_SQL` services. SQL-dependent calls reject old contexts; minor 2
 services keep their poll-only context. No query pointer is stored in a cursor,
 and SQL rescan closes/reopens. The SQL series plugin exercises both phases.
-See [the contract and test scope](../../docs/developer-guide/zh/plugin-table-sql.md).
+See the contract and test scope (`plugin-table-sql.md`, external documentation).
 
 ## Transaction-built routine catalog
 
@@ -89,7 +89,7 @@ installation coordinator retains commit/rollback orchestration. The SDK provides
 The control-only `rust_text_built` package exercises the real Rust DSO creating
 two dependent routines. Public query SQL still cannot execute DDL; this is not
 arbitrary catalog access or a second transaction manager. See
-[the builder contract](../../docs/developer-guide/zh/plugin-catalog-builder.md).
+the builder contract (`plugin-catalog-builder.md`, external documentation).
 
 The optional build-context v2 suffix adds routine lookup with size negotiation.
 The Rust SDK exposes capability detection and `Option<RoutineId>`; the C++ host
@@ -111,7 +111,7 @@ carry intermediate prerequisites. Ordinary SQL object dependencies still apply.
 Selected steps must share native module and namespace context; this is not
 module hot replacement or relocation. CLI schema inspection validates all
 secondary controls, including unselected versions. See
-[package semantics](../../docs/developer-guide/zh/plugin-extension-package.md).
+package semantics (`plugin-extension-package.md`, external documentation).
 
 ## Plugin-controlled table-function planning estimates
 
@@ -146,7 +146,7 @@ the host artifact. The `server_dev_contract` Cargo example generates a new C
 header from the chosen final host executable without overwriting existing files.
 This is linked identity, not a signature/checksum or complete Server-dev profile:
 private headers/exports, deep planner objects and the Rust adapter are still to
-be connected. See the [contract and limits](../../docs/developer-guide/zh/plugin-server-dev-contract.md).
+be connected. See the contract and limits (`plugin-server-dev-contract.md`, external documentation).
 
 The host now dispatches through `hook_v2.rs`, which distinguishes automatic
 before/after observation, explicit around continuations, and replacement that
@@ -161,7 +161,7 @@ continuation ran. Actual replacement needs a separate permitted hook point,
 version-bound plan access and a real plan result/ownership validator. Observer
 AFTER reports the nested result, not final validation or database commit; trusted
 native observers must not mutate operation state. See the
-[mode contract](../../docs/developer-guide/zh/plugin-hook-modes.md).
+mode contract (`plugin-hook-modes.md`, external documentation).
 
 The mode-aware engine composes synchronous `optimizer.plan.v1` callbacks around
 `ObOptimizer::optimize`. Rust owns the per-invocation continuation protocol:
@@ -223,7 +223,7 @@ before schema changes; edges, members and version commit together. No-op updates
 still require the same set (order is irrelevant). Automatic
 installation, version constraints and CASCADE remain
 unfinished. Controlled catalog transport tests are not live isolation/rollback
-evidence; see the [installation guide](../../docs/developer-guide/zh/plugin-extension-install.md).
+evidence; see the installation guide (`plugin-extension-install.md`, external documentation).
 
 ## Native module mapping
 
@@ -605,7 +605,7 @@ and invalid frees. Empty accounts allocate no tracking table and add no workers.
 Deinit closes allocation admission; remaining blocks are retained until matching
 free or exclusive terminal account destruction. This is not a query arena,
 plugin-global allocator, GPU/tenant budget, RSS measurement or a native sandbox.
-See `docs/developer-guide/zh/plugin-host-memory.md` for ownership and limitations.
+See `plugin-host-memory.md` (external documentation) for ownership and limitations.
 
 Production startup accepts `--plugin-memory-limit=64MiB` and
 `--plugin-allocation-limit=4096`. `memory_limit.rs` owns strict allocation-free
@@ -697,7 +697,7 @@ PyMySQL and `automatic_sp_privileges=1`; it never installs plugins or changes
 global settings. Run with `--port 2881 --confirm-disposable-server`; supply the
 administrator password through `SEEKDB_TEST_PASSWORD`. Failed runs retain their
 randomly named database/users for diagnosis; successful runs remove only those
-fixtures. See `docs/developer-guide/zh/plugin-query-catalog.md` for the matrix.
+fixtures. See `plugin-query-catalog.md` (external documentation) for the matrix.
 
 The separate `plugin_query_catalog_runner` CTest only runs dependency-free
 helper/control-flow tests. It is NOT evidence of real catalog correctness.

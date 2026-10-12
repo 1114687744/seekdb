@@ -37,4 +37,4 @@ exports = ["seekdb_server_dev_numbering_probe"]
 
 当前还没有独立安装的 Server-dev SDK、Rust 深层 adapter、Bazel profile
 或其他平台支持。GIS 保持原来的 C++ 实现，无需为使用 Rust runtime 而重写。
-完整目标和边界见 [Server-dev 契约](../../docs/developer-guide/zh/plugin-server-dev-contract.md)。
+完整目标和边界见 Server-dev 契约 (`plugin-server-dev-contract.md`, external documentation)。

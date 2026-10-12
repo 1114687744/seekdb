@@ -25,4 +25,4 @@ Normal owner/database/CREATE ROUTINE checks apply. Returned build IDs are only
 reservations until installation commits. This example supplies only version 1.0;
 it does not advertise an update path. The kernel fixture runs the real Rust DSO,
 parser, PL resolver and identity reservations with controlled schemas, not a live
-database transaction. See the [builder contract](../../../docs/developer-guide/zh/plugin-catalog-builder.md).
+database transaction. See the builder contract (`plugin-catalog-builder.md`, external documentation).

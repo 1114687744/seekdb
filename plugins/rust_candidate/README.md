@@ -17,7 +17,7 @@ schema，而由 has_schema 明确区分并保留原字节路径。
 从 v4 开始另外通过 `Hook::INSPECT` 读取规划图：候选根、子节点、已有谓词和
 排序表达式及其参数拥有调用期 ID。构造和下游 hook 返回后检查新增
 路径仍引用原输入。这些只读字段不是最终输出 schema，也不触发内核
-表达式分配。详见[规划图与表达式身份](../../docs/developer-guide/zh/plugin-candidate-graph.md)。
+表达式分配。详见规划图与表达式身份 (`plugin-candidate-graph.md`, external documentation)。
 
 ## 后续扩展：SJD1 多输入参数化调度
 
@@ -35,7 +35,7 @@ codegen 产生 SJD1 三子输入 spec，五个参数、结果、取消清理及�
 重扫通过。SQL 用 LEADING/USE_NL 指定原生形状，不证明任意 JOIN
 枚举子问题已开放。仍不能用“支持重扫”推断任意易变/外部输入可以
 重复执行。
-详见 [多输入参数化](../../docs/developer-guide/zh/plugin-multi-parameter.md)。
+详见 多输入参数化 (`plugin-multi-parameter.md`, external documentation)。
 
 ## v18：计划边界值与延后计算
 
@@ -53,7 +53,7 @@ kernel 在标量/batch=3 下完成 24 次实际 SORT 替代检查，保留既有
 物理、Top-N 与 JOIN 矩阵。生产 v18 DSO 重建／审计、独立重建后的
 30/30 CTest（115.12 秒）、生产契约下 28 项插件单测及 124 项 runtime
 单测重新通过。详见
-[计划边界值](../../docs/developer-guide/zh/plugin-plan-values.md)。
+计划边界值 (`plugin-plan-values.md`, external documentation)。
 
 ## v17：Rust 排序算法替代
 
@@ -74,7 +74,7 @@ upper-policy 通过 v7 SORT 语义读取实际键和方向，贡献 SSO1 片段�
 首次真实替代断言暴露并修复了 core 整数列的规划类型识别；CASE 各分支
 的确定性检查也已补齐。独立重建后 30/30 CTest（102.34 秒）、生产
 契约下 28 项插件单测和 124 项 runtime 单测通过。具体范围和限制见
-[Rust 排序](../../docs/developer-guide/zh/plugin-rust-sort.md)。
+Rust 排序 (`plugin-rust-sort.md`, external documentation)。
 
 ## v15：上层关系贡献
 
@@ -90,7 +90,7 @@ batch=3 下通过正常 codegen、真实 Rust 执行和重扫，四阶段均实�
 SQL 夹具显式选择贡献的根验证执行，不证明生产成本优势。生产对应
 DSO 重建/审计以及独立目标重建后的 30/30 CTest 通过，包含真实
 四阶段 Rust 回调、构造失败、非本地串行回退及独立打包/宿主绑定。
-详见 [上层关系候选](../../docs/developer-guide/zh/plugin-upper-paths.md)。
+详见 上层关系候选 (`plugin-upper-paths.md`, external documentation)。
 
 ## v14：局部相关关系
 
@@ -117,7 +117,7 @@ DSO 重建/审计以及独立目标重建后的 30/30 CTest 通过，包含真�
 实际参与上层原生 HASH OUTER JOIN，标量/batch=3 下比较原生结果，
 并检查 EXPLAIN、取消及重扫。整组发布和路径生命周期夹具也通过。
 这不是任意连接分解、局部参数拥有权、PX 或生产成本模型的证明。参见
-[连接子问题](../../docs/developer-guide/zh/plugin-join-subproblems.md)。
+连接子问题 (`plugin-join-subproblems.md`, external documentation)。
 
 ## v12：参数化片段与相关 JOIN
 
@@ -130,7 +130,7 @@ join-policy 通过 `custom_bound_fragment` 承接满足条件的原生 NestedLoo
 结果及重扫；新增第一/第二次绑定后取消和清理用例随再次完整 kernel
 通过，47 个原生执行协议变体随 30/30 CTest 通过。独立输入 SJE1
 和显式流式 SJR1 保留，详细范围见
-[参数化执行](../../docs/developer-guide/zh/plugin-parameter-execution.md)。
+参数化执行 (`plugin-parameter-execution.md`, external documentation)。
 
 后续两组参数快照物理用例已通过完整 kernel，覆盖 NULL、空值、
 含 NUL/UTF-8、70 KB 的 VARCHAR/in-row LOB；绑定前改写来源 buffer
@@ -142,7 +142,7 @@ join-policy 通过 `custom_bound_fragment` 承接满足条件的原生 NestedLoo
 宿主后续已将输入就绪与传递失效迁入 Rust runtime，实际相关 JOIN
 通过新的状态桥接执行，生产及完整 kernel 回归通过。参考插件使用的
 v4 契约不变；通用状态图并未放开任意参数拥有权或改变默认策略。
-见 [Rust 输入状态](../../docs/developer-guide/zh/plugin-input-state.md)。
+见 Rust 输入状态 (`plugin-input-state.md`, external documentation)。
 
 ## v11：逐输入重扫与显式流式参考算法（历史检查点）
 
@@ -154,7 +154,7 @@ v4 契约不变；通用状态图并未放开任意参数拥有权或改变默�
 默认 JOIN 规划策略继续使用 SJE1：在开放输入易变性及重复执行语义
 之前，不能把所有输入自动切换成重扫。新流式算法的四组物理用例随
 完整 kernel 通过，原有十六组 JOIN SQL 保留通过；重建独立测试后
-30/30 CTest 通过，详见[输入控制](../../docs/developer-guide/zh/plugin-input-control.md)。
+30/30 CTest 通过，详见输入控制 (`plugin-input-control.md`, external documentation)。
 
 ## v10：读取参数绑定，保留相关输入语义（历史检查点）
 
@@ -177,7 +177,7 @@ SQL 夹具已移除 C++ JOIN 策略；不适用的计划继续交给内核。生
 排序列及不适用语义的原生回退。30 项独立 CTest 通过。十一项插件
 单测通过，新增策略 ABI 用例进一步覆盖物理输入交换、首候选跳过、
 隐藏列/去重映射、语义回退与宿主错误；不将 mock 图等同于 SQL。
-详见[规划语义与 Rust 策略](../../docs/developer-guide/zh/plugin-planner-semantics.md)。
+详见规划语义与 Rust 策略 (`plugin-planner-semantics.md`, external documentation)。
 
 ## v8：Rust 双输入整数等值连接（历史检查点）
 
@@ -191,7 +191,7 @@ SORT 根，已新增独立的提前关系候选贡献阶段，修正后完整 ke
 覆盖完整结果对、NULL 和取消后重扫；
 策略为 graph/build C++ 测试回调，算法是实际 Rust DSO。默认 Rust
 hook 仍为全列 spool，不把独立 SDK 与执行测试合称通用 Rust 规划器。
-详见[Rust 双输入连接](../../docs/developer-guide/zh/plugin-rust-join.md)。
+详见Rust 双输入连接 (`plugin-rust-join.md`, external documentation)。
 
 ## v6：读取当前查询块的完整 SELECT 目标
 
@@ -203,7 +203,7 @@ query/target。插件枚举完整 SELECT 列表、读取元数据，并在构造
 这不是最终子节点输出 schema，也不表示任意候选都能计算聚合/窗口等
 表达式。默认策略仍提交空计划进行全列 spool，不擅自把查询目标当作
 所有候选的输入布局。接口与受控显式输出用例的边界见
-[查询目标](../../docs/developer-guide/zh/plugin-query-targets.md)。
+查询目标 (`plugin-query-targets.md`, external documentation)。
 
 ## v7：多输入执行算法
 
@@ -217,8 +217,8 @@ hook 没有改为多输入构造**。后续 SDK 已增加 `custom_fragment`，�
 目标结果与实际输入分开，并接入本地单并发的关系/依赖/属性处理；
 两输入逻辑夹具及正常 SQL 单输入用例通过，多输入 SQL 联动仍待完成。
 SMP1 是参考轮询合并算法，不是已实现的通用 join 或 SQL UNION
-优化策略，详见[多输入执行](../../docs/developer-guide/zh/plugin-multi-input.md)
-与[计划片段](../../docs/developer-guide/zh/plugin-plan-fragments.md)。
+优化策略，详见多输入执行 (`plugin-multi-input.md`, external documentation)
+与计划片段 (`plugin-plan-fragments.md`, external documentation)。
 
 ## v5：Rust 投影算法与独立执行布局
 
@@ -241,7 +241,7 @@ u32 输出列数、相同数量的 u32 输入列序号。支持重排、删列�
 不能当作优化器已开放任意关系或多输入计划的证明。SDK 现已另提供
 `custom_with_layout`，将规划图表达式身份接入输入依赖和输出生产者；
 正常 SQL 的受控策略验证与本示例默认策略分开记录，见
-[显式表达式布局](../../docs/developer-guide/zh/plugin-custom-layout.md)。
+显式表达式布局 (`plugin-custom-layout.md`, external documentation)。
 
 ## 同源码树构建和打包
 
@@ -307,8 +307,8 @@ SDK 注册仍进入同一个 registry 事务；loader 固定整个 hook 链的�
 构建该示例，检查正常 SQL 生成的 PLUGIN CUSTOM、EXPLAIN、实际 Rust
 服务调用、执行与 rescan；原混合 Rust/C MATERIAL 样例作为独立对照。
 
-详见[候选构造协议](../../docs/developer-guide/zh/plugin-candidate-selection.md)
-与[Server-dev 契约](../../docs/developer-guide/zh/plugin-server-dev-contract.md)。
+详见候选构造协议 (`plugin-candidate-selection.md`, external documentation)
+与Server-dev 契约 (`plugin-server-dev-contract.md`, external documentation)。
 
 ## v3：Rust 自定义 SQL 执行路径
 
@@ -331,14 +331,14 @@ LOB 由宿主读取内容并重建返回头，Rust 算法不解释 locator；行
 LOB 及其他尚未接入的物理表示仍明确拒绝，而不是误解释。
 当前逐行桥接不承诺批量性能、全类型或跨进程 PX。测试区分自定义执行
 与 MATERIAL，最新验证状态见
-[自定义执行协议](../../docs/developer-guide/zh/plugin-custom-executor.md)。
+自定义执行协议 (`plugin-custom-executor.md`, external documentation)。
 
 ## v16：规范化 SORT 语义消费
 
 upper-policy 使用候选服务 minor 6，读取真实 SORT 的键及可选表达式。
 四阶段注册不变，保留五个服务／七个扩展；仍保留原生上层算子结果，
 不是 Rust 排序算法已经完成。旧选择和 JOIN 服务继续声明自身版本。
-详见 [排序语义](../../docs/developer-guide/zh/plugin-sort-semantics.md)。
+详见 排序语义 (`plugin-sort-semantics.md`, external documentation)。
 生产构建、SDK 回归、完整受控 kernel、生产对应动态库审计及独立
 CTest 30/30 通过；二十一项插件单测及 124 项 runtime 单测通过。
 验证边界和记录见上述文档，不沿用历史检查点作为 v16 证明。

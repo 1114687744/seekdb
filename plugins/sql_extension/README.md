@@ -110,5 +110,5 @@ Persistent `seekdb_payload` column identity has a separate two-phase restart
 regression in `rust/plugin-runtime/tests/type_identity_server.py`. New column
 metadata uses the generation-independent v2 marker; old v1 metadata remains
 readable by the new host. This is not downgrade compatibility with old binaries.
-See `docs/developer-guide/zh/plugin-type-identity.md` for the opt-in workflow and
+See `plugin-type-identity.md` (external documentation) for the opt-in workflow and
 remaining database/concurrency verification requirements.

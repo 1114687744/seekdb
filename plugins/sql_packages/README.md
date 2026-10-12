@@ -25,7 +25,7 @@ by the same flat install component. The same component also ships
 [`gis.control` and `gis--1.0.sql`](../gis/sql/README.md), with 106 declarations for
 82 GIS function names backed by implementation-only entries in the GIS DSO.
 Native package server installation and recovery remain unverified. See the
-[PG migration plan](../../docs/developer-guide/zh/plugin-pg-extension-roadmap.md).
+PG migration plan (`plugin-pg-extension-roadmap.md`, external documentation).
 
 The `text_ops` sample declares two independent invoker-security SQL functions:
 `seekdb_char_count(TEXT)` using `CHAR_LENGTH`, and `seekdb_byte_count(TEXT)` using
@@ -69,8 +69,8 @@ The opt-in `rust/plugin-runtime/tests/extension_install_server.py` exercises the
 commands on a disposable server; this is a separate, not-yet-executed database
 regression, not evidence supplied by the kernel-parser or runtime-model tests.
 
-See [package format and current limits](../../docs/developer-guide/zh/plugin-extension-package.md)
-and [installation integration status](../../docs/developer-guide/zh/plugin-extension-install.md).
+See package format and current limits (`plugin-extension-package.md`, external documentation)
+and installation integration status (`plugin-extension-install.md`, external documentation).
 
 ## Composing Extensions
 

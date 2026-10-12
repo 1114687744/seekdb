@@ -63,12 +63,12 @@ errors. See [rust_text](../../plugins/rust_text/README.md) for a complete exampl
   can additionally use the indexed row-batch service described below.
   Plugin execution nodes do not inherit constant status merely from literal
   arguments; volatility-aware constant optimization remains separate work, as do
-  sorting, hashing and indexes. See the [comparison contract](../../docs/developer-guide/zh/plugin-type-comparison.md).
+  sorting, hashing and indexes. See the comparison contract (`plugin-type-comparison.md`, external documentation).
 - `batch::{Batch, Handler, Service}`: optional v3 function-service suffix with one
   handler invocation for a compact batch, indexed outputs, sticky host/cancellation
   errors and an adapter for existing scalar handlers. Old scalar services remain
   supported. This is typed row batching, not a columnar or asynchronous ABI. See
-  [the scalar batch contract](../../docs/developer-guide/zh/plugin-scalar-batches.md)
+  the scalar batch contract (`plugin-scalar-batches.md`, external documentation)
   for limits, SQL integration and current verification scope.
 - `catalog::{CatalogContext, Installer, Service}`: optional installation-time SQL
   declarations, copied by the host and admitted through the normal Extension
@@ -103,7 +103,7 @@ under `<native_module_id>.catalog.install`, business major 1. The borrowed conte
 exposes the installing package/version/database/owner and `declare_sql(&str)`.
 Check the instance's lifecycle in your implementation. See the real
 [`rust_text` installer](../../plugins/rust_text/src/catalog.rs) and the
-[full host contract](../../docs/developer-guide/zh/plugin-catalog-install.md).
+full host contract (`plugin-catalog-install.md`, external documentation).
 
 Declarations are synchronously copied, validated and parsed as separate inputs.
 Errors remain sticky even if an installer ignores a failed emission; each FFI
@@ -284,7 +284,7 @@ effects. The callback context remains borrowed and same-thread.
 `scalar_function!` accepts optional `query_control: true` alongside `sql: false`:
 it requests the extended execution context while retaining legacy-v1 fallback.
 `sql: true` still requires v2. Host-observed poll and SQL errors share sticky
-invocation state. See [host contract](../../docs/developer-guide/zh/plugin-query-control.md).
+invocation state. See host contract (`plugin-query-control.md`, external documentation).
 
 Table cursors can opt in with `table::Service::<C>::WITH_QUERY_CONTROL`, or
 `table_planning::Service::<C>::WITH_QUERY_CONTROL` when providing estimates.
@@ -309,7 +309,7 @@ cursor instead of publishing it. Missing SQL in open or any next is rejected.
 Keep only owned data in cursor state, not the query context or borrowed SQL rows.
 SQL-dependent raw rescan can reject `Cursor::open`; the SQL executor rescans by
 closing/reopening with a fresh context. Close/Drop cannot execute SQL.
-See [the table SQL contract](../../docs/developer-guide/zh/plugin-table-sql.md)
+See the table SQL contract (`plugin-table-sql.md`, external documentation)
 and the real [SQL series example](../../plugins/rust_text/src/sql_series.rs).
 
 ## Table projection metadata
@@ -332,7 +332,7 @@ The host narrows contexts to exact v1/v2/v3 for older service minors. The
 [Rust words example](../../plugins/rust_text/src/words.rs) uses valid empty/zero
 placeholders while preserving scanning and ordinal state. This is advisory
 computation pushdown, not columnar output or measured performance improvement.
-See [the batch contract](../../docs/developer-guide/zh/plugin-table-batches.md).
+See the batch contract (`plugin-table-batches.md`, external documentation).
 
 ## Query-time catalog lookup
 
@@ -342,7 +342,7 @@ Query callbacks also expose `supports_catalog_lookup()` and
 suffix. It uses the current database and caller's schema/SHOW visibility; absence
 is not permission denial. The ID is a snapshot only, not a lease or execute grant.
 Lookup does not create objects, start transactions, install members or obtain a
-new schema snapshot. See [query catalog](../../docs/developer-guide/zh/plugin-query-catalog.md).
+new schema snapshot. See query catalog (`plugin-query-catalog.md`, external documentation).
 
 ## Query-time routine mutation (experimental)
 
@@ -364,7 +364,7 @@ The public path is connected. A controlled kernel fixture now combines real PL
 resolution, CREATE writer effects and Rust view-journal rollback, including a
 second routine referencing the first. Public SPI success with full server/data
 services and live transaction/savepoint/concurrency behavior remain unverified.
-See the [contract and evidence limits](../../docs/developer-guide/zh/plugin-query-catalog.md).
+See the contract and evidence limits (`plugin-query-catalog.md`, external documentation).
 
 ## Transaction-bound catalog construction
 
@@ -400,7 +400,7 @@ SQL scripts and do not run this callback.
 
 The Rust text module's `rust_text_built` control-only package demonstrates two
 dependent routines created by the actual Rust callback. See
-[the builder design](../../docs/developer-guide/zh/plugin-catalog-builder.md).
+the builder design (`plugin-catalog-builder.md`, external documentation).
 
 ## Table-function planning
 
@@ -458,7 +458,7 @@ to this same interface. Results occupy separate batch datum slots; unreferenced
 SQL columns retain their declared ordinal but need not be materialized. A failed
 native next publishes no consumable partial batch and closes the cursor. This
 is row-emission batching, not columnar exchange. See the
-[batch execution contract](../../docs/developer-guide/zh/plugin-table-batches.md).
+batch execution contract (`plugin-table-batches.md`, external documentation).
 
 Expose a module-lifetime `table::Service::<YourCursor>::ABI` under the named
 implementation service in the manifest. It supplies panic/status boundaries,
@@ -711,7 +711,7 @@ linking with `-z defs`. No core host archive is linked into the plugin.
 
 读取不会调用可能分配辅助表达式的 `get_op_exprs`。这些字段不等于
 最终输入/输出 schema，也未提供常量值、任意改写或多输入物理算子。
-See [planning graph](../../docs/developer-guide/zh/plugin-candidate-graph.md).
+See planning graph (`plugin-candidate-graph.md`, external documentation).
 
 ## 数值行读取
 

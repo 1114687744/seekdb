@@ -58,7 +58,7 @@ borrowed host buffer path; both kinds share the same module-generation quota.
   absent DROP IF EXISTS and NULL input return SQL NULL. Normal permissions apply,
   errors propagate, and objects do not automatically become extension members.
   End-to-end live database transaction validation remains outstanding; see the
-  [query catalog contract](../../docs/developer-guide/zh/plugin-query-catalog.md).
+  query catalog contract (`plugin-query-catalog.md`, external documentation).
 
 - `seekdb_rust_optimizer_calls()` returns the process-module planning-hook call
   count. The associated `optimizer.plan.v1` hook increments an atomic counter
@@ -145,7 +145,7 @@ and 3-row batches, DISTINCT, NULL/empty inputs and rescan. Their schema and
 inner-session environment remain fixtures, not a live server or storage scan.
 Ordinary scalar aggregation no longer requires an unused temporary-file directory.
 See the
-[MIN/MAX contract](../../docs/developer-guide/zh/plugin-type-extrema.md).
+MIN/MAX contract (`plugin-type-extrema.md`, external documentation).
 Explicit SELECT ORDER BY now binds the same comparator after type deduction.
 Generated sort and Top-N operators are tested in scalar/3-row batches, with
 NULL CASE, nested identity, duplicate keys, LIMIT/OFFSET, rescan, 1,031-row
@@ -291,10 +291,10 @@ or complete exchange plan generation/serialization. Both receive-only and final
 receive/transmit rescan kernel runs passed, with build freshness checked against
 the intermediate-result manager and exec-context implementation as well.
 The temporary-file fixture rejects all file opens: this is not external spill,
-storage or full PX scheduling evidence. See the [ordering contract](../../docs/developer-guide/zh/plugin-type-ordering.md).
+storage or full PX scheduling evidence. See the ordering contract (`plugin-type-ordering.md`, external documentation).
 **Grouping keys and indexes still require their own callback integration**. Old codec
 prefixes and decode/encode behavior are unchanged. See the
-[comparison contract](../../docs/developer-guide/zh/plugin-type-comparison.md).
+comparison contract (`plugin-type-comparison.md`, external documentation).
 
 ### Scalar function batching
 
@@ -303,7 +303,7 @@ callback in `src/batch_count.rs`. One Rust handler reads the whole compact batch
 and emits indexed results in reverse order; the host stages and orders them.
 Its scalar entry, SQL object identity and stored data format remain unchanged.
 The SQL adapter and old-service fallback are described in the
-[scalar batch contract](../../docs/developer-guide/zh/plugin-scalar-batches.md).
+scalar batch contract (`plugin-scalar-batches.md`, external documentation).
 
 Function arguments now propagate batch evaluation into nested Rust functions,
 including through SQL cast/type carriers. Strict NULL rows are excluded before
@@ -354,13 +354,13 @@ whitespace run, and before emitting a token. Old v1 contexts retain the original
 scan path. This is cooperative cancellation, not interruption of blocked native
 code. The SQL host closes a failed cursor and keeps the error until rescan/close;
 query pointers never survive the current callback. The poll-only table context
-does not grant SQL execution. See the [query-control contract](../../docs/developer-guide/zh/plugin-query-control.md).
+does not grant SQL execution. See the query-control contract (`plugin-query-control.md`, external documentation).
 
 Vectorized SQL table scans now pass their batch limit to the existing Rust
 `Rows` interface: one native next may emit multiple rows. Projected SQL columns
 retain descriptor ordinals, including scans that only consume row counts.
 This still uses synchronous row emission, not a columnar ABI or a zero-copy
-claim. See the [batch contract and verification limits](../../docs/developer-guide/zh/plugin-table-batches.md).
+claim. See the batch contract and verification limits (`plugin-table-batches.md`, external documentation).
 
 Planning pins the table object and implementation just like execution, but
 does not create a cursor, run casts or give the callback SQL/session access.
@@ -374,7 +374,7 @@ estimates and requires SQL capability on every open/next. Its cursor owns two
 integers, never a query pointer or borrowed SQL row. Raw rescan lacks SQL context
 and is rejected; the SQL executor rescans by closing/reopening. The host SQL API
 retains caller permissions/transactions and fails the invocation on errors.
-See [SQL lifecycle and validation scope](../../docs/developer-guide/zh/plugin-table-sql.md).
+See SQL lifecycle and validation scope (`plugin-table-sql.md`, external documentation).
 
 The core loader now has `decode_type`, `encode_type` and `execute_cast` adapters
 for previously resolved object identities. They acquire the object and service
@@ -508,7 +508,7 @@ down the real module. The `--overlay-only` mode does not build or load this DSO.
 look up a standalone FUNCTION in the current database, returning its ID or NULL
 when absent/input NULL. Normal SHOW visibility applies; permission failures are
 errors. It is not immutable, a schema lease, or permission to execute the routine.
-See [query catalog](../../docs/developer-guide/zh/plugin-query-catalog.md).
+See query catalog (`plugin-query-catalog.md`, external documentation).
 
 The words services advertise table SPI minor 4 and consume optional projection
 metadata on each next callback. Unrequested token/ordinal cells emit valid empty
@@ -516,7 +516,7 @@ bytes/zero placeholders, while scanning, row count and ordinal state continue
 unchanged. Absent metadata requests both columns; an all-zero mask still produces
 all rows. SQL-series remains minor 3 and receives an exact v3 context. This is not
 columnar output and no speedup is claimed. See the
-[projection contract](../../docs/developer-guide/zh/plugin-table-batches.md).
+projection contract (`plugin-table-batches.md`, external documentation).
 
 `words.rs` uses the public SDK's `table::Cursor` and generic FFI service. It
 owns one UTF-8 input string, walks token boundaries incrementally and returns
@@ -607,7 +607,7 @@ a fixture: this is not real SQL parser/column persistence/coercion or concurrent
 database transaction evidence.
 
 See [the SDK](../../rust/extension-sdk/README.md) and
-[the complete implementation scope](../../docs/developer-guide/zh/plugin-implementation-status.md).
+the complete implementation scope (`plugin-implementation-status.md`, external documentation).
 ## SQL package generation
 
 From the checkout, `cargo run --offline --manifest-path rust/cargo-seekdb/Cargo.toml
@@ -669,5 +669,5 @@ transaction API: successful `declare_sql` means staged text, not a created
 object. Normal permissions, routine dependencies, membership and installation
 transaction checks still apply. Updates continue using explicit SQL scripts.
 
-See the [installation catalog contract](../../docs/developer-guide/zh/plugin-catalog-install.md)
+See the installation catalog contract (`plugin-catalog-install.md`, external documentation)
 for limits, lifetime rules and the distinction from future query-time builders.
