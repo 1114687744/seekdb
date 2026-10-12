@@ -20,6 +20,8 @@ class ObSchemaIdVersion;
 class ObIndexSchemaInfo;
 class SchemaCatalogRow;
 class ObConstraint;
+class ObTriggerInfo;
+class ObSimpleTriggerSchema;
 struct VersionHisVal;
 } }
 namespace storage { class ObAccessService; }
@@ -108,6 +110,12 @@ public:
   int get_mock_fk_parent_table_id(uint64_t database_id, const common::ObString &, uint64_t &);
   int get_mock_fk_parent_table_schema_versions(const common::ObIArray<uint64_t> &,
       common::ObIArray<share::schema::ObSchemaIdVersion> &);
+  int get_triggers(int64_t schema_version, common::ObIArray<share::schema::ObTriggerInfo> &,
+                   const common::ObIArray<uint64_t> *ids = nullptr);
+  int get_simple_triggers(int64_t schema_version, common::ObIArray<share::schema::ObSimpleTriggerSchema> &,
+                          const common::ObIArray<uint64_t> *ids = nullptr);
+  enum class TriggerWrite { INSERT, UPDATE, ERASE };
+  int write_trigger(const share::schema::ObTriggerInfo &, int64_t version, TriggerWrite);
   int get_simple_mock_fk_parent_tables(int64_t schema_version,
       common::ObIArray<share::schema::ObSimpleMockFKParentTableSchema> &,
       const common::ObIArray<uint64_t> *table_ids = nullptr);

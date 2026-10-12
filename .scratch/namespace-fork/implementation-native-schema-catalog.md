@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 等其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流等剩余入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -307,3 +307,26 @@
 - `native-view-standby2` 失败在首次客户端查询新视图（1146）：持久内表中已经读到新列类型，但已装载 Namespace 的 schema cache 尚未刷新到视图创建版本。与既有约束、分区回归一致，补充客户端视图可见性的有界等待，再运行全部元数据断言；未修改生产代码。`native-view-standby3` 正在重跑，不把前一次失败计为通过。
 
 - 视图阶段生产 Namespace 主备回归退出 0（153.19 秒），见 `gate-results/native-schema-catalog/native-view-standby3/results.json`。`native_catalog_view_replay` 及提升后的复查通过，包含视图列 current/history、名称索引和原始创建版本；原有分区、约束、外键、父历史来源、Namespace 删除及提升后 fork 均通过。原失败场景保留在四件套共用 DDL/主备脚本中；未运行全量 mysqltest 或 sysbench。整体目标继续处理 trigger 相关写入及 DDL 操作记录等最终收尾。
+
+
+### Trigger 完整定义读写
+
+- `ObTriggerSqlService` 的创建/替换、启停、删除/回收、恢复及表改名关联更新接入原生目录。当前记录、history 和已有物理索引借用同一个 DDL owner；删除保留完整历史与删除标记。旧 `ObTriggerValues` 只在恢复时重新指定原对象已有字段，没有其他调用，已删除。
+- `SchemaCatalogFields::trigger` 复用原字段语义，旧正文列保持 NULL，实际正文写入 LONGTEXT `trigger_body_v2`；显式维护原 SQL 自动更新的 gmt_modified。正常简单/完整定义装载使用同一原生受保护视图，历史选择复用既有解码器；初始化目录建立前保留原生命周期入口。
+- 新冷测试覆盖未登录孩子中的简单/完整定义读取、重复/不存在 ID、显式空集合、关联列表、90KB/120KB 正文、自身未提交写入、独立读隔离、历史版本、提交及回滚。生产测试覆盖继承 trigger 独立替换、顺序调整、表改名、回收/恢复/PURGE、当前与最新 history 逐字段对照、两个物理索引，以及重启和主备回放。
+- `/tmp/native-schema-catalog-trigger-prior1.log` 在修改前的上一个生产版本通过基本新增用例；`trigger-prior2.log` 使用本轮原生目录接入之前的旧二进制，额外通过 PRECEDES 调整及回收站恢复，验证用例语义。`trigger-build1.log` 编译通过。
+- `trigger-probe1.log` 在参数解析阶段失败：新增用例已加入主列表，但遗漏命令行 choices；已补齐。冷读写与生产新版本回归仍待结果，尚不记为通过。
+
+- `trigger-ddl1.log` 新版本实际 DDL、父子隔离及崩溃重启通过。`trigger-probe2.log` 的 typed 通过、trigger 在写入前的正文断言失败：持久正文实际含 `TRIGGER ti BEFORE INSERT ON t FOR EACH ROW` 前缀，测试错误地只比较末尾 SET 语句。实例日志已确认返回完整正文，修正断言，生产实现不据此改动。
+
+- `trigger-build2.log` 编译通过；`trigger-probe3.log` 的 trigger 冷用例通过，实例 `namespace_fork_PROTOTYPE_native_schema_catalog_ncb8p8du` 输出 `NATIVE_SCHEMA_CATALOG_TRIGGER namespace=3 stage=deleted ret=0`，服务槽位始终为 0。此前 typed 通用用例已在 probe2 通过。测试钩子现已移除，继续生产编译及主备验证。
+
+- `trigger-production-build1.log` 为已去除测试钩子的生产编译，通过。`trigger-production-ddl1.log` 通过实际 DDL/索引/fork/崩溃恢复，新增恢复后 INSERT 证明父空间执行原 `+1`、孩子执行独立修改后的 `+10`，各自的 AFTER trigger 审计行一致。
+- 生产 Namespace 主备回归通过（161.34 秒）：`gate-results/native-schema-catalog/native-trigger-standby/results.json` 的 exit_code=0。日志含 `native_catalog_trigger_replay` 和 `native_catalog_trigger_execution_after_promotion`，验证当前/history/索引/长正文回放及提升后的实际 trigger 执行。未运行全量 mysqltest/sysbench。
+- 新 trigger 用例已加入四件套既有冷探针、生产 DDL 及主备共用脚本；参数 choices 遗漏和正文前缀错误均已修正并保留对应测试。没有据这两次测试错误改动生产语义。
+
+### 下一阶段剩余入口
+
+- DDL 操作流：`ObDDLSqlService::log_operation` 和批量建表的操作记录写入，以及 SQLImpl 的增量操作读取、最新版本、系统表变化检查和 END_SIGN 版本选择仍走 SQL。须保留同一 DDL owner 与最后操作版本的既有含义。
+- 完整表定义相关依赖记录：`ObDependencyInfo` / `ObDependencyDDLHelper` 仍使用 `__all_dependency` SQL；需要接入并核对与视图/trigger 修改的事务关系。
+- 最终核对 core 单元格式写入、初始化生命周期及其余表目录调用点；普通用户/权限等其他 schema 类型和统计信息不据本阶段结果宣称完成。

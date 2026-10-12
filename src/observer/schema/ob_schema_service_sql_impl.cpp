@@ -3251,6 +3251,15 @@ int ObSchemaServiceSQLImpl::get_batch_triggers(const ObRefreshSchemaStatus &sche
     LOG_WARN("check inner stat fail");
   }
 
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (OB_FAIL(ret)) { return ret; }
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_triggers(schema_version, trigger_info_array, &trigger_ids);
+    });
+  }
   lib::ob_sort(trigger_ids.begin(), trigger_ids.end());
   // split large query into bounded batches
   int64_t begin = 0;
@@ -3884,7 +3893,45 @@ FETCH_SCHEMAS_FUNC_DEFINE(database, ObSimpleDatabaseSchema, OB_ALL_DATABASE_HIST
 FETCH_SCHEMAS_FUNC_DEFINE(outline, ObSimpleOutlineSchema, OB_ALL_OUTLINE_HISTORY_TNAME);
 FETCH_SCHEMAS_FUNC_DEFINE(package, ObSimplePackageSchema, OB_ALL_PACKAGE_HISTORY_TNAME);
 FETCH_SCHEMAS_FUNC_DEFINE(routine, ObSimpleRoutineSchema, OB_ALL_ROUTINE_HISTORY_TNAME);
-FETCH_SCHEMAS_FUNC_DEFINE(trigger, ObSimpleTriggerSchema, OB_ALL_TRIGGER_HISTORY_TNAME);
+int ObSchemaServiceSQLImpl::fetch_triggers(
+    ObISQLClient &sql_client, const ObRefreshSchemaStatus &schema_status,
+    const int64_t schema_version, ObIArray<ObSimpleTriggerSchema> &schema_array,
+    const SchemaKey *schema_keys, const int64_t schema_key_size)
+{
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (schema_version <= 0 || schema_key_size < 0) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  const bool selected = schema_keys != nullptr && schema_key_size > 0;
+  if (!lifecycle->is_bootstrapping()) {
+    ObArray<uint64_t> ids;
+    for (int64_t i = 0; OB_SUCC(ret) && selected && i < schema_key_size; ++i) {
+      ret = ids.push_back(schema_keys[i].trigger_id_);
+    }
+    if (OB_SUCC(ret)) {
+      ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.get_simple_triggers(schema_version, schema_array, selected ? &ids : nullptr);
+      });
+    }
+  } else {
+    // Before the Namespace directory exists, keep the initialization reader.
+    ObSqlString sql;
+    ObMySQLProxy::MySQLResult result;
+    ret = sql.append_fmt("SELECT * FROM %s WHERE schema_version<=%ld",
+                         OB_ALL_TRIGGER_HISTORY_TNAME, schema_version);
+    if (OB_SUCC(ret) && selected) {
+      ret = sql.append(" AND trigger_id in");
+      if (OB_SUCC(ret)) { ret = SQL_APPEND_SCHEMA_ID(trigger, schema_keys, schema_key_size, sql); }
+    }
+    if (OB_SUCC(ret)) { ret = sql.append(" ORDER BY trigger_id desc, schema_version desc"); }
+    if (OB_SUCC(ret)) { ret = sql_client.read(result, sql.ptr()); }
+    if (OB_SUCC(ret) && result.get_result() == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::retrieve_trigger_schema(*result.get_result(), schema_array); }
+  }
+  return ret;
+}
+
 int ObSchemaServiceSQLImpl::fetch_mock_fk_parent_tables(
     ObISQLClient &sql_client, const ObRefreshSchemaStatus &schema_status,
     const int64_t schema_version, ObIArray<ObSimpleMockFKParentTableSchema> &schema_array,

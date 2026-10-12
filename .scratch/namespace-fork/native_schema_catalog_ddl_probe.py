@@ -278,6 +278,82 @@ def verify_partitions(query, ids):
     assert query(f"SELECT COUNT(*) FROM oceanbase.__all_part_history WHERE table_id={ids['h']} AND is_deleted=1") == ((130,),)
 
 
+def prepare_triggers(query):
+    query('CREATE DATABASE native_triggers')
+    query('USE native_triggers')
+    query('CREATE TABLE t(id INT PRIMARY KEY,v INT)')
+    query('CREATE TABLE audit_t(id INT PRIMARY KEY,v INT)')
+    query('CREATE TRIGGER ti BEFORE INSERT ON t FOR EACH ROW SET NEW.v=NEW.v+1')
+    query('CREATE TRIGGER ta AFTER INSERT ON t FOR EACH ROW INSERT INTO audit_t VALUES(NEW.id,NEW.v)')
+    query('INSERT INTO t VALUES(1,3)')
+    assert query('SELECT * FROM t') == ((1,4),)
+
+
+def exercise_triggers(query, prepared=False):
+    if not prepared:
+        prepare_triggers(query)
+    query('USE native_triggers')
+    old = query("SELECT trigger_id FROM oceanbase.__all_trigger WHERE trigger_name='ti'")[0][0]
+    query('DROP TRIGGER ti')
+    # Exercise LONGTEXT storage and full definition loading, including UTF-8.
+    body = 'BEGIN /*中文' + 'x'*90000 + "*/ SET NEW.v=NEW.v+10; END"
+    query('CREATE TRIGGER ti BEFORE INSERT ON t FOR EACH ROW ' + body)
+    query('CREATE TRIGGER ti_second BEFORE INSERT ON t FOR EACH ROW PRECEDES ti SET NEW.v=NEW.v*2')
+    second = query("SELECT trigger_id FROM oceanbase.__all_trigger WHERE trigger_name='ti_second'")[0][0]
+    query('RENAME TABLE t TO renamed')
+    query('INSERT INTO renamed VALUES(2,3)')
+    query('DROP TRIGGER ti_second')
+    query('INSERT INTO renamed VALUES(3,3)')
+    query('CREATE TABLE recycled(id INT PRIMARY KEY,v INT)')
+    query('CREATE TRIGGER recycled_ti BEFORE INSERT ON recycled FOR EACH ROW SET NEW.v=NEW.v+1')
+    recycled = query("SELECT trigger_id FROM oceanbase.__all_trigger WHERE trigger_name='recycled_ti'")[0][0]
+    query('SET SESSION recyclebin=ON')
+    query('DROP TABLE recycled')
+    query('FLASHBACK TABLE recycled TO BEFORE DROP RENAME TO restored')
+    query('INSERT INTO restored VALUES(1,8)')
+    assert query('SELECT * FROM restored') == ((1,9),)
+    query('DROP TABLE restored')
+    query('PURGE RECYCLEBIN')
+    tid = query("SELECT table_id FROM oceanbase.__all_table WHERE table_name='renamed' AND database_id="
+                "(SELECT database_id FROM oceanbase.__all_database WHERE database_name='native_triggers')")[0][0]
+    return tid, (old, second, recycled)
+
+
+def verify_triggers(query, evidence):
+    tid, dropped = evidence
+    expected = ((1,4),(2,16),(3,13))
+    assert query('SELECT * FROM native_triggers.renamed ORDER BY id') == expected
+    assert query('SELECT * FROM native_triggers.audit_t ORDER BY id') == expected
+    columns = [row[0] for row in query('SHOW COLUMNS FROM oceanbase.__all_trigger')
+               if row[0] not in ('gmt_create','gmt_modified')]
+    fields = ','.join(columns)
+    current = query(f'SELECT {fields} FROM oceanbase.__all_trigger WHERE base_object_id={tid} ORDER BY trigger_id')
+    history = query('SELECT '+','.join('h.'+col for col in columns)+' FROM oceanbase.__all_trigger_history h '
+                    f'WHERE h.base_object_id={tid} AND h.is_deleted=0 AND h.schema_version='
+                    '(SELECT MAX(v.schema_version) FROM oceanbase.__all_trigger_history v '
+                    'WHERE v.trigger_id=h.trigger_id) ORDER BY h.trigger_id')
+    assert len(current) == 2 and current == history, (len(current), len(history))
+    indexed = query(f'SELECT {fields} FROM oceanbase.__all_trigger FORCE INDEX(idx_trigger_base_obj_id) '
+                    f'WHERE base_object_id={tid} ORDER BY trigger_id')
+    assert indexed == current
+    for name in ('ti','ta'):
+        ids = query('SELECT trigger_id FROM oceanbase.__all_trigger FORCE INDEX(idx_trigger_name) '
+                    f"WHERE trigger_name='{name}' AND base_object_id={tid}")
+        assert len(ids) == 1, (name, ids)
+    assert query('SELECT LENGTH(trigger_body_v2)>90000,trigger_body IS NULL '
+                 f"FROM oceanbase.__all_trigger WHERE base_object_id={tid} AND trigger_name='ti'") == ((1,1),)
+    for trigger_id in dropped:
+        assert query(f'SELECT COUNT(*) FROM oceanbase.__all_trigger WHERE trigger_id={trigger_id}') == ((0,),)
+        assert query('SELECT is_deleted FROM oceanbase.__all_trigger_history '
+                     f'WHERE trigger_id={trigger_id} ORDER BY schema_version DESC LIMIT 1') == ((1,),)
+
+
+def exercise_recovered_triggers(query):
+    query('INSERT INTO native_triggers.renamed VALUES(4,5)')
+    assert query('SELECT v FROM native_triggers.renamed WHERE id=4') == ((15,),)
+    assert query('SELECT v FROM native_triggers.audit_t WHERE id=4') == ((15,),)
+
+
 def prepare_views(query):
     query('CREATE DATABASE native_views')
     query('CREATE TABLE native_views.base(id INT PRIMARY KEY,v INT,KEY ix(v))')
@@ -365,6 +441,7 @@ def run(binary):
         experiment.sql('SET SESSION foreign_key_checks=1')
         prepare_partition_tables(experiment.sql)
         prepare_views(experiment.sql)
+        prepare_triggers(experiment.sql)
         experiment.sql('FORK NAMESPACE native_ddl_child FROM ns1')
         experiment.sql('FORK NAMESPACE native_view_peer FROM ns1')
         child = connect(experiment, 'root@native_ddl_child')
@@ -407,6 +484,7 @@ def run(binary):
         experiment.sql('DROP TABLE native_ddl.p', child)
         partition_evidence = exercise_partitions(lambda statement: experiment.sql(statement, child), prepared=True)
         fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
+        trigger_evidence = exercise_triggers(lambda statement: experiment.sql(statement, child), prepared=True)
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
         # Same view ID in two Namespaces must identify two independent tasks.
         from concurrent.futures import ThreadPoolExecutor
@@ -417,6 +495,9 @@ def run(binary):
             view_evidence, peer_view_evidence = [job.result() for job in jobs]
 
         def verify():
+            verify_triggers(lambda statement: experiment.sql(statement, child), trigger_evidence)
+            assert experiment.sql('SELECT * FROM native_triggers.t') == ((1,4),)
+            assert experiment.sql('SELECT * FROM native_triggers.audit_t') == ((1,4),)
             verify_views(lambda statement: experiment.sql(statement, child), view_evidence)
             verify_views(lambda statement: experiment.sql(statement, peer), peer_view_evidence)
             assert experiment.sql('SELECT * FROM native_views.v') == ((1, 7),)
@@ -504,6 +585,11 @@ def run(binary):
         peer = connect(experiment, 'root@native_view_peer')
         verify()
         experiment.record('PASS', case='native_catalog_ddl_crash_recovery')
+        exercise_recovered_triggers(lambda statement: experiment.sql(statement, child))
+        experiment.sql('INSERT INTO native_triggers.t VALUES(4,5)')
+        assert experiment.sql('SELECT v FROM native_triggers.t WHERE id=4') == ((6,),)
+        assert experiment.sql('SELECT v FROM native_triggers.audit_t WHERE id=4') == ((6,),)
+        experiment.record('PASS', case='native_catalog_trigger_execution_after_restart')
         experiment.sql('CREATE TABLE native_ddl.mock_parent(id INT PRIMARY KEY)', child)
         experiment.sql('INSERT INTO native_ddl.mock_parent VALUES(1)', child)
         experiment.sql('INSERT INTO native_ddl.mock_child VALUES(1,1)', child)

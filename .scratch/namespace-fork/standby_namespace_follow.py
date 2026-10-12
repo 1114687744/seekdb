@@ -1,7 +1,7 @@
 import argparse, contextlib, json, time
 from pathlib import Path
 import pymysql
-from native_schema_catalog_ddl_probe import exercise_constraints, verify_constraints, exercise_foreign_keys, verify_foreign_keys, exercise_partitions, verify_partitions, exercise_views, verify_views
+from native_schema_catalog_ddl_probe import exercise_constraints, verify_constraints, exercise_foreign_keys, verify_foreign_keys, exercise_partitions, verify_partitions, exercise_views, verify_views, exercise_triggers, verify_triggers, exercise_recovered_triggers
 
 p=argparse.ArgumentParser(); p.add_argument('--initial-only',action='store_true'); args=p.parse_args()
 
@@ -115,6 +115,11 @@ with connect(42035) as root,connect(42036) as standby:
   wait(lambda:read_ns('replica_seed','SELECT * FROM native_views.v'),((1,7),))
   with connect(42036,'replica_seed') as c:verify_views(lambda statement:sql(c,statement),view_evidence)
   record('native_catalog_view_replay')
+  trigger_evidence=exercise_triggers(lambda statement:sql(child,statement))
+  sync(root,standby)
+  wait(lambda:read_ns('replica_seed','SELECT * FROM native_triggers.renamed ORDER BY id'),((1,4),(2,16),(3,13)))
+  with connect(42036,'replica_seed') as c:verify_triggers(lambda statement:sql(c,statement),trigger_evidence)
+  record('native_catalog_trigger_replay')
   sql(child,'USE replica_ns')
   sql(child,'SET SESSION foreign_key_checks=0')
   sql(child,'CREATE TABLE replica_ns.mock_child(id INT PRIMARY KEY,v INT,KEY ix(v),'
@@ -149,6 +154,9 @@ with connect(42035) as root,connect(42036) as standby:
   verify_foreign_keys(lambda statement:sql(child,statement),fk_evidence)
   verify_partitions(lambda statement:sql(child,statement),partition_evidence)
   verify_views(lambda statement:sql(child,statement),view_evidence)
+  verify_triggers(lambda statement:sql(child,statement),trigger_evidence)
+  exercise_recovered_triggers(lambda statement:sql(child,statement))
+  record('native_catalog_trigger_execution_after_promotion')
   assert sql(child,'SELECT id,v FROM replica_ns.native_delete')==((1,23),)
   assert sql(child,f'SELECT COUNT(*) FROM oceanbase.__all_table WHERE table_id={purge_tid}')==((0,),)
   sql(child,"insert into replica_ns.t values(4,40,'promoted child',8)")

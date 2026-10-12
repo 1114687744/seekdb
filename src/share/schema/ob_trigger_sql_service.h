@@ -28,62 +28,11 @@ class ObISQLClient;
 
 namespace share
 {
-class ObDMLSqlSplicer;
 namespace schema
 {
 class ObTriggerInfo;
 class ObTriggerSqlService : public ObDDLSqlService
 {
-protected:
-  class ObTriggerValues
-  {
-  public:
-    ObTriggerValues()
-      : bit_value_(0),
-        database_id_(OB_INVALID_ID),
-        base_object_id_(OB_INVALID_ID),
-        trigger_name_(),
-        spec_source_(),
-        body_source_()
-    {}
-    OB_INLINE void set_database_id(uint64_t database_id)
-    { database_id_ = database_id; new_database_id_ = 1; }
-    OB_INLINE void set_base_object_id(uint64_t base_object_id)
-    { base_object_id_ = base_object_id; new_base_object_id_ = 1; }
-    OB_INLINE void set_trigger_name(const common::ObString &trigger_name)
-    { trigger_name_ = trigger_name; new_trigger_name_ = 1; }
-    OB_INLINE void set_spec_source(const common::ObString &spec_source)
-    { spec_source_ = spec_source; new_spec_source_ = 1; }
-    OB_INLINE void set_body_source(const common::ObString &body_source)
-    { body_source_ = body_source; new_body_source_ = 1; }
-    OB_INLINE uint64_t get_database_id() const { return database_id_; }
-    OB_INLINE uint64_t get_base_object_id() const { return base_object_id_; }
-    OB_INLINE const common::ObString &get_trigger_name() const { return trigger_name_; }
-    OB_INLINE const common::ObString &get_spec_source() const { return spec_source_; }
-    OB_INLINE const common::ObString &get_body_source() const { return body_source_; }
-    OB_INLINE bool new_database_id() const { return 1 == new_database_id_; }
-    OB_INLINE bool new_base_object_id() const { return 1 == new_base_object_id_; }
-    OB_INLINE bool new_trigger_name() const { return 1 == new_trigger_name_; }
-    OB_INLINE bool new_spec_source() const { return 1 == new_spec_source_; }
-    OB_INLINE bool new_body_source() const { return 1 == new_body_source_; }
-  private:
-    union
-    {
-      uint64_t bit_value_;
-      struct {
-        uint64_t new_database_id_:1;
-        uint64_t new_base_object_id_:1;
-        uint64_t new_trigger_name_:1;
-        uint64_t new_spec_source_:1;
-        uint64_t new_body_source_:1;
-      };
-    };
-    uint64_t database_id_;
-    uint64_t base_object_id_;
-    common::ObString trigger_name_;
-    common::ObString spec_source_;
-    common::ObString body_source_;
-  };
 public:
   explicit ObTriggerSqlService(ObSchemaService &schema_service)
     : ObDDLSqlService(schema_service) {}
@@ -111,13 +60,6 @@ public:
       common::ObISQLClient &sql_client,
       ObSchemaOperationType op_type = OB_DDL_ALTER_TRIGGER);
 private:
-  int fill_dml_sql(const ObTriggerInfo &trigger_info,
-                   int64_t new_schema_version,
-                   ObDMLSqlSplicer &dml);
-  int fill_dml_sql(const ObTriggerInfo &trigger_info,
-                   const ObTriggerValues &new_values,
-                   int64_t new_schema_version,
-                   ObDMLSqlSplicer &dml);
   int log_trigger_operation(const ObTriggerInfo &trigger_info,
                             int64_t new_schema_version,
                             ObSchemaOperationType op_type,

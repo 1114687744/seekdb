@@ -16,8 +16,8 @@
 
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_trigger_sql_service.h"
-#include "share/ob_dml_sql_splicer.h"
-#include "share/inner_table/ob_inner_table_schema_constants.h"
+#include "observer/schema/native_schema_catalog.h"
+#include "share/schema/ob_trigger_info.h"
 
 namespace oceanbase
 {
@@ -26,30 +26,22 @@ namespace share
 {
 namespace schema
 {
+using observer::NativeSchemaCatalog;
+
 int ObTriggerSqlService::create_trigger(const ObTriggerInfo &trigger_info,
                                         bool is_replace,
                                         ObISQLClient &sql_client,
                                         const ObString *ddl_stmt_str)
 {
-  int ret = OB_SUCCESS;
-  ObDMLExecHelper exec(sql_client);
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  OV (trigger_info.is_valid(), OB_INVALID_ARGUMENT, trigger_info);
-  // insert or update all_trigger.
-  OZ (fill_dml_sql(trigger_info, trigger_info.get_schema_version(), dml));
-  if (is_replace) {
-    OZ (exec.exec_update(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-  } else {
-    OZ (exec.exec_insert(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
+  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](NativeSchemaCatalog &catalog) {
+        return catalog.write_trigger(trigger_info, trigger_info.get_schema_version(),
+            is_replace ? NativeSchemaCatalog::TriggerWrite::UPDATE : NativeSchemaCatalog::TriggerWrite::INSERT);
+      });
+  if (OB_SUCC(ret)) {
+    ret = log_trigger_operation(trigger_info, trigger_info.get_schema_version(),
+        OB_DDL_CREATE_TRIGGER, ddl_stmt_str, sql_client);
   }
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  // insert all_trigger_history.
-  OZ (dml.add_column("is_deleted", 0));
-  OZ (exec.exec_insert(OB_ALL_TRIGGER_HISTORY_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  OZ (log_trigger_operation(trigger_info, trigger_info.get_schema_version(),
-                            OB_DDL_CREATE_TRIGGER, ddl_stmt_str, sql_client));
   return ret;
 }
 
@@ -59,28 +51,15 @@ int ObTriggerSqlService::drop_trigger(const ObTriggerInfo &trigger_info,
                                       ObISQLClient &sql_client,
                                       const ObString *ddl_stmt_str)
 {
-  int ret = OB_SUCCESS;
-  ObDMLExecHelper exec(sql_client);
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  ObSchemaOperationType drop_type = OB_INVALID_DDL_OP;
-  OV (trigger_info.is_valid(), OB_INVALID_ARGUMENT, trigger_info);
-  OZ (fill_dml_sql(trigger_info, new_schema_version, dml));
-  // update or delete all_trigger.
-  if (drop_to_recyclebin) {
-    OZ (exec.exec_update(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-    OX (drop_type = OB_DDL_DROP_TRIGGER_TO_RECYCLEBIN);
-  } else {
-    OZ (exec.exec_delete(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-    OX (drop_type = OB_DDL_DROP_TRIGGER);
+  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](NativeSchemaCatalog &catalog) {
+        return catalog.write_trigger(trigger_info, new_schema_version,
+            drop_to_recyclebin ? NativeSchemaCatalog::TriggerWrite::UPDATE : NativeSchemaCatalog::TriggerWrite::ERASE);
+      });
+  if (OB_SUCC(ret)) {
+    ret = log_trigger_operation(trigger_info, new_schema_version,
+        drop_to_recyclebin ? OB_DDL_DROP_TRIGGER_TO_RECYCLEBIN : OB_DDL_DROP_TRIGGER, ddl_stmt_str, sql_client);
   }
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  // insert all_trigger_history.
-  OZ (dml.add_column("is_deleted", drop_to_recyclebin ? 0 : 1));
-  OZ (exec.exec_insert(OB_ALL_TRIGGER_HISTORY_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  OZ (log_trigger_operation(trigger_info, new_schema_version,
-                            drop_type, ddl_stmt_str, sql_client));
   return ret;
 }
 
@@ -89,45 +68,29 @@ int ObTriggerSqlService::alter_trigger(const ObTriggerInfo &trigger_info,
                                        ObISQLClient &sql_client,
                                        const ObString *ddl_stmt_str)
 {
-  int ret = OB_SUCCESS;
-  ObDMLExecHelper exec(sql_client);
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  OV (trigger_info.is_valid(), OB_INVALID_ARGUMENT, trigger_info);
-  OZ (fill_dml_sql(trigger_info, new_schema_version, dml));
-  // alter trigger disable/enable
-  OZ (exec.exec_update(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-  OZ (dml.add_column("is_deleted", 0));
-  OZ (exec.exec_insert(OB_ALL_TRIGGER_HISTORY_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  OZ (log_trigger_operation(trigger_info, new_schema_version, OB_DDL_ALTER_TRIGGER, ddl_stmt_str,
-                            sql_client));
+  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](NativeSchemaCatalog &catalog) {
+        return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
+      });
+  if (OB_SUCC(ret)) {
+    ret = log_trigger_operation(trigger_info, new_schema_version,
+        OB_DDL_ALTER_TRIGGER, ddl_stmt_str, sql_client);
+  }
   return ret;
 }
-
 
 int ObTriggerSqlService::restore_trigger(const ObTriggerInfo &trigger_info,
                                            int64_t new_schema_version,
                                            ObISQLClient &sql_client)
 {
-  int ret = OB_SUCCESS;
-  ObTriggerValues new_values;
-  ObDMLExecHelper exec(sql_client);
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  OV (trigger_info.is_valid(), OB_INVALID_ARGUMENT, trigger_info);
-  OX (new_values.set_database_id(trigger_info.get_database_id()));
-  OX (new_values.set_trigger_name(trigger_info.get_trigger_name()));
-  // update all_trigger.
-  OZ (fill_dml_sql(trigger_info, new_values, new_schema_version, dml));
-  OZ (exec.exec_update(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  // insert all_trigger_history.
-  OZ (dml.add_column("is_deleted", 0));
-  OZ (exec.exec_insert(OB_ALL_TRIGGER_HISTORY_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  OZ (log_trigger_operation(trigger_info, new_schema_version,
-                            OB_DDL_RESTORE_TRIGGER_FROM_RECYCLEBIN, NULL, sql_client));
+  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](NativeSchemaCatalog &catalog) {
+        return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
+      });
+  if (OB_SUCC(ret)) {
+    ret = log_trigger_operation(trigger_info, new_schema_version,
+        OB_DDL_RESTORE_TRIGGER_FROM_RECYCLEBIN, nullptr, sql_client);
+  }
   return ret;
 }
 
@@ -137,99 +100,13 @@ int ObTriggerSqlService::update_trigger_on_rename(
     ObISQLClient &sql_client,
     ObSchemaOperationType op_type)
 {
-  int ret = OB_SUCCESS;
-  ObDMLExecHelper exec(sql_client);
-  ObDMLSqlSplicer dml;
-  int64_t affected_rows = 0;
-  OV (trigger_info.is_valid(), OB_INVALID_ARGUMENT, trigger_info);
-
-  // update all_trigger.
-  OZ (fill_dml_sql(trigger_info, new_schema_version, dml));
-  OZ (exec.exec_update(OB_ALL_TRIGGER_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  // insert all_trigger_history.
-  OZ (dml.add_column("is_deleted", 0));
-  OZ (exec.exec_insert(OB_ALL_TRIGGER_HISTORY_TNAME, dml, affected_rows));
-  OV (is_single_row(affected_rows), OB_ERR_UNEXPECTED, affected_rows);
-  OZ (log_trigger_operation(trigger_info, new_schema_version,
-                            op_type, NULL, sql_client));
-  return ret;
-}
-
-
-int ObTriggerSqlService::fill_dml_sql(const ObTriggerInfo &trigger_info,
-                                      int64_t new_schema_version,
-                                      ObDMLSqlSplicer &dml)
-{
-  ObTriggerValues tmp_values;
-  return fill_dml_sql(trigger_info, tmp_values, new_schema_version, dml);
-}
-
-int ObTriggerSqlService::fill_dml_sql(const ObTriggerInfo &trigger_info,
-                                      const ObTriggerValues &new_values,
-                                      int64_t new_schema_version,
-                                      ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  uint64_t database_id = new_values.new_database_id() ?
-                           new_values.get_database_id() :
-                           trigger_info.get_database_id();
-  uint64_t base_object_id = new_values.new_base_object_id() ?
-                              new_values.get_base_object_id() :
-                              trigger_info.get_base_object_id();
-  const ObString &trigger_name = new_values.new_trigger_name() ?
-                                   new_values.get_trigger_name() :
-                                   trigger_info.get_trigger_name();
-  const ObString &spec_source = new_values.new_spec_source() ?
-                                  new_values.get_spec_source() :
-                                  trigger_info.get_package_spec_source();
-  const ObString &body_source = new_values.new_body_source() ?
-                                  new_values.get_body_source() :
-                                  trigger_info.get_package_body_source();
-  
-  
-  uint64_t pure_trigger_id = ObSchemaUtils::get_extract_schema_id(trigger_info.get_trigger_id());
-  uint64_t pure_owner_id = ObSchemaUtils::get_extract_schema_id(trigger_info.get_owner_id());
-  uint64_t pure_database_id = ObSchemaUtils::get_extract_schema_id(database_id);
-  uint64_t pure_base_object_id = ObSchemaUtils::get_extract_schema_id(base_object_id);
-  OZ (dml.add_pk_column("trigger_id", pure_trigger_id));
-  OZ (dml.add_column("owner_id", pure_owner_id));
-  OZ (dml.add_column("database_id", pure_database_id));
-  OZ (dml.add_column("schema_version", new_schema_version));
-  OZ (dml.add_column("base_object_type", trigger_info.get_base_object_type()));
-  OZ (dml.add_column("base_object_id", pure_base_object_id));
-  OZ (dml.add_column("trigger_type", trigger_info.get_trigger_type()));
-  OZ (dml.add_column("trigger_events", trigger_info.get_trigger_events()));
-  OZ (dml.add_column("timing_points", trigger_info.get_timing_points()));
-  OZ (dml.add_column("trigger_flags", trigger_info.get_trigger_flags()));
-  OZ (dml.add_column("trigger_name", ObHexEscapeSqlStr(trigger_name)));
-  OZ (dml.add_column("update_columns", ObHexEscapeSqlStr(trigger_info.get_update_columns())));
-  OZ (dml.add_column("ref_old_name", ObHexEscapeSqlStr(trigger_info.get_ref_old_name())));
-  OZ (dml.add_column("ref_new_name", ObHexEscapeSqlStr(trigger_info.get_ref_new_name())));
-  OZ (dml.add_column("ref_parent_name", ObHexEscapeSqlStr(trigger_info.get_ref_parent_name())));
-  OZ (dml.add_column("when_condition", ObHexEscapeSqlStr(trigger_info.get_when_condition())));
-  OZ (dml.add_column("package_flag", trigger_info.get_package_flag()));
-  OZ (dml.add_column("package_exec_env", ObHexEscapeSqlStr(trigger_info.get_package_exec_env())));
-  OZ (dml.add_column("sql_mode", trigger_info.get_sql_mode()));
-  OZ (dml.add_column("trigger_priv_user", ObHexEscapeSqlStr(trigger_info.get_trigger_priv_user())));
-  OZ (dml.add_column("order_type", trigger_info.get_order_type_value()));
-  OZ (dml.add_column("ref_trg_db_name", ObHexEscapeSqlStr(trigger_info.get_ref_trg_db_name())));
-  OZ (dml.add_column("ref_trg_name", ObHexEscapeSqlStr(trigger_info.get_ref_trg_name())));
-  OZ (dml.add_column("action_order", trigger_info.get_action_order()));
+  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](NativeSchemaCatalog &catalog) {
+        return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
+      });
   if (OB_SUCC(ret)) {
-    OZ (dml.add_column("analyze_flag", trigger_info.get_analyze_flag()));
-
-    if (OB_SUCC(ret)) {
-      ObString empty_str;                                                        
-      OV (!trigger_info.get_trigger_body().empty());
-      if (OB_FAIL(ret)) {
-      } else {
-        OZ (dml.add_column("trigger_body", empty_str));
-        OZ (dml.add_column("package_spec_source", empty_str));
-        OZ (dml.add_column("package_body_source", empty_str));
-        OZ (dml.add_column("trigger_body_v2", ObHexEscapeSqlStr(trigger_info.get_trigger_body())));
-      }
-    }
+    ret = log_trigger_operation(trigger_info, new_schema_version,
+        op_type, nullptr, sql_client);
   }
   return ret;
 }

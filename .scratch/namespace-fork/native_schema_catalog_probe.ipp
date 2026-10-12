@@ -998,6 +998,125 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FOREIGN_KEY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_trigger") != std::string::npos) {
+    ObArray<ObTriggerInfo> triggers;
+    ObArray<ObSimpleTriggerSchema> simple;
+    ObArray<uint64_t> selection;
+    ret = catalog.get_triggers(INT64_MAX, triggers);
+    if (ret == OB_SUCCESS) { ret = catalog.get_simple_triggers(INT64_MAX, simple); }
+    ObTriggerInfo info;
+    int64_t found = 0;
+    for (int64_t i = 0; ret == OB_SUCCESS && i < triggers.count(); ++i) {
+      if (triggers.at(i).get_base_object_id() == table_id) {
+        ret = info.assign(triggers.at(i));
+        ++found;
+      }
+    }
+    if (ret == OB_SUCCESS && (found != 1 || simple.count() != triggers.count()
+        || info.get_trigger_body() != ObString::make_string("TRIGGER ti BEFORE INSERT ON t FOR EACH ROW SET NEW.v=CONCAT(NEW.v,':触发')"))) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (ret == OB_SUCCESS) { ret = selection.push_back(info.get_trigger_id()); }
+    if (ret == OB_SUCCESS) { ret = selection.push_back(info.get_trigger_id()); }
+    if (ret == OB_SUCCESS) { ret = selection.push_back(info.get_trigger_id() + 1000000000); }
+    triggers.reset(); simple.reset();
+    if (ret == OB_SUCCESS) { ret = catalog.get_triggers(INT64_MAX, triggers, &selection); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_simple_triggers(INT64_MAX, simple, &selection); }
+    if (ret == OB_SUCCESS && (triggers.count() != 1 || simple.count() != 1)) { ret = OB_ERR_UNEXPECTED; }
+    triggers.reset(); simple.reset(); selection.reset();
+    if (ret == OB_SUCCESS) { ret = catalog.get_triggers(INT64_MAX, triggers, &selection); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_simple_triggers(INT64_MAX, simple, &selection); }
+    if (ret == OB_SUCCESS && (!triggers.empty() || !simple.empty())) { ret = OB_ERR_UNEXPECTED; }
+    const int64_t version = info.get_schema_version() + 100;
+    info.set_trigger_id(info.get_trigger_id() + 1000000000);
+    info.set_schema_version(version);
+    const std::string first_body(90000, 'a');
+    const std::string second_body(120000, 'b');
+    if (ret == OB_SUCCESS) { ret = info.set_trigger_name(ObString::make_string("native_触发")); }
+    if (ret == OB_SUCCESS) { ret = info.set_trigger_body(ObString(first_body.size(), first_body.data())); }
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    using Write = observer::NativeSchemaCatalog::TriggerWrite;
+    auto begin = [&]() {
+      int rc = native.begin(owner, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](bool commit) {
+      int rc = owner.is_active() ? (commit ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+      const int closed = writer.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, int64_t at, const std::string *body, bool enabled) {
+      ObArray<ObTriggerInfo> full;
+      ObArray<ObSimpleTriggerSchema> simple;
+      ObArray<uint64_t> ids;
+      int rc = ids.push_back(info.get_trigger_id());
+      if (rc == OB_SUCCESS) { rc = reader.get_triggers(at, full, &ids); }
+      if (rc == OB_SUCCESS) { rc = reader.get_simple_triggers(at, simple, &ids); }
+      if (rc == OB_SUCCESS && body == nullptr) {
+        if (!full.empty() || !simple.empty()) { rc = OB_ERR_UNEXPECTED; }
+      } else if (rc == OB_SUCCESS && (full.count() != 1 || simple.count() != 1
+          || full.at(0).get_trigger_body() != ObString(body->size(), body->data())
+          || full.at(0).get_trigger_name() != info.get_trigger_name()
+          || simple.at(0).get_trigger_name() != info.get_trigger_name()
+          || full.at(0).is_enable() != enabled
+          || full.at(0).get_base_object_id() != table_id)) { rc = OB_ERR_UNEXPECTED; }
+      ObArenaAllocator arena(ObMemAttr("TriggerRead"));
+      ObTableSchema *table = nullptr;
+      if (rc == OB_SUCCESS) { rc = reader.get_table(table_id, at, arena, table); }
+      bool related = false;
+      for (int64_t i = 0; rc == OB_SUCCESS && i < table->get_trigger_list().count(); ++i) {
+        related |= table->get_trigger_list().at(i) == info.get_trigger_id();
+      }
+      if (rc == OB_SUCCESS && related != (body != nullptr)) { rc = OB_ERR_UNEXPECTED; }
+      return rc;
+    };
+    auto verify_committed = [&](const std::string *body) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      if (rc == OB_SUCCESS) { rc = verify(reader, INT64_MAX - 1, body, true); }
+      return rc;
+    };
+    const char *stage = "insert";
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.write_trigger(info, version, Write::INSERT); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, INT64_MAX - 1, &first_body, true); }
+    if (ret == OB_SUCCESS) { ret = verify_committed(nullptr); }
+    info.set_disable();
+    if (ret == OB_SUCCESS) { ret = info.set_trigger_body(ObString(second_body.size(), second_body.data())); }
+    if (ret == OB_SUCCESS) { stage = "update"; ret = writer.write_trigger(info, version + 1, Write::UPDATE); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, INT64_MAX - 1, &second_body, false); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, version, &first_body, true); }
+    if (ret == OB_SUCCESS) { stage = "erase"; ret = writer.write_trigger(info, version + 2, Write::ERASE); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, INT64_MAX - 1, nullptr, false); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, version + 1, &second_body, false); }
+    const int rollback = end(false);
+    if (ret == OB_SUCCESS) { ret = rollback; }
+    if (ret == OB_SUCCESS) { ret = verify_committed(nullptr); }
+    info.set_enable();
+    if (ret == OB_SUCCESS) { ret = info.set_trigger_body(ObString(first_body.size(), first_body.data())); }
+    if (ret == OB_SUCCESS) { stage = "commit"; ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.write_trigger(info, version, Write::INSERT); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = verify_committed(&first_body); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.write_trigger(info, version + 1, Write::ERASE); }
+    const int undo = end(false);
+    if (ret == OB_SUCCESS) { ret = undo; }
+    if (ret == OB_SUCCESS) { ret = verify_committed(&first_body); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.write_trigger(info, version + 1, Write::ERASE); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "deleted"; ret = verify_committed(nullptr); }
+    const int cleanup = end(false);
+    if (ret == OB_SUCCESS) { ret = cleanup; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_TRIGGER namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_constraint") != std::string::npos) {
     ObArenaAllocator arena(ObMemAttr("ConstraintProbe"));
     ObTableSchema *table = nullptr;

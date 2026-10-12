@@ -819,6 +819,33 @@ int read_mock_parent_rows(NativeSchemaCatalog &catalog, int64_t version, ObIArra
 }
 
 template<typename Table>
+int read_trigger_rows(NativeSchemaCatalog &catalog, int64_t version, ObIArray<Table> &out,
+    const ObIArray<uint64_t> *table_ids)
+{
+  if (version <= 0) { return OB_INVALID_ARGUMENT; }
+  auto read = [&](const ObRowkey &prefix) {
+    CatalogRows rows;
+    const int rc = rows.open(catalog, OB_ALL_TRIGGER_HISTORY_TID,
+                            prefix, version, true, 0, true);
+    return rc == OB_SUCCESS ? ObSchemaRetrieveUtils::retrieve_trigger_schema(rows, out) : rc;
+  };
+  if (table_ids == nullptr) { return read(ObRowkey()); }
+  std::set<uint64_t, std::greater<uint64_t>> ids;
+  for (int64_t i = 0; i < table_ids->count(); ++i) {
+    if (table_ids->at(i) == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+    ids.insert(table_ids->at(i));
+  }
+  int ret = OB_SUCCESS;
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ObObj key;
+    key.set_int(id);
+    ret = read(ObRowkey(&key, 1));
+  }
+  return ret;
+}
+
+template<typename Table>
 int read_partitions(NativeSchemaCatalog &catalog, int64_t version, bool history, Table &definition)
 {
   Table *table = &definition;
@@ -1379,6 +1406,46 @@ int NativeSchemaCatalog::get_mock_fk_parent_table_schema_versions(const ObIArray
     } else if (OB_FAIL(rows.get_int("schema_version", version))) {
     } else if (OB_FAIL(pair.init(id, version))) {
     } else { ret = out.push_back(pair); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_triggers(int64_t version, ObIArray<ObTriggerInfo> &out,
+    const ObIArray<uint64_t> *ids)
+{
+  return read_trigger_rows(*this, version, out, ids);
+}
+
+int NativeSchemaCatalog::get_simple_triggers(int64_t version, ObIArray<ObSimpleTriggerSchema> &out,
+    const ObIArray<uint64_t> *ids)
+{
+  return read_trigger_rows(*this, version, out, ids);
+}
+
+int NativeSchemaCatalog::write_trigger(const ObTriggerInfo &info, int64_t version, TriggerWrite mode)
+{
+  if (!info.is_valid() || version <= 0 || info.get_trigger_body().empty()) { return OB_INVALID_ARGUMENT; }
+  const auto fill = [&](SchemaCatalogRow &row) { return SchemaCatalogFields::trigger(info, version, row); };
+  int ret = OB_SUCCESS;
+  if (mode == TriggerWrite::INSERT) {
+    ret = insert_fields(OB_ALL_TRIGGER_TID, fill);
+  } else if (mode == TriggerWrite::UPDATE) {
+    bool matched = false;
+    ret = update_fields(OB_ALL_TRIGGER_TID, fill, matched);
+    if (OB_SUCC(ret) && !matched) { ret = OB_ERR_UNEXPECTED; }
+  } else if (mode == TriggerWrite::ERASE) {
+    int64_t deleted = 0;
+    ret = erase_prefix(OB_ALL_TRIGGER_TID, [&](SchemaCatalogRow &row) {
+      return row.add_pk_column("trigger_id", info.get_trigger_id());
+    }, deleted);
+    if (OB_SUCC(ret) && deleted != 1) { ret = OB_ERR_UNEXPECTED; }
+  } else { ret = OB_INVALID_ARGUMENT; }
+  if (OB_SUCC(ret)) {
+    ret = insert_fields(OB_ALL_TRIGGER_HISTORY_TID, [&](SchemaCatalogRow &row) {
+      int ret = fill(row);
+      if (OB_SUCC(ret)) { ret = row.add_column("is_deleted", mode == TriggerWrite::ERASE); }
+      return ret;
+    });
   }
   return ret;
 }

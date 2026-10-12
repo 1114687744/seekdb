@@ -21,6 +21,7 @@ def run(binary, selected=None):
             ('versions', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
              "CONSTRAINT ck CHECK (id >= 0)", ' PARTITION BY HASH(id) PARTITIONS 8', (2, 8, 1, 1, 0, 0)),
+            ('trigger', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('constraint', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
              "CONSTRAINT ck CHECK (id >= 0) NOT ENFORCED", '', (2, 0, 0, 1, 0, 0)),
             ('range_part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'",
@@ -73,6 +74,9 @@ def run(binary, selected=None):
                 experiment.sql(f'USE {database}')
                 experiment.sql('SET SESSION foreign_key_checks=0')
             experiment.sql(f'CREATE TABLE {database}.t({columns}){options}')
+            if label == 'trigger':
+                experiment.sql(f'USE {database}')
+                experiment.sql("CREATE TRIGGER ti BEFORE INSERT ON t FOR EACH ROW SET NEW.v=CONCAT(NEW.v,':触发')")
             if mock_case:
                 experiment.sql('SET SESSION foreign_key_checks=1')
             table_id = experiment.sql("SELECT t.table_id FROM oceanbase.__all_table t JOIN oceanbase.__all_database d "
@@ -162,6 +166,8 @@ def run(binary, selected=None):
             for aux_id, aux_type, index_type in auxiliary:
                 assert (f'NATIVE_SCHEMA_CATALOG_AUX_ROW namespace={child_id} id={aux_id} '
                         f'type={aux_type} index_type={index_type}') in trace, auxiliary
+            if label == 'trigger':
+                assert f'NATIVE_SCHEMA_CATALOG_TRIGGER namespace={child_id} stage=deleted ret=0' in trace, trace[-3000:]
             if mock_case:
                 assert (f'NATIVE_SCHEMA_CATALOG_MOCK_FULL namespace={child_id} id={mock_id} '
                         f'version={mock_version} columns={len(mock_columns)} ret=0') in trace, trace[-2000:]
@@ -218,7 +224,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('trigger', 'range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

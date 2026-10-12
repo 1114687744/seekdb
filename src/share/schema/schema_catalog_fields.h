@@ -4,6 +4,7 @@
 
 #include "share/schema/ob_table_schema.h"
 #include "share/schema/ob_constraint.h"
+#include "share/schema/ob_trigger_info.h"
 #include "share/schema/ob_schema_utils.h"
 #include "share/ob_dml_sql_splicer.h"
 #include "share/ob_timezone_mgr.h"
@@ -23,6 +24,8 @@ public:
   static int partition_options(const ObTableSchema &, RowWriter &);
   template<class RowWriter>
   static int column(const ObColumnSchemaV2 &, RowWriter &, bool is_history);
+  template<class RowWriter>
+  static int trigger(const ObTriggerInfo &, int64_t version, RowWriter &);
   template<class RowWriter>
   static int foreign_key(const ObForeignKeyInfo &, RowWriter &);
   template<class RowWriter>
@@ -300,6 +303,45 @@ int SchemaCatalogFields::column(
       SHARE_SCHEMA_LOG(WARN, "dml add column failed", K(ret));
     }
   }
+  return ret;
+}
+
+template<class RowWriter>
+int SchemaCatalogFields::trigger(const ObTriggerInfo &info, int64_t version, RowWriter &row)
+{
+  using namespace common;
+  if (!info.is_valid() || version <= 0 || info.get_trigger_body().empty()) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(row.add_pk_column("trigger_id", ObSchemaUtils::get_extract_schema_id(info.get_trigger_id())))
+      || OB_FAIL(row.add_column("owner_id", ObSchemaUtils::get_extract_schema_id(info.get_owner_id())))
+      || OB_FAIL(row.add_column("database_id", ObSchemaUtils::get_extract_schema_id(info.get_database_id())))
+      || OB_FAIL(row.add_column("schema_version", version))
+      || OB_FAIL(row.add_column("base_object_type", info.get_base_object_type()))
+      || OB_FAIL(row.add_column("base_object_id", ObSchemaUtils::get_extract_schema_id(info.get_base_object_id())))
+      || OB_FAIL(row.add_column("trigger_type", info.get_trigger_type()))
+      || OB_FAIL(row.add_column("trigger_events", info.get_trigger_events()))
+      || OB_FAIL(row.add_column("timing_points", info.get_timing_points()))
+      || OB_FAIL(row.add_column("trigger_flags", info.get_trigger_flags()))
+      || OB_FAIL(row.add_column("trigger_name", ObHexEscapeSqlStr(info.get_trigger_name())))
+      || OB_FAIL(row.add_column("update_columns", ObHexEscapeSqlStr(info.get_update_columns())))
+      || OB_FAIL(row.add_column("ref_old_name", ObHexEscapeSqlStr(info.get_ref_old_name())))
+      || OB_FAIL(row.add_column("ref_new_name", ObHexEscapeSqlStr(info.get_ref_new_name())))
+      || OB_FAIL(row.add_column("ref_parent_name", ObHexEscapeSqlStr(info.get_ref_parent_name())))
+      || OB_FAIL(row.add_column("when_condition", ObHexEscapeSqlStr(info.get_when_condition())))
+      || OB_FAIL(row.add_column("package_flag", info.get_package_flag()))
+      || OB_FAIL(row.add_column("package_exec_env", ObHexEscapeSqlStr(info.get_package_exec_env())))
+      || OB_FAIL(row.add_column("sql_mode", info.get_sql_mode()))
+      || OB_FAIL(row.add_column("trigger_priv_user", ObHexEscapeSqlStr(info.get_trigger_priv_user())))
+      || OB_FAIL(row.add_column("order_type", info.get_order_type_value()))
+      || OB_FAIL(row.add_column("ref_trg_db_name", ObHexEscapeSqlStr(info.get_ref_trg_db_name())))
+      || OB_FAIL(row.add_column("ref_trg_name", ObHexEscapeSqlStr(info.get_ref_trg_name())))
+      || OB_FAIL(row.add_column("action_order", info.get_action_order()))
+      || OB_FAIL(row.add_column("analyze_flag", info.get_analyze_flag()))
+      || OB_FAIL(row.add_column("trigger_body", ObString()))
+      || OB_FAIL(row.add_column("package_spec_source", ObString()))
+      || OB_FAIL(row.add_column("package_body_source", ObString()))
+      || OB_FAIL(row.add_column("trigger_body_v2", ObHexEscapeSqlStr(info.get_trigger_body())))
+      || OB_FAIL(row.add_gmt_modified())) {}
   return ret;
 }
 
