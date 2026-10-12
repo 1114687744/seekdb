@@ -57,8 +57,11 @@ public:
            const RowVisitor &, bool reverse = false);
   int open_scan(uint64_t inner_table_id, const common::ObNewRange &, Cursor &, bool reverse = false);
   int open_prefix(uint64_t inner_table_id, const common::ObRowkey &prefix, Cursor &, bool reverse = false);
+  // CURRENT requires INT64_MAX; HISTORY selects the latest logical version
+  // at/before schema_version within this operation's protected MVCC view.
+  enum class TableSource { HISTORY, CURRENT };
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
-                share::schema::ObTableSchema *&);
+                share::schema::ObTableSchema *&, TableSource = TableSource::HISTORY);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.

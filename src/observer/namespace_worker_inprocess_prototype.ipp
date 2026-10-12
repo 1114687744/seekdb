@@ -8,6 +8,7 @@
 #include "namespace/namespace.h"
 #include "data_plane/ob_i_range_service.h"
 #include "observer/schema/ob_schema_service_sql_impl.h"
+#include "observer/schema/native_schema_catalog.h"
 #include "rootserver/ob_max_id_cache_adapter.h"
 #include "rootserver/ob_local_management_service.h"
 #include "rootserver/ddl_task/ob_sys_ddl_util.h"
@@ -57,26 +58,20 @@ int load_committed_namespace_schema(uint64_t namespace_id,
   NamespaceSchemaLoadScope scope(namespace_id);
   InProcessServingScope serving(namespace_id);
   auto *access = share::server_service<storage::ObAccessService>();
-  if (access == nullptr) { return OB_NOT_INIT; }
-  auto &store = access->instance_meta_store();
-  storage::InstanceMetaStore::Transaction tx;
-  int ret = store.begin(tx, ObTimeUtility::current_time() + 30 * 1000 * 1000, true);
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  NativeSchemaCatalog catalog(namespace_id, *access, *transactions);
+  int ret = catalog.begin_read(ObTimeUtility::current_time() + 30 * 1000 * 1000,
+                               !share::server_is_write_enabled());
   if (OB_SUCC(ret)) {
-    rootserver::InstanceNamespaceMetadata metadata(store, tx);
-    rootserver::InstanceNamespaceRecord record;
-    if (OB_FAIL(metadata.get_namespace(namespace_id, record))) {
-    } else if (record.roots.state != 0) {
-      ret = OB_ENTRY_NOT_EXIST;
-    } else {
-      ObRefreshSchemaStatus status;
-      status.snapshot_timestamp_ = tx.snapshot_version().get_val_for_tx();
-      status.readable_schema_version_ = record.roots.schema_version;
-      ret = schema.refresh_runtime_schema_from_static_system(
-          status, record.roots.schema_version);
-    }
-    const int cleanup = store.rollback(tx);
-    if (OB_SUCC(ret)) { ret = cleanup; }
+    const auto &entry = catalog.view()->entry();
+    ObRefreshSchemaStatus status;
+    status.snapshot_timestamp_ = entry.snapshot;
+    status.readable_schema_version_ = entry.roots.schema_version;
+    ret = schema.refresh_runtime_schema_from_static_system(status, entry.roots.schema_version);
   }
+  const int cleanup = catalog.close();
+  if (OB_SUCC(ret)) { ret = cleanup; }
   return ret;
 }
 class NamespaceSchemaLifecycle final : public INamespaceSchemaLifecycle

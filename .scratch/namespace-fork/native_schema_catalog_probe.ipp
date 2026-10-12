@@ -120,6 +120,34 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
             : value_column->get_cur_default_value().get_string().length() != expected_default_length))) {
       ret = OB_ERR_UNEXPECTED;
     }
+    if (ret == OB_SUCCESS && expected_foreign_keys > 0) {
+      const auto &fk = definition->get_foreign_key_infos().at(0);
+      ObTableSchema *parent = nullptr;
+      ret = catalog.get_table(fk.parent_table_id_, requested_version, allocator, parent);
+      if (ret == OB_SUCCESS && (parent->get_foreign_key_infos().count() != 1
+          || parent->get_foreign_key_infos().at(0).foreign_key_id_ != fk.foreign_key_id_)) {
+        ret = OB_ERR_UNEXPECTED;
+      }
+      if (parent != nullptr) { parent->~ObTableSchema(); }
+    }
+    if (definition != nullptr) { definition->~ObTableSchema(); definition = nullptr; }
+    if (ret == OB_SUCCESS) {
+      ret = catalog.get_table(table_id, INT64_MAX, allocator, definition,
+          observer::NativeSchemaCatalog::TableSource::CURRENT);
+      const int64_t current_columns = expected_columns
+          + (name.find("_history") != std::string::npos ? 1 : 0);
+      const int64_t current_fks = name.find("_old_fk") != std::string::npos ? 0 : expected_foreign_keys;
+      if (ret == OB_SUCCESS && (definition->get_column_count() != current_columns
+          || definition->get_partition_num() != expected_parts
+          || definition->get_index_tid_count() != expected_indexes
+          || definition->get_constraint_count() != expected_constraints
+          || definition->get_foreign_key_infos().count() != current_fks)) {
+        ret = OB_ERR_UNEXPECTED;
+      }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CURRENT namespace=%lu table=%llu ret=%d\n",
+          namespace_id, table_id, ret);
+    }
+    if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FULL namespace=%lu table=%llu ret=%d\n", namespace_id, table_id, ret);
   }
   if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {

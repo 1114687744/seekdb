@@ -5,6 +5,7 @@
 #include "share/schema/schema_catalog_fields.h"
 #include "share/schema/schema_catalog_row.h"
 #include <unordered_map>
+#include <set>
 #include "rootserver/fork_table/namespace_tablet_access.h"
 #include "share/inner_table/ob_inner_table_schema.h"
 #include "storage/access/native_inner_table.h"
@@ -311,9 +312,10 @@ public:
   using Filter = std::function<int(const CatalogRows &, bool &)>;
   int open(NativeSchemaCatalog &catalog, uint64_t inner_id, const ObRowkey &prefix,
       int64_t version, bool reverse = false, int64_t minimum_version = 0,
-      bool latest_per_key = false, Filter filter = {})
+      bool latest_per_key = false, Filter filter = {}, bool history = true)
   {
     version_ = version;
+    history_ = history;
     minimum_version_ = minimum_version;
     latest_per_key_ = latest_per_key;
     filter_ = std::move(filter);
@@ -333,8 +335,10 @@ public:
     int ret = OB_SUCCESS;
     while (OB_SUCC(ret = cursor_.next(row_))) {
       int64_t version = 0;
-      if (OB_FAIL(get_int("schema_version", version))) { break; }
-      if (version > version_ || version < minimum_version_) { continue; }
+      if (version_ != INT64_MAX || minimum_version_ > 0) {
+        if (OB_FAIL(get_int("schema_version", version))) { break; }
+        if (version > version_ || version < minimum_version_) { continue; }
+      }
       if (latest_per_key_) {
         ObRowkey entity(row_->cells_, cursor_.schema()->get_rowkey_column_num() - 1);
         if (last_entity_.get_obj_cnt() > 0 && last_entity_ == entity) { continue; }
@@ -350,6 +354,9 @@ public:
   }
   int get_int(const char *name, int64_t &value) const
   {
+    // Current records have no tombstone column; shared relationship decoders
+    // consume the same logical field as their history counterparts.
+    if (!history_ && 0 == STRCMP(name, "is_deleted")) { value = 0; return OB_SUCCESS; }
     const ObObj *obj = nullptr;
     int ret = cell(name, obj);
     if (OB_SUCC(ret)) {
@@ -411,17 +418,44 @@ private:
   int64_t version_ = 0;
   int64_t minimum_version_ = 0;
   bool latest_per_key_ = false;
+  bool history_ = true;
   Filter filter_;
   ObArenaAllocator key_allocator_{ObMemAttr("CatalogRowKey")};
   ObRowkey last_entity_;
 };
+
+// An index can retain older relationships. Collect candidate identities, then
+// let the caller inspect each entity's latest visible history in the same view.
+// Index rowkeys do not necessarily put schema_version last, so do not use the
+// main history table's latest_per_key rule here.
+int collect_related_ids(NativeSchemaCatalog &catalog, uint64_t index_id,
+    const ObRowkey &prefix, int64_t version, const char *id_column,
+    std::set<uint64_t> &ids)
+{
+  CatalogRows rows;
+  int ret = rows.open(catalog, index_id, prefix, version);
+  while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+    uint64_t id = OB_INVALID_ID;
+    if (OB_SUCC(ret = rows.get_uint(id_column, id))) { ids.insert(id); }
+  }
+  return ret == OB_ITER_END ? OB_SUCCESS : ret;
+}
 } // namespace
 
 int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
-    ObIAllocator &allocator, ObTableSchema *&out)
+    ObIAllocator &allocator, ObTableSchema *&out, TableSource source)
 {
   out = nullptr;
-  if (version <= 0 || table_id == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+  const bool history = source == TableSource::HISTORY;
+  if (version <= 0 || table_id == OB_INVALID_ID || (!history && version != INT64_MAX)) {
+    return OB_INVALID_ARGUMENT;
+  }
+  auto open = [&](CatalogRows &rows, uint64_t current_id, uint64_t history_id,
+      const ObRowkey &key, bool reverse = false, int64_t minimum = 0,
+      bool latest = false, CatalogRows::Filter filter = {}) {
+    return rows.open(*this, history ? history_id : current_id, key, version,
+                     reverse, history ? minimum : 0, history && latest, std::move(filter), history);
+  };
   ObObj id;
   id.set_int(table_id);
   const ObRowkey prefix(&id, 1);
@@ -429,13 +463,13 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
   int ret = OB_SUCCESS;
   {
     CatalogRows rows;
-    if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_HISTORY_TID, prefix, version, true, 0, true))) {
+    if (OB_FAIL(open(rows, OB_ALL_TABLE_TID, OB_ALL_TABLE_HISTORY_TID, prefix, true, 0, true))) {
     } else if (OB_FAIL(rows.next())) {
       if (ret == OB_ITER_END) { ret = OB_ERR_SCHEMA_HISTORY_EMPTY; }
     } else {
       ObTableSchema definition;
       bool deleted = false;
-      if (OB_FAIL(ObSchemaRetrieveUtils::fill_table_schema(true, rows, definition, deleted))) {
+      if (OB_FAIL(ObSchemaRetrieveUtils::fill_table_schema(history, rows, definition, deleted))) {
       } else if (deleted) { ret = OB_TABLE_NOT_EXIST; }
       else { ret = ObSchemaUtils::alloc_schema(allocator, definition, table); }
     }
@@ -443,35 +477,39 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
   {
     CatalogRows rows;
     if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(rows.open(*this, OB_ALL_COLUMN_HISTORY_TID, prefix, version))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_column_schema(true, rows, table); }
+    } else if (OB_FAIL(open(rows, OB_ALL_COLUMN_TID, OB_ALL_COLUMN_HISTORY_TID, prefix))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_column_schema(history, rows, table); }
   }
   if (OB_SUCC(ret) && table->get_part_level() != PARTITION_LEVEL_ZERO) {
     CatalogRows rows;
     if (table->get_truncate_version() > version) { ret = OB_ERR_UNEXPECTED; }
-    else if (OB_FAIL(rows.open(*this, OB_ALL_PART_HISTORY_TID, prefix, version,
+    else if (OB_FAIL(open(rows, OB_ALL_PART_TID, OB_ALL_PART_HISTORY_TID, prefix,
                               false, table->get_truncate_version()))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_part_info(true, rows, table); }
+    } else { ret = ObSchemaRetrieveUtils::retrieve_part_info(history, rows, table); }
   }
   if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO
       && table->has_sub_part_template_def()) {
     CatalogRows rows;
-    if (OB_FAIL(rows.open(*this, OB_ALL_DEF_SUB_PART_HISTORY_TID, prefix, version))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_def_subpart_info(true, rows, table); }
+    if (OB_FAIL(open(rows, OB_ALL_DEF_SUB_PART_TID, OB_ALL_DEF_SUB_PART_HISTORY_TID, prefix))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_def_subpart_info(history, rows, table); }
   }
   if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO) {
     CatalogRows rows;
-    if (OB_FAIL(rows.open(*this, OB_ALL_SUB_PART_HISTORY_TID, prefix, version,
+    if (OB_FAIL(open(rows, OB_ALL_SUB_PART_TID, OB_ALL_SUB_PART_HISTORY_TID, prefix,
                           false, table->get_truncate_version()))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_subpart_info(true, rows, table); }
+    } else { ret = ObSchemaRetrieveUtils::retrieve_subpart_info(history, rows, table); }
+  }
+  if (OB_SUCC(ret) && is_virtual_table(table_id)
+      && table->get_part_level() == PARTITION_LEVEL_ONE && table->get_part_array() == nullptr) {
+    ret = table->mock_list_partition_array();
   }
   if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_partition_array(*table); }
   if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_subpartition_array(*table); }
   {
     CatalogRows rows;
     if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(rows.open(*this, OB_ALL_CONSTRAINT_HISTORY_TID, prefix, version))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_constraint(true, rows, table); }
+    } else if (OB_FAIL(open(rows, OB_ALL_CONSTRAINT_TID, OB_ALL_CONSTRAINT_HISTORY_TID, prefix))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_constraint(history, rows, table); }
   }
   if (OB_SUCC(ret)) {
     for (auto it = table->constraint_begin_for_non_const_iter();
@@ -480,8 +518,8 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
       keys[1].set_int((*it)->get_constraint_id());
       CatalogRows rows;
       ObSEArray<uint64_t, 8> columns;
-      if (OB_FAIL(rows.open(*this, OB_ALL_CONSTRAINT_COLUMN_HISTORY_TID,
-                            ObRowkey(keys, 2), version, true, 0, true))) {
+      if (OB_FAIL(open(rows, OB_ALL_CONSTRAINT_COLUMN_TID, OB_ALL_CONSTRAINT_COLUMN_HISTORY_TID,
+                            ObRowkey(keys, 2), true, 0, true))) {
       } else {
         while (OB_SUCC(ret = rows.next())) {
           uint64_t column = OB_INVALID_ID;
@@ -498,18 +536,33 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     }
   }
   {
-    CatalogRows rows;
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(rows.open(*this, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(), version,
+    std::set<uint64_t> ids;
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(*this, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_CHILD_TID_TID
+                                              : OB_ALL_FOREIGN_KEY_IDX_FK_CHILD_TID_TID,
+                                prefix, version, "foreign_key_id", ids);
+    }
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(*this, history ? OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_PARENT_TID_TID
+                                              : OB_ALL_FOREIGN_KEY_IDX_FK_PARENT_TID_TID,
+                                prefix, version, "foreign_key_id", ids);
+    }
+    for (const uint64_t related : ids) {
+      if (OB_FAIL(ret)) { break; }
+      ObObj key;
+      key.set_int(related);
+      CatalogRows rows;
+      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_TID, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(&key, 1),
                                 true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
-      int64_t child = 0, parent = 0, deleted = 0;
-      int rc = row.get_int("is_deleted", deleted);
-      if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("child_table_id", child); }
-      if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("parent_table_id", parent); }
-      accept = !deleted && (child == table_id || parent == table_id);
-      return rc;
-    }))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_foreign_key_info(rows, *table); }
+        int64_t child = 0, parent = 0, deleted = 0;
+        int rc = row.get_int("is_deleted", deleted);
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("child_table_id", child); }
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("parent_table_id", parent); }
+        accept = !deleted && (child == table_id || parent == table_id);
+        return rc;
+      }))) {
+      } else { ret = ObSchemaRetrieveUtils::retrieve_foreign_key_info(rows, *table); }
+    }
   }
   if (OB_SUCC(ret)) {
     for (int64_t i = 0; OB_SUCC(ret) && i < table->get_foreign_key_infos().count(); ++i) {
@@ -522,8 +575,8 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
         TO_STRING_KV(K(position), K(child), K(parent));
       };
       ObSEArray<Column, 8> columns;
-      if (OB_FAIL(rows.open(*this, OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID,
-                            ObRowkey(&fk, 1), version, true, 0, true))) {
+      if (OB_FAIL(open(rows, OB_ALL_FOREIGN_KEY_COLUMN_TID, OB_ALL_FOREIGN_KEY_COLUMN_HISTORY_TID,
+                            ObRowkey(&fk, 1), true, 0, true))) {
       } else {
         while (OB_SUCC(ret = rows.next())) {
           bool deleted = false;
@@ -546,40 +599,59 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     }
   }
   {
-    CatalogRows rows;
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(rows.open(*this, OB_ALL_TRIGGER_HISTORY_TID, ObRowkey(), version,
+    std::set<uint64_t> ids;
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(*this, history ? OB_ALL_TRIGGER_HISTORY_IDX_TRIGGER_HIS_BASE_OBJ_ID_TID
+                                              : OB_ALL_TRIGGER_IDX_TRIGGER_BASE_OBJ_ID_TID,
+                                prefix, version, "trigger_id", ids);
+    }
+    for (const uint64_t related : ids) {
+      if (OB_FAIL(ret)) { break; }
+      ObObj key;
+      key.set_int(related);
+      CatalogRows rows;
+      if (OB_FAIL(open(rows, OB_ALL_TRIGGER_TID, OB_ALL_TRIGGER_HISTORY_TID, ObRowkey(&key, 1),
                                 true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
-      int64_t object = 0, deleted = 0;
-      int rc = row.get_int("is_deleted", deleted);
-      if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("base_object_id", object); }
-      accept = !deleted && object == table_id;
-      return rc;
-    }))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_trigger_list(rows, table->get_trigger_list()); }
+        int64_t object = 0, deleted = 0;
+        int rc = row.get_int("is_deleted", deleted);
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("base_object_id", object); }
+        accept = !deleted && object == table_id;
+        return rc;
+      }))) {
+      } else { ret = ObSchemaRetrieveUtils::retrieve_trigger_list(rows, table->get_trigger_list()); }
+    }
   }
   {
-    CatalogRows rows;
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_HISTORY_TID, ObRowkey(), version,
+    std::set<uint64_t> ids;
+    if (OB_SUCC(ret)) {
+      ret = collect_related_ids(*this, history ? OB_ALL_TABLE_HISTORY_IDX_DATA_TABLE_ID_TID
+                                              : OB_ALL_TABLE_IDX_DATA_TABLE_ID_TID,
+                                prefix, version, "table_id", ids);
+    }
+    for (const uint64_t related : ids) {
+      if (OB_FAIL(ret)) { break; }
+      ObObj key;
+      key.set_int(related);
+      CatalogRows rows;
+      if (OB_FAIL(open(rows, OB_ALL_TABLE_TID, OB_ALL_TABLE_HISTORY_TID, ObRowkey(&key, 1),
                                 true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
-      int64_t data_table = 0, deleted = 0;
-      int rc = row.get_int("is_deleted", deleted);
-      if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("data_table_id", data_table); }
-      accept = !deleted && data_table == table_id;
-      return rc;
-    }))) {
-    } else {
-      ObSEArray<ObAuxTableMetaInfo, 8> auxiliary;
-      if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_aux_tables(rows, auxiliary))) {
+        int64_t data_table = 0, deleted = 0;
+        int rc = row.get_int("is_deleted", deleted);
+        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("data_table_id", data_table); }
+        accept = !deleted && data_table == table_id;
+        return rc;
+      }))) {
       } else {
-        // The native history scan runs in reverse key order. Keep the same
-        // ascending table-id order used by existing full schema consumers.
-        for (int64_t i = auxiliary.count() - 1; OB_SUCC(ret) && i >= 0; --i) {
-          const auto &aux = auxiliary.at(i);
-          if (aux.table_type_ == USER_INDEX) { ret = table->add_simple_index_info(aux); }
-          else if (aux.table_type_ == AUX_LOB_META) { table->set_aux_lob_meta_tid(aux.table_id_); }
-          else if (aux.table_type_ == AUX_LOB_PIECE) { table->set_aux_lob_piece_tid(aux.table_id_); }
+        ObSEArray<ObAuxTableMetaInfo, 8> auxiliary;
+        if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_aux_tables(rows, auxiliary))) {
+        } else {
+          // Candidates are sorted by table ID, matching full schema consumers.
+          for (int64_t i = 0; OB_SUCC(ret) && i < auxiliary.count(); ++i) {
+            const auto &aux = auxiliary.at(i);
+            if (aux.table_type_ == USER_INDEX) { ret = table->add_simple_index_info(aux); }
+            else if (aux.table_type_ == AUX_LOB_META) { table->set_aux_lob_meta_tid(aux.table_id_); }
+            else if (aux.table_type_ == AUX_LOB_PIECE) { table->set_aux_lob_piece_tid(aux.table_id_); }
+          }
         }
       }
     }

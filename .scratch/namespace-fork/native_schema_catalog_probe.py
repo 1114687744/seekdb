@@ -28,6 +28,13 @@ def run(binary, selected=None):
              (2, 0, 0, 0, 0, 0)),
             ('fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
              "CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(id)", '', (2, 0, 0, 0, 1, 0)),
+            ('self_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', parent_id INT, "
+             "KEY parent_idx(parent_id), CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES t(id)",
+             '', (3, 0, 1, 0, 1, 0)),
+            ('drop_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(id)", '', (2, 0, 0, 0, 0, 0)),
+            ('old_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(id)", '', (2, 0, 0, 0, 1, 0)),
             ('history', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('dropped', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', n INT", '', (2, 0, 0, 0, 0, 0)),
             ('generated', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
@@ -40,9 +47,11 @@ def run(binary, selected=None):
                 continue
             database = f'native_catalog_{label}'
             experiment.sql(f'CREATE DATABASE {database}')
-            if label == 'fk':
+            if label in ('fk', 'drop_fk', 'old_fk'):
                 experiment.sql(f'CREATE TABLE {database}.parent(id INT PRIMARY KEY)')
                 columns = columns.replace('REFERENCES parent', f'REFERENCES {database}.parent')
+            if label == 'self_fk':
+                columns = columns.replace('REFERENCES t', f'REFERENCES {database}.t')
             experiment.sql(f'CREATE TABLE {database}.t({columns}){options}')
             table_id = experiment.sql("SELECT t.table_id FROM oceanbase.__all_table t JOIN oceanbase.__all_database d "
                                       f"ON t.database_id=d.database_id WHERE d.database_name='{database}' "
@@ -52,6 +61,11 @@ def run(binary, selected=None):
                 requested_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table '
                                                    f'WHERE table_id={table_id}')[0][0]
                 experiment.sql(f'ALTER TABLE {database}.t ADD n INT DEFAULT 17')
+            elif label in ('drop_fk', 'old_fk'):
+                if label == 'old_fk':
+                    requested_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table '
+                                                       f'WHERE table_id={table_id}')[0][0]
+                experiment.sql(f'ALTER TABLE {database}.t DROP FOREIGN KEY fk')
             elif label == 'drop_index':
                 experiment.sql(f'ALTER TABLE {database}.t DROP INDEX ix')
             elif label == 'dropped':
@@ -91,7 +105,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'part', 'fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index'))
+    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'part', 'fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

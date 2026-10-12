@@ -101,4 +101,20 @@
 - `get_table_schema_from_inner_table` 的非 core 分支已使用原生目录，仍读取 owner 可见的最新 history（`INT64_MAX-1`），保持不存在时 `OB_TABLE_NOT_EXIST` 的调用约定。只接收 active DDL 事务；任意旧 SCN 仍须上层提供受保护 view。
 - `/tmp/native-schema-catalog-ddl-read-build1.log` 编译通过；`/tmp/native-schema-catalog-ddl-read1.log` 通过包含 LOB/分区/索引建表、ALTER、TRUNCATE、父子隔离和崩溃重启的生产回归。
 - 后续批量加载前要消除 `get_table` 对 FK/trigger/aux history 的逐表全扫描。固定定义已有 `idx_fk_his_child_tid/idx_fk_his_parent_tid/idx_trigger_his_base_obj_id/idx_data_table_id`；可先按关系索引收集候选对象 ID，再在同视图按主键读取目标 V 的最新 history 并重新检查归属与删除标记。索引的 schema_version 不一定是 key 的最后一列，不能直接沿用主 history 的逐键去重规则。
-- 已发现既有解码器中部分 `while (OB_SUCC(ret) && OB_SUCC(result.next()))` 没有将 next 的错误写回 ret；原生接入必须补上错误传播并定向验证，避免发生扫描错误时接受不完整定义。这项尚未处理，完整读取目标不能算完成。
+- 更正前一轮的解码器判断：`src/oblib/lib/utility/ob_macro_utils.h` 中 `OB_SUCC(statement)` 展开包含 `ret = (statement)`，故 `OB_SUCC(result.next())` 已传播迭代错误；不能按其他项目的同名宏推断存在缺陷。该项已核实排除，无须改动解码器。
+
+
+### 原生单表/批量完整定义装载接入
+
+- `get_table` 增加显式 CURRENT/HISTORY 来源，当前记录沿用同一套解码，历史记录保留版本筛选与删除语义。批量 `INT64_MAX` 读取 current；单表入口继续 history。
+- FK、trigger、aux 关系改用已有物理索引先收集候选，再按主键读取目标版本并重新检查归属/删除；FK 的父、子索引候选去重，避免自引用外键重复。没有新增常驻缓存。
+- `get_not_core_table_schema/get_not_core_table_schemas` 已接入一个操作持有的原生目录视图，借用事务时保留自身写入可见性；历史 SCN 必须对应仍被持有的目录视图。Namespace 装载入口开始持有目录视图及其 schema_version，直到刷新结束。
+- 新增 `self_fk/drop_fk/old_fk` 测试，并在既有冷读取用例中验证 current 来源。默认四件套 bootstrap-native-kv 的 `native_schema_catalog_probe.py` 自动包含这些用例。
+- 首次 `/tmp/native-schema-catalog-load-build1.log` 编译通过；`/tmp/native-schema-catalog-load-probe1.log` 的全新实例启动暴露初始化阶段边界错误：GCTX.in_bootstrap_ 已结束、后续内表 DDL 正在刷新，但 Namespace 目录行尚未创建。日志稳定反复出现 get_batch_table_schema ret=-4018，测试实例已终止。改用既有 Namespace lifecycle 的 is_bootstrapping 明确判断目录启用阶段，保留目录建立之前的初始化读取；不按 Namespace ID 或运行错误回退。修正后的验证待完成。
+- 完整刷新所用简单表定义入口 `fetch_tables` 仍待接入；以上不能计为全部 SchemaService 读取闭环完成。
+
+- 初始化修正后的 `/tmp/native-schema-catalog-load-build2.log` 编译通过。`load-probe2.log` 已通过 part/part2/drop_index/fk；其后 self_fk 建表失败，根因是测试将同一列同时作为自引用外键父列、子列，现有 resolver 明确不支持（1215/-5317）。改为独立 parent_id 列及其索引后，`/tmp/native-schema-catalog-load-probe3.log` 通过 self_fk/drop_fk/old_fk/history，检查父侧外键关系、历史删除标记及 current/history 不同列数；冷 runtime 槽位保持 0。
+- `/tmp/native-schema-catalog-load-probe4.log` 通过 typed/indexed/plain/dropped/generated/lob。既有借用事务 own-write/独立读/回滚，以及索引修改与 90KB/120KB LONGTEXT 事务验证继续通过；这些用例也验证 current 定义读取。
+- `/tmp/native-schema-catalog-load-ddl1.log` 通过生产调用链的 CREATE/ALTER/TRUNCATE、内表强制索引、父子隔离和崩溃重启。该轮使用含测试钩子的二进制（测试环境未启用控制文件）；移除钩子的生产编译和主备验证另记。
+
+- `/tmp/native-schema-catalog-load-production-build1.log`：移除测试注入后的生产编译通过。`/tmp/native-schema-catalog-load-production-ddl1.log`：生产二进制的 DDL、父子隔离、强制内表索引及崩溃重启回归再次通过。主备装载回归通过（120.39 秒），结果见 `gate-results/native-schema-catalog/native-load-standby/results.json`；覆盖刷新/回放竞争、物化/LOB 回放、孩子 DDL、父 TRUNCATE/DROP 历史来源、删除准入、提升后的装载/写入及再次 fork。

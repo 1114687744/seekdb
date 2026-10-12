@@ -21,6 +21,9 @@
 // TODO, move basic structs to ob_schema_struct.h
 #include "observer/schema/ob_schema_retrieve_utils.h"
 #include "observer/schema/native_schema_catalog.h"
+#include "namespace/namespace.h"
+#include "observer/namespace_worker_protocol_prototype.h"
+#include "share/rc/ob_server_runtime.h"
 #include "query/session/ob_inner_sql_connection_access.h"
 #include "storage/tx_storage/ob_access_service.h"
 #include "storage/tx/ob_trans_service.h"
@@ -146,6 +149,36 @@ using namespace oceanbase;
 using namespace oceanbase::common;
 using namespace oceanbase::common::sqlclient;
 using namespace oceanbase::sql;
+
+namespace {
+// A refresh reads its components through one catalog operation. A historical
+// SCN must name an already held directory view; a timestamp alone cannot reopen
+// an old root after reclamation. Transactional callers keep their own writes.
+int with_schema_catalog(ObISQLClient &client, const ObRefreshSchemaStatus &status,
+    const std::function<int(observer::NativeSchemaCatalog &)> &operation)
+{
+  const int64_t deadline = THIS_WORKER.get_timeout_ts();
+  if (dynamic_cast<ObMySQLTransaction *>(&client) != nullptr) {
+    if (status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
+    return observer::NativeSchemaCatalog::with_ddl_transaction(client, deadline, operation);
+  }
+  auto *access = share::server_service<storage::ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  observer::NativeSchemaCatalog catalog(client.target_namespace(), *access, *transactions);
+  int ret = OB_SUCCESS;
+  if (status.snapshot_timestamp_ > 0) {
+    const auto view = ns::namespace_registry().catalog_views().find(
+        client.target_namespace(), status.snapshot_timestamp_);
+    ret = view ? catalog.begin_read(deadline, view) : OB_SNAPSHOT_DISCARDED;
+  } else {
+    ret = catalog.begin_read(deadline, !share::server_is_write_enabled());
+  }
+  if (OB_SUCC(ret)) { ret = operation(catalog); }
+  const int cleanup = catalog.close();
+  return ret == OB_SUCCESS ? cleanup : ret;
+}
+} // namespace
 
 template<typename T>
 int ObSchemaServiceSQLImpl::retrieve_schema_version(T &result, int64_t &schema_version)
@@ -718,13 +751,37 @@ int ObSchemaServiceSQLImpl::get_not_core_table_schemas(
     ObArray<ObTableSchema *> &not_core_schemas)
 {
   int ret = OB_SUCCESS;
+  // The installation's final inner-table DDL runs after GCTX.in_bootstrap_.
+  // Its lifecycle remains in bootstrap until the initial directory is ready.
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   
-  if (!check_inner_stat()) {
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail, ", K(ret));
   } else if (schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid schema_version", K(schema_version), K(ret));
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      const auto source = schema_version == INT64_MAX
+          ? observer::NativeSchemaCatalog::TableSource::CURRENT
+          : observer::NativeSchemaCatalog::TableSource::HISTORY;
+      int rc = OB_SUCCESS;
+      for (int64_t i = 0; rc == OB_SUCCESS && i < table_ids.count(); ++i) {
+        // get_batch_table_schema sorted these IDs; SQL IN also removed repeats.
+        if (i > 0 && table_ids.at(i) == table_ids.at(i - 1)) { continue; }
+        ObTableSchema *definition = nullptr;
+        rc = catalog.get_table(table_ids.at(i), schema_version, allocator, definition, source);
+        if (rc == OB_ERR_SCHEMA_HISTORY_EMPTY || rc == OB_TABLE_NOT_EXIST) {
+          rc = OB_SUCCESS;
+        } else if (rc == OB_SUCCESS) {
+          rc = not_core_schemas.push_back(definition);
+          if (rc != OB_SUCCESS) { definition->~ObTableSchema(); }
+        }
+      }
+      return rc;
+    });
   } else {
     // split large query into bounded batches
     int64_t begin = 0;
@@ -4200,15 +4257,21 @@ int ObSchemaServiceSQLImpl::get_not_core_table_schema(
     ObTableSchema *&table_schema)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   const bool is_schema_fetch_dependency = is_schema_fetch_dependency_table(table_id);
 
   
-  if (!check_inner_stat()) {
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail, ", K(ret));
   } else if (schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid schema_version", K(schema_version), K(ret));
+  } else if (!lifecycle->is_bootstrapping()) {
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_table(table_id, schema_version, allocator, table_schema);
+    });
   } else if (OB_FAIL(fetch_table_info(schema_status, table_id, schema_version,
                                       sql_client, allocator, table_schema))) {
   } else if (OB_FAIL(fetch_column_info(schema_status, table_id, schema_version,
