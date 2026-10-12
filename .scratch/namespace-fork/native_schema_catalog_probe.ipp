@@ -150,6 +150,49 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FULL namespace=%lu table=%llu ret=%d\n", namespace_id, table_id, ret);
   }
+  if (ret == OB_SUCCESS) {
+    ObArenaAllocator allocator(ObMemAttr("SimpleCatalog"));
+    ObArray<ObSimpleTableSchemaV2 *> simple;
+    ObSEArray<uint64_t, 3> ids;
+    ret = ids.push_back(table_id);
+    if (ret == OB_SUCCESS) { ret = ids.push_back(table_id + 1000000000); }
+    if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+    auto verify = [&](const ObSimpleTableSchemaV2 *table) {
+      return table != nullptr && table->is_valid() && table->get_table_id() == table_id
+          && table->get_schema_version() <= requested_version
+          && table->get_partition_num() == expected_parts
+          && table->get_simple_foreign_key_info_array().count() == expected_foreign_keys
+          && table->get_simple_constraint_info_array().count() == expected_constraints
+          ? OB_SUCCESS : OB_ERR_UNEXPECTED;
+    };
+    if (ret == OB_SUCCESS) { ret = catalog.get_simple_tables(requested_version, allocator, simple, &ids); }
+    if (ret == OB_SUCCESS) { ret = simple.count() == 1 ? verify(simple.at(0)) : OB_ERR_UNEXPECTED; }
+    for (auto *table : simple) { table->~ObSimpleTableSchemaV2(); }
+    simple.reset();
+    // Full refresh shares the same reduced history and relationships. Exercise
+    // it with partitions and a deleted FK visible only at the requested V.
+    if (ret == OB_SUCCESS && (name.find("_part") != std::string::npos
+        || name.find("_old_fk") != std::string::npos)) {
+      ret = catalog.get_simple_tables(requested_version, allocator, simple);
+      const ObSimpleTableSchemaV2 *found = nullptr;
+      uint64_t previous = OB_INVALID_ID;
+      for (auto *table : simple) {
+        if (table->get_table_id() >= previous || table->get_table_id() == OB_ALL_CORE_TABLE_TID) {
+          ret = OB_ERR_UNEXPECTED;
+        }
+        previous = table->get_table_id();
+        if (table->get_table_id() == table_id) { found = table; }
+      }
+      if (ret == OB_SUCCESS) { ret = verify(found); }
+      for (auto *table : simple) { table->~ObSimpleTableSchemaV2(); }
+      simple.reset();
+    }
+    ids.reuse();
+    if (ret == OB_SUCCESS) { ret = catalog.get_simple_tables(requested_version, allocator, simple, &ids); }
+    if (ret == OB_SUCCESS && !simple.empty()) { ret = OB_ERR_UNEXPECTED; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_SIMPLE namespace=%lu table=%llu ret=%d\n",
+        namespace_id, table_id, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
     // A catalog attached to a native owner must see its uncommitted metadata;
     // an independent operation must not. Materialize this child's history
@@ -199,6 +242,16 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       if (rc == OB_SUCCESS && definition->get_table_name_str() != ObString::make_string(expected)) {
         rc = OB_ERR_UNEXPECTED;
       }
+      if (definition != nullptr) { definition->~ObTableSchema(); }
+      ObArray<ObSimpleTableSchemaV2 *> simple;
+      ObSEArray<uint64_t, 1> ids;
+      if (rc == OB_SUCCESS) { rc = ids.push_back(table_id); }
+      if (rc == OB_SUCCESS) { rc = reader.get_simple_tables(INT64_MAX - 1, allocator, simple, &ids); }
+      if (rc == OB_SUCCESS && (simple.count() != 1
+          || simple.at(0)->get_table_name_str() != ObString::make_string(expected))) {
+        rc = OB_ERR_UNEXPECTED;
+      }
+      for (auto *table : simple) { table->~ObSimpleTableSchemaV2(); }
       return rc;
     };
     if (ret == OB_SUCCESS) { stage = "read_own"; ret = verify_name(borrowed, "tx_visible"); }

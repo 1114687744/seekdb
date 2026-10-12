@@ -2,6 +2,8 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已接入，验证记录见文末。名称/版本查询和其余 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+
 ## 目标与边界
 
 将完整表定义的持久读写接到通用原生内表访问层。现有当前表/history 表仍是权威数据，仍归属 Namespace 并按 fork 快照继承。实例 NAMESPACES/PAGES 只负责目录根及物理定位。合并、checksum 接入和文件持有完整描述属于后续阶段。
@@ -118,3 +120,13 @@
 - `/tmp/native-schema-catalog-load-ddl1.log` 通过生产调用链的 CREATE/ALTER/TRUNCATE、内表强制索引、父子隔离和崩溃重启。该轮使用含测试钩子的二进制（测试环境未启用控制文件）；移除钩子的生产编译和主备验证另记。
 
 - `/tmp/native-schema-catalog-load-production-build1.log`：移除测试注入后的生产编译通过。`/tmp/native-schema-catalog-load-production-ddl1.log`：生产二进制的 DDL、父子隔离、强制内表索引及崩溃重启回归再次通过。主备装载回归通过（120.39 秒），结果见 `gate-results/native-schema-catalog/native-load-standby/results.json`；覆盖刷新/回放竞争、物化/LOB 回放、孩子 DDL、父 TRUNCATE/DROP 历史来源、删除准入、提升后的装载/写入及再次 fork。
+
+### 简单表定义刷新接入
+
+- `NativeSchemaCatalog::get_simple_tables` 在同一受保护视图读取简单表定义、分区、外键名称与约束名称。全量读取对关系 history 各扫描一次；增量读取按已有外键索引收集候选，再检查目标版本的最新归属和删除标记。显式空集合、重复 ID、不存在的 ID 与历史版本选择均有验证。
+- SchemaService 的 `fetch_tables` 在 Namespace 初始化完成后走此入口。目录建立之前仍走既有 bootstrap 路径。原生全量读取不再为估算超时进入 SQL 执行 `COUNT(*)`；使用配置的默认时限，同时遵守调用方更早的 worker/ObTimeoutCtx 截止时间。
+- 完整与简单定义复用分区解码入口；没有增加常驻缓存。四件套既有 `native_schema_catalog_probe.py` 会自动执行新增的冷读取和事务内简单定义验证。
+- `/tmp/native-schema-catalog-simple-build1.log` 因对 ObIArray 使用 range-for 编译失败，改为 count/at 后 build2/build3/build4 均通过。
+- `/tmp/native-schema-catalog-simple-probe1.log` 通过 part/part2/fk/self_fk/drop_fk/old_fk/history，冷 Namespace 的服务槽位保持 0。`/tmp/native-schema-catalog-simple-borrowed1.log` 通过 plain：借用 DDL owner 读取未提交改名，独立事务不可见，回滚后恢复原值；完整与简单定义均检查。
+- `/tmp/native-schema-catalog-simple-ddl1.log` 通过 DDL、索引、父子隔离和崩溃重启。实例日志确认生产 `fetch_tables` 已使用原生全量与增量入口；约 645 张表的全量刷新观察值为几十毫秒，仅代表该测试数据量。
+- `/tmp/native-schema-catalog-simple-production-build1.log`：移除测试钩子后生产编译通过。`/tmp/native-schema-catalog-simple-production-ddl1.log` 的生产 DDL、父子隔离及崩溃重启通过。主备回归通过，结果见 `gate-results/native-schema-catalog/native-simple-standby/results.json`；包括备库刷新、物化/LOB 回放、子空间 DDL、父 TRUNCATE/DROP、提升后装载与写入、再次 fork。

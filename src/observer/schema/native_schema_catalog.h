@@ -10,7 +10,7 @@
 
 namespace oceanbase {
 namespace common { class ObISQLClient; }
-namespace share { namespace schema { class ObTableSchema; class ObColumnSchemaV2; } }
+namespace share { namespace schema { class ObTableSchema; class ObColumnSchemaV2; class ObSimpleTableSchemaV2; } }
 namespace storage { class ObAccessService; }
 namespace transaction { class ObTransService; class ObTxDesc; }
 namespace observer {
@@ -62,6 +62,12 @@ public:
   enum class TableSource { HISTORY, CURRENT };
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
                 share::schema::ObTableSchema *&, TableSource = TableSource::HISTORY);
+  // Append simple table definitions and their partition/name relationships.
+  // A null selection reads all tables (except the separately loaded core table);
+  // an explicit empty selection reads none. All components share this view.
+  int get_simple_tables(int64_t schema_version, common::ObIAllocator &,
+      common::ObIArray<share::schema::ObSimpleTableSchemaV2 *> &,
+      const common::ObIArray<uint64_t> *table_ids = nullptr);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.

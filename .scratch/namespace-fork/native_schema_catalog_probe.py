@@ -84,6 +84,10 @@ def run(binary, selected=None):
                         for line in log.read_text(errors='replace').splitlines()
                         if f'NATIVE_SCHEMA_CATALOG_FULL namespace={child_id} table={table_id}' in line]
             assert any('ret=0' in line for line in evidence), evidence
+            simple = [line for log in (experiment.base / 'log').glob('seekdb.log*')
+                      for line in log.read_text(errors='replace').splitlines()
+                      if f'NATIVE_SCHEMA_CATALOG_SIMPLE namespace={child_id} table={table_id}' in line]
+            assert any('ret=0' in line for line in simple), simple
             if label == 'indexed':
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_INDEXED namespace={child_id} stage=erase_committed ret=0' in trace

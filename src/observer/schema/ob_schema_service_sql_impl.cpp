@@ -157,7 +157,8 @@ namespace {
 int with_schema_catalog(ObISQLClient &client, const ObRefreshSchemaStatus &status,
     const std::function<int(observer::NativeSchemaCatalog &)> &operation)
 {
-  const int64_t deadline = THIS_WORKER.get_timeout_ts();
+  const int64_t deadline = std::min(THIS_WORKER.get_timeout_ts(),
+      ObTimeoutCtx::get_ctx().get_abs_timeout(INT64_MAX));
   if (dynamic_cast<ObMySQLTransaction *>(&client) != nullptr) {
     if (status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
     return observer::NativeSchemaCatalog::with_ddl_transaction(client, deadline, operation);
@@ -3673,6 +3674,8 @@ int ObSchemaServiceSQLImpl::fetch_tables(
     const int64_t schema_key_size)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   ObMySQLResult *result = NULL;
   ObSqlString sql;
   bool is_increase_schema = (NULL != schema_keys && schema_key_size > 0);
@@ -3682,9 +3685,30 @@ int ObSchemaServiceSQLImpl::fetch_tables(
   const char *table_name = NULL;
   int64_t start_time = ObTimeUtility::current_time();
   DEBUG_SYNC(BEFORE_FETCH_SIMPLE_TABLES);
-  if (!check_inner_stat()) {
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail", K(ret));
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObTimeoutCtx ctx;
+    ObArray<uint64_t> selected;
+    for (int64_t i = 0; OB_SUCC(ret) && is_increase_schema && i < schema_key_size; ++i) {
+      ret = selected.push_back(schema_keys[i].table_id_);
+    }
+    if (OB_SUCC(ret) && !is_increase_schema) {
+      // Native refresh must not enter SQL just to count history rows. Respect
+      // an existing caller deadline; use the configured full-scan allowance
+      // when the caller has not installed one.
+      ret = ObShareUtil::set_default_timeout_ctx(ctx, 4 * GCONF.internal_sql_execute_timeout);
+    }
+    if (OB_SUCC(ret)) {
+      ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.get_simple_tables(schema_version, allocator, schema_array,
+                                         is_increase_schema ? &selected : nullptr);
+      });
+    }
+    LOG_INFO("native simple table refresh", KR(ret), K(schema_version), K(is_increase_schema),
+             "count", schema_array.count() - orig_cnt, "cost", ObTimeUtility::current_time() - start_time);
+    return ret;
   } else {
     ObTimeoutCtx ctx;
     if (OB_FAIL(ObSchemaUtils::get_all_table_history_name(table_name,

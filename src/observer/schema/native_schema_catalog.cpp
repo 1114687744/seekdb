@@ -440,6 +440,51 @@ int collect_related_ids(NativeSchemaCatalog &catalog, uint64_t index_id,
   }
   return ret == OB_ITER_END ? OB_SUCCESS : ret;
 }
+template<typename Table>
+int read_partitions(NativeSchemaCatalog &catalog, int64_t version, bool history, Table &definition)
+{
+  Table *table = &definition;
+  const uint64_t table_id = table->get_table_id();
+  ObObj id;
+  id.set_int(table_id);
+  const ObRowkey prefix(&id, 1);
+  auto open = [&](CatalogRows &rows, uint64_t current_id, uint64_t history_id,
+      const ObRowkey &key, bool reverse = false, int64_t minimum = 0) {
+    return rows.open(catalog, history ? history_id : current_id, key, version,
+                     reverse, history ? minimum : 0, false, {}, history);
+  };
+  int ret = OB_SUCCESS;
+  if (OB_SUCC(ret) && table->get_part_level() != PARTITION_LEVEL_ZERO) {
+    CatalogRows rows;
+    if (table->get_truncate_version() > version) { ret = OB_ERR_UNEXPECTED; }
+    else if (OB_FAIL(open(rows, OB_ALL_PART_TID, OB_ALL_PART_HISTORY_TID, prefix,
+                              false, table->get_truncate_version()))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_part_info(history, rows, table); }
+  }
+  if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO
+      && table->has_sub_part_template_def()) {
+    CatalogRows rows;
+    if (OB_FAIL(open(rows, OB_ALL_DEF_SUB_PART_TID, OB_ALL_DEF_SUB_PART_HISTORY_TID, prefix))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_def_subpart_info(history, rows, table); }
+  }
+  if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO) {
+    CatalogRows rows;
+    if (OB_FAIL(open(rows, OB_ALL_SUB_PART_TID, OB_ALL_SUB_PART_HISTORY_TID, prefix,
+                          false, table->get_truncate_version()))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_subpart_info(history, rows, table); }
+  }
+  if (OB_SUCC(ret) && is_virtual_table(table_id)
+      && table->get_part_level() == PARTITION_LEVEL_ONE && table->get_part_array() == nullptr) {
+    ret = table->mock_list_partition_array();
+  }
+  if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_partition_array(*table); }
+  if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_subpartition_array(*table); }
+  if (OB_SUCC(ret) && table->is_user_partition_table()
+      && (table->get_part_array() == nullptr || table->get_partition_num() <= 0)) {
+    ret = OB_ERR_UNEXPECTED;
+  }
+  return ret;
+}
 } // namespace
 
 int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
@@ -480,31 +525,7 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     } else if (OB_FAIL(open(rows, OB_ALL_COLUMN_TID, OB_ALL_COLUMN_HISTORY_TID, prefix))) {
     } else { ret = ObSchemaRetrieveUtils::retrieve_column_schema(history, rows, table); }
   }
-  if (OB_SUCC(ret) && table->get_part_level() != PARTITION_LEVEL_ZERO) {
-    CatalogRows rows;
-    if (table->get_truncate_version() > version) { ret = OB_ERR_UNEXPECTED; }
-    else if (OB_FAIL(open(rows, OB_ALL_PART_TID, OB_ALL_PART_HISTORY_TID, prefix,
-                              false, table->get_truncate_version()))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_part_info(history, rows, table); }
-  }
-  if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO
-      && table->has_sub_part_template_def()) {
-    CatalogRows rows;
-    if (OB_FAIL(open(rows, OB_ALL_DEF_SUB_PART_TID, OB_ALL_DEF_SUB_PART_HISTORY_TID, prefix))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_def_subpart_info(history, rows, table); }
-  }
-  if (OB_SUCC(ret) && table->get_part_level() == PARTITION_LEVEL_TWO) {
-    CatalogRows rows;
-    if (OB_FAIL(open(rows, OB_ALL_SUB_PART_TID, OB_ALL_SUB_PART_HISTORY_TID, prefix,
-                          false, table->get_truncate_version()))) {
-    } else { ret = ObSchemaRetrieveUtils::retrieve_subpart_info(history, rows, table); }
-  }
-  if (OB_SUCC(ret) && is_virtual_table(table_id)
-      && table->get_part_level() == PARTITION_LEVEL_ONE && table->get_part_array() == nullptr) {
-    ret = table->mock_list_partition_array();
-  }
-  if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_partition_array(*table); }
-  if (OB_SUCC(ret)) { ret = ObSchemaRetrieveUtils::sort_subpartition_array(*table); }
+  if (OB_SUCC(ret)) { ret = read_partitions(*this, version, history, *table); }
   {
     CatalogRows rows;
     if (OB_FAIL(ret)) {
@@ -658,6 +679,107 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
   }
   if (OB_SUCC(ret)) { out = table; }
   else if (table != nullptr) { table->~ObTableSchema(); }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_simple_tables(int64_t version, ObIAllocator &allocator,
+    ObIArray<ObSimpleTableSchemaV2 *> &out, const ObIArray<uint64_t> *table_ids)
+{
+  if (version <= 0) { return OB_INVALID_ARGUMENT; }
+  ObArray<ObSimpleTableSchemaV2 *> tables;
+  int ret = OB_SUCCESS;
+  if (table_ids == nullptr) {
+    CatalogRows rows;
+    if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_HISTORY_TID, ObRowkey(), version,
+                         true, 0, true, [](const CatalogRows &row, bool &accept) {
+      uint64_t id = OB_INVALID_ID;
+      const int rc = row.get_uint("table_id", id);
+      accept = id != OB_ALL_CORE_TABLE_TID;
+      return rc;
+    }))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_table_schema(true, rows, allocator, tables); }
+  } else {
+    // Preserve the descending order required by the existing schema helpers,
+    // and the duplicate-elimination semantics of the old SQL IN selection.
+    std::set<uint64_t, std::greater<uint64_t>> ids;
+    for (int64_t i = 0; i < table_ids->count(); ++i) { ids.insert(table_ids->at(i)); }
+    for (const auto id : ids) {
+      if (OB_FAIL(ret)) { break; }
+      if (id == OB_INVALID_ID || id == 0) { ret = OB_INVALID_ARGUMENT; break; }
+      ObObj key;
+      key.set_int(id);
+      CatalogRows rows;
+      if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_HISTORY_TID, ObRowkey(&key, 1),
+                           version, true, 0, true))) {
+      } else { ret = ObSchemaRetrieveUtils::retrieve_table_schema(true, rows, allocator, tables); }
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
+    ret = read_partitions(*this, version, true, *tables.at(i));
+  }
+  // Filter after latest-per-entity reduction: a tombstone must hide older live
+  // rows, and an entity's old relation must not attach it to its former owner.
+  const auto owned_live_row = [&tables](const char *owner) -> CatalogRows::Filter {
+    return [&tables, owner](const CatalogRows &row, bool &accept) {
+      bool deleted = false;
+      uint64_t id = OB_INVALID_ID;
+      int rc = row.get_bool("is_deleted", deleted);
+      if (rc == OB_SUCCESS && !deleted) { rc = row.get_uint(owner, id); }
+      accept = !deleted && ObSchemaRetrieveUtils::find_table_schema(id, tables) != nullptr;
+      return rc;
+    };
+  };
+  if (OB_SUCC(ret) && !tables.empty()) {
+    if (table_ids == nullptr) {
+      // A full refresh needs every relationship: scan each history once.
+      {
+        CatalogRows rows;
+        if (OB_FAIL(rows.open(*this, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(), version,
+                             true, 0, true, owned_live_row("child_table_id")))) {
+        } else { ret = ObSchemaRetrieveUtils::retrieve_simple_foreign_key_info(rows, tables); }
+      }
+      {
+        CatalogRows rows;
+        if (OB_FAIL(ret)) {
+        } else if (OB_FAIL(rows.open(*this, OB_ALL_CONSTRAINT_HISTORY_TID, ObRowkey(), version,
+                                    true, 0, true, owned_live_row("table_id")))) {
+        } else { ret = ObSchemaRetrieveUtils::retrieve_simple_constraint_info(rows, tables); }
+      }
+    } else {
+      std::set<uint64_t> foreign_keys;
+      for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
+        ObObj key;
+        key.set_int(tables.at(i)->get_table_id());
+        const ObRowkey prefix(&key, 1);
+        if (OB_FAIL(collect_related_ids(*this, OB_ALL_FOREIGN_KEY_HISTORY_IDX_FK_HIS_CHILD_TID_TID,
+                                       prefix, version, "foreign_key_id", foreign_keys))) {
+        } else {
+          CatalogRows rows;
+          if (OB_FAIL(rows.open(*this, OB_ALL_CONSTRAINT_HISTORY_TID, prefix, version,
+                               true, 0, true, owned_live_row("table_id")))) {
+          } else { ret = ObSchemaRetrieveUtils::retrieve_simple_constraint_info(rows, tables); }
+        }
+      }
+      for (const auto id : foreign_keys) {
+        if (OB_FAIL(ret)) { break; }
+        ObObj key;
+        key.set_int(id);
+        CatalogRows rows;
+        if (OB_FAIL(rows.open(*this, OB_ALL_FOREIGN_KEY_HISTORY_TID, ObRowkey(&key, 1), version,
+                             true, 0, true, owned_live_row("child_table_id")))) {
+        } else { ret = ObSchemaRetrieveUtils::retrieve_simple_foreign_key_info(rows, tables); }
+      }
+    }
+  }
+  if (OB_SUCC(ret)) { ret = out.reserve(out.count() + tables.count()); }
+  int64_t transferred = 0;
+  while (OB_SUCC(ret) && transferred < tables.count()) {
+    if (OB_SUCC(ret = out.push_back(tables.at(transferred)))) { ++transferred; }
+  }
+  for (int64_t i = transferred; i < tables.count(); ++i) {
+    tables.at(i)->~ObSimpleTableSchemaV2();
+    allocator.free(tables.at(i));
+  }
   return ret;
 }
 
