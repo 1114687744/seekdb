@@ -356,10 +356,10 @@ private:
   int init_plugin_runtime(const ObServerOptions &opts);
   int check_plugin_server_ready();
   void destroy_plugin_runtime() noexcept;
-  int init_opts_config(const ObServerOptions &opts, const char *optstr); // init configs from command line
+  int init_opts_config(const ObServerOptions &opts); // init configs from command line
   int init_data_dir_and_redo_dir(const ObServerOptions &opts);
   int init_self_addr();
-  int init_config_module(const char *optstr);
+  int init_config_module();
   int init_tz_info_mgr();
   int init_pre_setting();
   int init_network();
@@ -425,6 +425,7 @@ private:
   bool need_bootstrap_;
   volatile bool has_stopped_;
   bool has_destroy_;
+  bool in_process_ = false;
   int clients_fd_ = -1;
 #ifdef _WIN32
   HANDLE clients_h_ = INVALID_HANDLE_VALUE;
@@ -437,7 +438,6 @@ private:
   common::ObMySQLProxy ddl_sql_proxy_;
 
   // The OceanBase configuration relating to.
-  common::ObServerConfig &config_;
   ObServerReloadConfig reload_config_;
   common::ObConfigManager config_mgr_;
   omt::ObTimezoneMgr &timezone_mgr_;

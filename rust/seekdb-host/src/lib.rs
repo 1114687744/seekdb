@@ -4,3 +4,4 @@
 #[cfg(feature = "plugins")]
 pub use seekdb_plugin_runtime::*;
 pub extern crate sql_nio;
+pub extern crate config;

@@ -16,8 +16,10 @@
 
 #define USING_LOG_PREFIX SQL_SESSION
 
+#include "config_bridge.h"
 #include <new>
 #include "data_plane/ob_iter_cache_api.h"
+#include "data_plane/ob_tx_ctx_cache_api.h"
 #include "data_plane/transaction/ob_i_read_timestamp_service.h"
 #include "data_plane/transaction/ob_tx_control.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
@@ -169,6 +171,7 @@ ObSQLSessionInfo::ObSQLSessionInfo() :
       out_bytes_(0),
       job_info_(nullptr),
       iter_cache_(nullptr),
+      tx_ctx_cache_(nullptr),
       executing_sql_stat_record_()
 {
 }
@@ -185,7 +188,7 @@ void ObSQLSessionInfo::configure_obj_cast(
 {
   params.srs_provider_ = srs_provider;
   params.lob_read_service_ = lob_read_service;
-  const int32_t max_depth = GCONF.json_document_max_depth;
+  const int32_t max_depth = config::json_document_max_depth();
   params.json_max_depth_ =
       max_depth < 100 || max_depth > 1024 ? 100 : max_depth;
 }
@@ -210,6 +213,30 @@ int ObSQLSessionInfo::init(uint32_t sessid,
     package_state_map_.clear();
   }
   return ret;
+}
+
+void *ObSQLSessionInfo::get_tx_ctx_cache(const bool create)
+{
+  // Internal connection pools can outlive every user connection. They must
+  // not retain a transaction context while the server has no foreground work.
+  if (!is_inited_ || !is_user_session()) {
+    return nullptr;
+  }
+  void *cache = ATOMIC_LOAD(&tx_ctx_cache_);
+  if (create && nullptr == cache) {
+    // Retain one returned context. Delayed cleanup and parallel execution can
+    // check out additional contexts without increasing the cache's idle size.
+    void *new_cache = data_plane::create_tx_ctx_cache(1);
+    if (nullptr != new_cache) {
+      if (ATOMIC_BCAS(&tx_ctx_cache_, nullptr, new_cache)) {
+        cache = new_cache;
+      } else {
+        data_plane::close_tx_ctx_cache(new_cache);
+        cache = ATOMIC_LOAD(&tx_ctx_cache_);
+      }
+    }
+  }
+  return cache;
 }
 
 //for test
@@ -308,7 +335,7 @@ int ObSQLSessionInfo::is_force_temp_table_inline(bool &force_inline) const
   force_inline = false;
   
   {
-    int64_t with_subquery_policy = GCONF._with_subquery;
+    int64_t with_subquery_policy = config::_with_subquery();
     if (2 == with_subquery_policy) {
       force_inline = true;
     }
@@ -323,7 +350,7 @@ int ObSQLSessionInfo::is_force_temp_table_materialize(bool &force_materialize) c
   force_materialize = false;
   
   {
-    int64_t with_subquery_policy = GCONF._with_subquery;
+    int64_t with_subquery_policy = config::_with_subquery();
     if (1 == with_subquery_policy) {
       force_materialize = true;
     }
@@ -337,7 +364,7 @@ int ObSQLSessionInfo::is_groupby_placement_transformation_enabled(bool &transfor
   transformation_enabled = false;
   
   {
-    transformation_enabled = GCONF._optimizer_group_by_placement;
+    transformation_enabled = config::_optimizer_group_by_placement();
   }
   return ret;
 }
@@ -347,7 +374,7 @@ bool ObSQLSessionInfo::is_in_range_optimization_enabled() const
   bool bret = false;
   
   {
-    bret = GCONF._enable_in_range_optimization;
+    bret = config::_enable_in_range_optimization();
   }
   return bret;
 }
@@ -357,7 +384,7 @@ int64_t ObSQLSessionInfo::get_inlist_rewrite_threshold() const
   int64_t threshold = 1000;
   
   {
-    threshold = GCONF._inlist_rewrite_threshold;
+    threshold = config::_inlist_rewrite_threshold();
   }
   return threshold;
 }
@@ -368,7 +395,7 @@ int ObSQLSessionInfo::is_better_inlist_enabled(bool &enabled) const
   enabled = false;
   
   {
-    enabled = GCONF._optimizer_better_inlist_costing;
+    enabled = config::_optimizer_better_inlist_costing();
   }
   return ret;
 }
@@ -379,7 +406,7 @@ int ObSQLSessionInfo::is_preserve_order_for_pagination_enabled(bool &enabled) co
   enabled = false;
   
   {
-    enabled = GCONF._preserve_order_for_pagination;
+    enabled = config::_preserve_order_for_pagination();
   }
   return ret;
 }
@@ -390,7 +417,7 @@ int ObSQLSessionInfo::is_preserve_order_for_groupby_enabled(bool &enabled) const
   enabled = false;
   
   {
-    enabled = GCONF._preserve_order_for_groupby;
+    enabled = config::_preserve_order_for_groupby();
   }
   return ret;
 }
@@ -409,7 +436,7 @@ bool ObSQLSessionInfo::is_qualify_filter_enabled() const
   bool bret = false;
   
   {
-    bret = GCONF._enable_optimizer_qualify_filter;
+    bret = config::_enable_optimizer_qualify_filter();
   }
   return bret;
 }
@@ -420,7 +447,7 @@ int ObSQLSessionInfo::is_enable_range_extraction_for_not_in(bool &enabled) const
   enabled = true;
   
   {
-    enabled = GCONF._enable_range_extraction_for_not_in;
+    enabled = config::_enable_range_extraction_for_not_in();
   }
   return ret;
 }
@@ -430,7 +457,7 @@ bool ObSQLSessionInfo::is_var_assign_use_das_enabled() const
   bool bret = false;
   
   {
-    bret = GCONF._enable_var_assign_use_das;
+    bret = config::_enable_var_assign_use_das();
   }
   return bret;
 }
@@ -442,7 +469,7 @@ int ObSQLSessionInfo::is_adj_index_cost_enabled(bool &enabled, int64_t &stats_co
   stats_cost_percent = 0;
   
   {
-    stats_cost_percent = GCONF.optimizer_index_cost_adj;
+    stats_cost_percent = config::optimizer_index_cost_adj();
     enabled = (0 != stats_cost_percent);
   }
   return ret;
@@ -454,7 +481,7 @@ bool ObSQLSessionInfo::is_spf_mlj_group_rescan_enabled() const
   bool bret = false;
   
   {
-    bret = GCONF._enable_spf_batch_rescan;
+    bret = config::_enable_spf_batch_rescan();
   }
   return bret;
 }
@@ -464,7 +491,7 @@ bool ObSQLSessionInfo::enable_parallel_das_dml() const
   bool bret = false;
   
   {
-    bret = GCONF._enable_parallel_das_dml;
+    bret = config::_enable_parallel_das_dml();
   }
   return bret;
 }
@@ -543,6 +570,9 @@ void ObSQLSessionInfo::destroy(bool skip_sys_var)
     reset_all_package_state();
     if (OB_NOT_NULL(iter_cache_)) {
       data_plane::destroy_iter_cache(get_session_allocator(), iter_cache_);
+    }
+    if (OB_NOT_NULL(tx_ctx_cache_)) {
+      data_plane::close_tx_ctx_cache(tx_ctx_cache_);
     }
     reset(skip_sys_var);
     is_inited_ = false;
@@ -986,7 +1016,7 @@ int ObSQLSessionInfo::add_cursor(pl::ObPLCursorInfo *cursor)
   CK (true);
   CK (OB_NOT_NULL(cursor));
   if (OB_SUCC(ret)) {
-    int64_t open_cursors_limit = GCONF.open_cursors;
+    int64_t open_cursors_limit = config::open_cursors();
     if (NEED_CHECK_SESS_OPEN_CURSORS_LIMIT(open_cursors_limit)
         && open_cursors_limit <= pl_cursor_cache_.pl_cursor_map_.size()) {
       ret = OB_ERR_OPEN_CURSORS_EXCEEDED;
@@ -1551,26 +1581,26 @@ void ObSQLSessionInfo::ObCachedRuntimeConfig::refresh()
     ATOMIC_STORE(&data_version_, DATA_CURRENT_VERSION);
     if (OB_LIKELY(true)) {
       // 1.Is batch_multi_statement allowed
-      enable_batched_multi_statement_ = GCONF.ob_enable_batched_multi_statement;
+      enable_batched_multi_statement_ = config::ob_enable_batched_multi_statement();
       // 3.Is bloom_filter allowed
-      if (GCONF._bloom_filter_enabled) {
+      if (config::_bloom_filter_enabled()) {
         enable_bloom_filter_ = true;
       } else {
         enable_bloom_filter_ = false;
       }
       // 4.sort area size
-      ATOMIC_STORE(&sort_area_size_, GCONF._sort_area_size);
-      ATOMIC_STORE(&hash_area_size_, GCONF._hash_area_size);
-      ATOMIC_STORE(&enable_immediate_row_conflict_check_, GCONF._ob_immediate_row_conflict_check);
-      ATOMIC_STORE(&range_optimizer_max_mem_size_, GCONF.range_optimizer_max_mem_size);
-      ATOMIC_STORE(&_query_record_size_limit_, GCONF._query_record_size_limit);
-      ATOMIC_STORE(&_ob_sqlstat_enable_, GCONF._ob_sqlstat_enable);
-      px_join_skew_handling_ = GCONF._px_join_skew_handling;
-      px_join_skew_minfreq_ = GCONF._px_join_skew_minfreq;
-      enable_decimal_int_type_ = GCONF._enable_decimal_int_type;
-      enable_mysql_compatible_dates_ = GCONF._enable_mysql_compatible_dates;
+      ATOMIC_STORE(&sort_area_size_, config::_sort_area_size());
+      ATOMIC_STORE(&hash_area_size_, config::_hash_area_size());
+      ATOMIC_STORE(&enable_immediate_row_conflict_check_, config::_ob_immediate_row_conflict_check());
+      ATOMIC_STORE(&range_optimizer_max_mem_size_, config::range_optimizer_max_mem_size());
+      ATOMIC_STORE(&_query_record_size_limit_, config::_query_record_size_limit());
+      ATOMIC_STORE(&_ob_sqlstat_enable_, config::_ob_sqlstat_enable());
+      px_join_skew_handling_ = config::_px_join_skew_handling();
+      px_join_skew_minfreq_ = config::_px_join_skew_minfreq();
+      enable_decimal_int_type_ = config::_enable_decimal_int_type();
+      enable_mysql_compatible_dates_ = config::_enable_mysql_compatible_dates();
       // 7. print_sample_ppm_ for flt
-      ATOMIC_STORE(&print_sample_ppm_, GCONF._print_sample_ppm);
+      ATOMIC_STORE(&print_sample_ppm_, config::_print_sample_ppm());
     }
     ATOMIC_STORE(&last_check_ec_ts_, cur_ts);
   }
@@ -2175,6 +2205,11 @@ uint32_t ObSessionAccess::get_server_session_id(
 void *ObSessionAccess::get_iter_cache(sql::ObSQLSessionInfo *session)
 {
   return nullptr == session ? nullptr : session->get_iter_cache();
+}
+
+void *ObSessionAccess::get_tx_ctx_cache(sql::ObSQLSessionInfo *session, const bool create)
+{
+  return nullptr == session ? nullptr : session->get_tx_ctx_cache(create);
 }
 
 void ObSessionAccess::get_current_sql_id(

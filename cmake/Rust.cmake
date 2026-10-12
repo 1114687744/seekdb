@@ -12,21 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build a single Rust host archive containing sql-nio and optional plugin
-# runtime. Never link independent Rust staticlibs into the same host.
-# sql_nio remains a compatible C++ target name for network consumers.
+# Build one Rust host archive containing config, sql-nio and optional plugin
+# runtime. sql_nio and config expose compatible C++ interface targets.
 #
 # Usage from any C++ target:
 #     target_link_libraries(<your_target> PRIVATE sql_nio)
 #     #include "nio.h"
+#     target_link_libraries(<your_target> PRIVATE config)
+#     #include "config.h"
 #
 # Override the workspace location by setting RUST_WORKSPACE_DIR before include().
 
 if(NOT DEFINED RUST_WORKSPACE_DIR)
   set(RUST_WORKSPACE_DIR "${CMAKE_SOURCE_DIR}/rust")
 endif()
-set(RUST_CRATE_DIR   "${RUST_WORKSPACE_DIR}/sql-nio")
-set(RUST_INCLUDE_DIR "${RUST_CRATE_DIR}/include")
+set(SQL_NIO_CRATE_DIR   "${RUST_WORKSPACE_DIR}/sql-nio")
+set(SQL_NIO_INCLUDE_DIR "${SQL_NIO_CRATE_DIR}/include")
+set(CONFIG_CRATE_DIR "${RUST_WORKSPACE_DIR}/config")
+set(CONFIG_INCLUDE_DIR "${CONFIG_CRATE_DIR}/include")
 
 # Locate cargo: explicit -DCARGO=, else PATH, else the rustup default location.
 if(NOT CARGO)
@@ -49,11 +52,15 @@ else()
   set(_cargo_out_subdir "release")
 endif()
 
-# Cargo otherwise builds for the macOS host during an Android CMake cross-build.
+# Cargo otherwise builds for the host during a mobile CMake cross-build.
 # Keep the Rust static library on the same target and API level as the C++ code.
 set(_cargo_target_args)
 set(_cargo_target_subdir)
-if(ANDROID)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  set(_rust_target_triple "${SEEKDB_IOS_RUST_TARGET}")
+  list(APPEND _cargo_target_args "--target" "${_rust_target_triple}")
+  set(_cargo_target_subdir "${_rust_target_triple}/")
+elseif(ANDROID)
   if(NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
     message(FATAL_ERROR "[rust] unsupported Android ABI: ${CMAKE_ANDROID_ARCH_ABI}")
   endif()
@@ -63,7 +70,8 @@ if(ANDROID)
 endif()
 
 # Keep all cargo output inside the CMake build tree (isolated per build dir).
-set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/rust-target")
+set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/rust-target" CACHE PATH
+    "Cargo output directory; may reuse a previously built target directory")
 # Cargo's aggregate staticlib artifact name is platform-specific.
 if(WIN32)
   set(RUST_STATICLIB "${RUST_TARGET_DIR}/${_cargo_out_subdir}/seekdb_host.lib")
@@ -71,19 +79,25 @@ else()
   set(RUST_STATICLIB "${RUST_TARGET_DIR}/${_cargo_target_subdir}${_cargo_out_subdir}/libseekdb_host.a")
 endif()
 
-# Sources whose change should retrigger a rebuild of the staticlib.
-file(GLOB_RECURSE _rust_sources CONFIGURE_DEPENDS
-  "${RUST_CRATE_DIR}/src/*.rs"
-  "${RUST_WORKSPACE_DIR}/plugin-runtime/src/*.rs"
-  "${RUST_WORKSPACE_DIR}/seekdb-host/src/*.rs")
-list(APPEND _rust_sources
-  "${RUST_WORKSPACE_DIR}/Cargo.toml"
-  "${RUST_WORKSPACE_DIR}/rust-toolchain.toml"
-  "${RUST_CRATE_DIR}/Cargo.toml"
-  "${RUST_WORKSPACE_DIR}/plugin-runtime/Cargo.toml"
-  "${RUST_WORKSPACE_DIR}/seekdb-host/Cargo.toml"
-  "${RUST_CRATE_DIR}/build.rs"
-  "${RUST_CRATE_DIR}/cbindgen.toml")
+# Reinvoke Cargo when any workspace crate's source or build input changes.
+# Discover crates through their manifests so rust/target is never scanned.
+file(GLOB _rust_inputs CONFIGURE_DEPENDS
+  "${RUST_WORKSPACE_DIR}/*.toml"
+  "${RUST_WORKSPACE_DIR}/*.lock")
+file(GLOB _rust_crate_manifests CONFIGURE_DEPENDS
+  "${RUST_WORKSPACE_DIR}/*/Cargo.toml")
+foreach(_rust_manifest IN LISTS _rust_crate_manifests)
+  get_filename_component(_rust_crate_dir "${_rust_manifest}" DIRECTORY)
+  file(GLOB_RECURSE _rust_crate_sources CONFIGURE_DEPENDS
+    "${_rust_crate_dir}/src/*.rs")
+  file(GLOB _rust_crate_build_inputs CONFIGURE_DEPENDS
+    "${_rust_crate_dir}/*.toml"
+    "${_rust_crate_dir}/*.rs"
+    "${_rust_crate_dir}/*.yaml"
+    "${_rust_crate_dir}/*.yml"
+    "${_rust_crate_dir}/*.json")
+  list(APPEND _rust_inputs ${_rust_crate_sources} ${_rust_crate_build_inputs})
+endforeach()
 
 set(_rust_host_features)
 if(SEEKDB_ENABLE_EXPERIMENTAL_PLUGINS)
@@ -92,14 +106,17 @@ endif()
 # Make generators must also rerun Cargo when only the feature option changes.
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/seekdb-rust-host-features.txt"
   CONTENT "${_rust_host_features}\n")
-list(APPEND _rust_sources "${CMAKE_CURRENT_BINARY_DIR}/seekdb-rust-host-features.txt")
+list(APPEND _rust_inputs "${CMAKE_CURRENT_BINARY_DIR}/seekdb-rust-host-features.txt")
 
 # CC/AR: cargo inherits CMake's PATH but not its compiler variables, and
 # `ring` (rustls's crypto backend) compiles C through the `cc` crate. Pin it
 # to the same toolchain as the rest of the build instead of whatever `cc`
 # discovers on PATH.
 set(_rust_build_env "CARGO_TARGET_DIR=${RUST_TARGET_DIR}"
-                    "CC=${CMAKE_C_COMPILER}" "AR=${CMAKE_AR}")
+                    "CONFIG_HEADER_DIR=${RUST_TARGET_DIR}/include"
+                    "DEFAULT_LOG_LEVEL=${DEFAULT_LOG_LEVEL}"
+                    "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}"
+                    "AR=${CMAKE_AR}")
 if(ANDROID)
   string(REGEX REPLACE "^android-" "" _android_api "${ANDROID_PLATFORM}")
   get_filename_component(_ndk_toolchain_bin "${CMAKE_C_COMPILER}" DIRECTORY)
@@ -143,7 +160,11 @@ if(APPLE)
   # gets no such implicit flag, so the vendored devtools clang cannot find the
   # macOS SDK headers (TargetConditionals.h). SDKROOT is the env var the clang
   # driver itself honors.
-  if(CMAKE_OSX_SYSROOT)
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    list(APPEND _rust_build_env
+      "SDKROOT=${SEEKDB_IOS_SDK_PATH}"
+      "IPHONEOS_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  elseif(CMAKE_OSX_SYSROOT)
     list(APPEND _rust_build_env "SDKROOT=${CMAKE_OSX_SYSROOT}")
   else()
     execute_process(COMMAND xcrun --show-sdk-path
@@ -165,19 +186,24 @@ endif()
 
 add_custom_command(
   OUTPUT "${RUST_STATICLIB}"
-  BYPRODUCTS "${RUST_INCLUDE_DIR}/nio.h"
+  BYPRODUCTS
+             "${RUST_TARGET_DIR}/include/config_bridge.h"
+             "${RUST_TARGET_DIR}/include/config_checkers.h"
   COMMAND "${CMAKE_COMMAND}" -E env ${_rust_build_env}
           "${CARGO}" build ${_cargo_profile_flag} ${_cargo_target_args}
           --manifest-path "${RUST_WORKSPACE_DIR}/Cargo.toml"
           --package seekdb-host ${_rust_host_features}
+  COMMAND "${CMAKE_COMMAND}" -E touch "${RUST_STATICLIB}"
   WORKING_DIRECTORY "${RUST_WORKSPACE_DIR}"
-  DEPENDS ${_rust_sources}
+  DEPENDS ${_rust_inputs}
   COMMENT "[rust] cargo build seekdb-host (${_cargo_out_subdir})"
   ${_rust_job_server_options}
   VERBATIM)
 
 add_custom_target(seekdb_rust_host_build DEPENDS "${RUST_STATICLIB}")
 add_custom_target(sql_nio_build DEPENDS seekdb_rust_host_build)
+
+add_custom_target(rust_staticlibs_build DEPENDS seekdb_rust_host_build)
 
 # System libraries the Rust std staticlib depends on.
 if(WIN32)
@@ -200,8 +226,13 @@ target_include_directories(seekdb_rust_host INTERFACE
 target_link_libraries(seekdb_rust_host INTERFACE "${RUST_STATICLIB}" ${_rust_syslibs})
 
 add_library(sql_nio INTERFACE)
-target_include_directories(sql_nio INTERFACE "${RUST_INCLUDE_DIR}")
+target_include_directories(sql_nio INTERFACE "${SQL_NIO_INCLUDE_DIR}")
 target_link_libraries(sql_nio INTERFACE seekdb_rust_host)
+
+add_library(config INTERFACE)
+target_include_directories(config INTERFACE
+  "${CONFIG_INCLUDE_DIR}" "${RUST_TARGET_DIR}/include")
+target_link_libraries(config INTERFACE seekdb_rust_host)
 
 set_property(DIRECTORY APPEND PROPERTY
   ADDITIONAL_CLEAN_FILES "${RUST_TARGET_DIR}")

@@ -26,27 +26,29 @@ config_setting(
     constraint_values = ["@platforms//os:windows"],
 )
 
-_SQL_NIO_INPUTS = [
-    "Cargo.toml",
-    "rust-toolchain.toml",
-    "sql-nio/Cargo.toml",
-    "plugin-runtime/Cargo.toml",
-    "seekdb-host/Cargo.toml",
-] + glob(["sql-nio/src/**/*.rs", "plugin-runtime/src/**/*.rs", "seekdb-host/src/**/*.rs"])
+# Track sources and build inputs for every crate in the workspace. Cargo only
+# runs when Bazel sees one of these inputs change.
+_RUST_INPUTS = glob(
+    ["**/*.rs", "**/*.toml", "**/*.yaml", "**/*.yml", "**/*.json", "*.lock"],
+    exclude = ["target/**"],
+    allow_empty = True,
+)
 
 # Cargo remains the authoritative Rust dependency resolver used by the
 # upstream CMake build.  Keep the action local and outside the sandbox until
 # Cargo dependencies are vendored: cargo currently updates the registry under
 # ~/.cargo, which Bazel's sandbox deliberately mounts read-only.
 genrule(
-    name = "_sql_nio_static_unix",
-    srcs = _SQL_NIO_INPUTS,
-    outs = ["libseekdb_host.a"],
+    name = "_rust_static_unix",
+    srcs = _RUST_INPUTS,
+    outs = ["libseekdb_host.a", "unix/config_bridge.h", "unix/config_checkers.h"],
     cmd = """
 set -eu
-export CARGO_TARGET_DIR="$(@D)/sql_nio-cargo-target"
+export CARGO_TARGET_DIR="$(@D)/rust-cargo-target"
+export CONFIG_HEADER_DIR="$$PWD/$(@D)/unix"
+export DEFAULT_LOG_LEVEL=OB_LOG_LEVEL_ERROR
 cargo build --release --manifest-path "$(location Cargo.toml)" --package seekdb-host --features plugins
-cp "$$CARGO_TARGET_DIR/release/libseekdb_host.a" "$@"
+cp "$$CARGO_TARGET_DIR/release/libseekdb_host.a" "$(@D)/libseekdb_host.a"
 """,
     tags = [
         "no-remote",
@@ -59,13 +61,15 @@ cp "$$CARGO_TARGET_DIR/release/libseekdb_host.a" "$@"
 )
 
 genrule(
-    name = "_sql_nio_static_windows",
-    srcs = _SQL_NIO_INPUTS,
-    outs = ["seekdb_host.lib"],
+    name = "_rust_static_windows",
+    srcs = _RUST_INPUTS,
+    outs = ["seekdb_host.lib", "windows/config_bridge.h", "windows/config_checkers.h"],
     cmd_bat = """
-set CARGO_TARGET_DIR=$(@D)\\sql_nio-cargo-target
+set CARGO_TARGET_DIR=$(@D)\\rust-cargo-target
+set CONFIG_HEADER_DIR=%CD%\\$(@D)\\windows
+set DEFAULT_LOG_LEVEL=OB_LOG_LEVEL_ERROR
 cargo build --release --manifest-path "$(location Cargo.toml)" --package seekdb-host --features plugins
-copy /Y "%CARGO_TARGET_DIR%\\release\\seekdb_host.lib" "$@"
+copy /Y "%CARGO_TARGET_DIR%\\release\\seekdb_host.lib" "$(@D)\\seekdb_host.lib"
 """,
     tags = [
         "no-remote",
@@ -80,8 +84,17 @@ copy /Y "%CARGO_TARGET_DIR%\\release\\seekdb_host.lib" "$@"
 filegroup(
     name = "sql_nio_archive",
     srcs = select({
-        ":windows": [":_sql_nio_static_windows"],
-        "//conditions:default": [":_sql_nio_static_unix"],
+        ":windows": ["seekdb_host.lib"],
+        "//conditions:default": ["libseekdb_host.a"],
+    }),
+    visibility = ["//src/observer:__pkg__"],
+)
+
+filegroup(
+    name = "config_archive",
+    srcs = select({
+        ":windows": ["seekdb_host.lib"],
+        "//conditions:default": ["libseekdb_host.a"],
     }),
     visibility = ["//src/observer:__pkg__"],
 )
@@ -96,4 +109,24 @@ cc_library(
         "//src/query:__pkg__",
         "//unittest/oblib:__pkg__",
     ],
+)
+
+cc_library(
+    name = "config_headers",
+    hdrs = ["config/include/config.h"],
+    includes = ["config/include"],
+    visibility = ["//src/share:__pkg__", "//src/observer:__pkg__"],
+)
+
+cc_library(
+    name = "config_bridge_headers",
+    hdrs = select({
+        ":windows": ["windows/config_bridge.h", "windows/config_checkers.h"],
+        "//conditions:default": ["unix/config_bridge.h", "unix/config_checkers.h"],
+    }),
+    includes = select({
+        ":windows": ["windows"],
+        "//conditions:default": ["unix"],
+    }),
+    visibility = ["//src/share:__pkg__", "//src/observer:__pkg__", "//src/rootserver:__pkg__", "//src/sql:__subpackages__", "//src/storage:__pkg__", "//src/pl:__pkg__", "//src/standby:__pkg__"],
 )

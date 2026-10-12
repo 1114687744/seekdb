@@ -465,7 +465,7 @@ public:
   // @param [out] tx_ctx: newly allocated or already exsited transaction context
   // Return Values That Need Attention:
   // @return OB_SUCCESS, if the tx_ctx newly allocated or already existed
-  CONST_DELEGATE_WITH_RET(ls_tx_svr_, create_tx_ctx, int);
+  DELEGATE_WITH_RET(ls_tx_svr_, create_tx_ctx, int);
 
   // Find specified TxCtx from the ObLSTxCtxMgr;
   // @param [in] tx_id: transaction ID

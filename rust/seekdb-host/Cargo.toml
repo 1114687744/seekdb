@@ -13,5 +13,6 @@ crate-type = ["staticlib"]
 plugins = ["dep:seekdb-plugin-runtime"]
 
 [dependencies]
+config = { path = "../config" }
 sql-nio = { path = "../sql-nio" }
 seekdb-plugin-runtime = { path = "../plugin-runtime", optional = true }

@@ -475,6 +475,10 @@ private:
 private:
   DISALLOW_COPY_AND_ASSIGN(ObStmtFactory);
 };
+
+template <>
+int ObStmtFactory::create_stmt<ObSelectStmt>(ObSelectStmt *&stmt);
+
 }
 }
 
