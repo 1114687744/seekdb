@@ -12,7 +12,7 @@
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tablet/ob_tablet.h"
 #include "common/mysqlclient/ob_mysql_transaction.h"
-#include "common/mysqlclient/ob_mysql_result.h"
+#include "observer/schema/native_schema_catalog.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 #include <map>
 #include <set>
@@ -54,38 +54,16 @@ int publication_physical_status(uint64_t physical, ObTabletCreateDeleteMdsUserDa
 // Both sides of a DDL delta come from the SQL owner's transaction. A prior
 // parallel DDL can have published its root before the runtime schema cache has
 // refreshed; that cache is not the authority for this publication's baseline.
-int publication_schema(ObSchemaService &backend, const ObRefreshSchemaStatus &status,
-    ObMySQLTransaction &sql, ObIAllocator &allocator, uint64_t id, int64_t version,
+int publication_schema(observer::NativeSchemaCatalog &catalog,
+    ObIAllocator &allocator, uint64_t id, int64_t version,
     bool historical, ObTableSchema *&schema)
 {
-  schema = nullptr;
-  ObSqlString query;
-  ObISQLClient::ReadResult result;
-  int ret = historical
-      ? query.append_fmt("SELECT is_deleted FROM oceanbase.__all_table_history "
-          "WHERE table_id=%lu AND schema_version<=%ld ORDER BY schema_version DESC LIMIT 1", id, version)
-      : query.append_fmt("SELECT 0 AS is_deleted FROM oceanbase.__all_table WHERE table_id=%lu", id);
-  int64_t deleted = 0;
-  if (ret == OB_SUCCESS) { ret = sql.read(result, query.ptr()); }
-  if (ret == OB_SUCCESS) { ret = result.get_result()->next(); }
-  const bool missing = ret == OB_ITER_END;
-  if (ret == OB_SUCCESS) { ret = result.get_result()->get_int("is_deleted", deleted); }
-  const int close_ret = result.close();
-  // Closing the cursor does not release the handler's connection reference.
-  result.reset();
-  if (ret == OB_SUCCESS || missing) { ret = close_ret; }
-  if (ret == OB_SUCCESS && !missing && deleted == 0) {
-    ret = backend.get_table_schema(status, id, version, sql, allocator, schema);
-    if (ret == OB_SUCCESS && schema == nullptr) { ret = OB_ERR_UNEXPECTED; }
-    ObArray<ObAuxTableMetaInfo> auxiliary;
-    if (ret == OB_SUCCESS) { ret = backend.fetch_aux_tables(status, id, version, sql, auxiliary); }
-    for (int64_t i = 0; ret == OB_SUCCESS && i < auxiliary.count(); ++i) {
-      const auto &aux = auxiliary.at(i);
-      if (aux.table_type_ == AUX_LOB_META) { schema->set_aux_lob_meta_tid(aux.table_id_); }
-      else if (aux.table_type_ == AUX_LOB_PIECE) { schema->set_aux_lob_piece_tid(aux.table_id_); }
-    }
-  }
-  return ret;
+  using Source = observer::NativeSchemaCatalog::TableSource;
+  // Current rows include this DDL's writes and omit its deletes. Previous
+  // definitions select the published logical version within the same owner.
+  const int ret = catalog.get_table(id, historical ? version : INT64_MAX, allocator, schema,
+                                   historical ? Source::HISTORY : Source::CURRENT);
+  return ret == OB_TABLE_NOT_EXIST || ret == OB_ERR_SCHEMA_HISTORY_EMPTY ? OB_SUCCESS : ret;
 }
 
 using Bindings = std::map<uint64_t, ns::CatalogTabletSource>;
@@ -316,23 +294,29 @@ int NamespaceSchemaPublication::stage(common::ObMySQLTransaction &sql,
       if (id != 0 && id != OB_INVALID_ID) { pending.insert(id); }
     }
   };
-  while (ret == OB_SUCCESS && !pending.empty()) {
-    const uint64_t id = *pending.begin();
-    pending.erase(pending.begin());
-    if (!processed.insert(id).second) { continue; }
-    ObTableSchema *old = nullptr;
-    ret = publication_schema(*backend, status, sql, allocator, id,
-        record.roots.schema_version, true, old);
-    if (old != nullptr) { allocated.push_back(old); }
-    if (ret != OB_SUCCESS) { break; }
-    if (old != nullptr) { previous[id] = old; include_family(old); }
-    ObTableSchema *schema = nullptr;
-    ret = publication_schema(*backend, status, sql, allocator, id, version, false, schema);
-    if (schema != nullptr) { allocated.push_back(schema); }
-    if (ret != OB_SUCCESS) { break; }
-    if (schema == nullptr) { continue; }
-    current[id] = schema;
-    include_family(schema);
+  if (ret == OB_SUCCESS && !pending.empty()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int rc = OB_SUCCESS;
+      while (rc == OB_SUCCESS && !pending.empty()) {
+        const uint64_t id = *pending.begin();
+        pending.erase(pending.begin());
+        if (!processed.insert(id).second) { continue; }
+        ObTableSchema *old = nullptr;
+        rc = publication_schema(catalog, allocator, id, record.roots.schema_version, true, old);
+        if (old != nullptr) { allocated.push_back(old); }
+        if (rc != OB_SUCCESS) { break; }
+        if (old != nullptr) { previous[id] = old; include_family(old); }
+        ObTableSchema *schema = nullptr;
+        rc = publication_schema(catalog, allocator, id, version, false, schema);
+        if (schema != nullptr) { allocated.push_back(schema); }
+        if (rc != OB_SUCCESS) { break; }
+        if (schema == nullptr) { continue; }
+        current[id] = schema;
+        include_family(schema);
+      }
+      return rc;
+    });
   }
   std::vector<uint64_t> removed_physical;
   if (ret == OB_SUCCESS) {

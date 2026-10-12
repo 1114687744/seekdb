@@ -116,6 +116,16 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       found_table |= actual.get_table_id() == OB_ALL_TABLE_TID;
       found_column |= actual.get_table_id() == OB_ALL_COLUMN_TID;
       columns += actual.get_column_count();
+      uint64_t found = OB_INVALID_ID;
+      ObTableType type = MAX_TABLE_TYPE;
+      int64_t version = 0;
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_id(actual.get_database_id(), 0, actual.get_table_name_str(), true, found, type, version); }
+      const uint64_t expected_id = actual.is_index_table() || actual.is_aux_lob_table() ? OB_INVALID_ID : actual.get_table_id();
+      if (ret == OB_SUCCESS && found != expected_id) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS && actual.is_index_table()) {
+        ret = catalog.get_index_id(actual.get_database_id(), actual.get_table_name_str(), found);
+        if (ret == OB_SUCCESS && found != actual.get_table_id()) { ret = OB_ERR_UNEXPECTED; }
+      }
     }
     if (ret == OB_SUCCESS && (!found_table || !found_column)) { ret = OB_ERR_UNEXPECTED; }
     ObArenaAllocator allocator(ObMemAttr("CoreCatalogTest"));
@@ -153,6 +163,16 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     }
     if (ret == OB_SUCCESS && indexes.count() != expected_indexes) { ret = OB_ERR_UNEXPECTED; }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_METADATA namespace=%lu indexes=%ld ret=%d\n", namespace_id, indexes.count(), ret);
+    uint64_t self_id = OB_INVALID_ID;
+    ObTableType self_type = MAX_TABLE_TYPE;
+    int64_t self_version = 0;
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_id(OB_SYS_DATABASE_ID, 0, ObString::make_string(OB_ALL_CORE_TABLE_TNAME), true, self_id, self_type, self_version); }
+    ObSEArray<uint64_t, 1> self_ids;
+    ObArray<ObSchemaIdVersion> self_versions;
+    if (ret == OB_SUCCESS) { ret = self_ids.push_back(OB_ALL_CORE_TABLE_TID); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_schema_versions(self_ids, self_versions); }
+    if (ret == OB_SUCCESS && (self_versions.count() != 1 || self_versions.at(0).get_schema_version() != self_version)) { ret = OB_ERR_UNEXPECTED; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_SELF namespace=%lu id=%lu version=%ld ret=%d\n", namespace_id, self_id, self_version, ret);
     for (const uint64_t id : {OB_ALL_CORE_TABLE_TID, OB_ALL_TABLE_TID, OB_ALL_COLUMN_TID}) {
       if (ret != OB_SUCCESS) { break; }
       ObTableSchema *table = nullptr;
@@ -368,7 +388,7 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
             : value_column->get_cur_default_value().get_string().length() != expected_default_length))) {
       ret = OB_ERR_UNEXPECTED;
     }
-    if (ret == OB_SUCCESS && expected_foreign_keys > 0) {
+    if (ret == OB_SUCCESS && expected_foreign_keys > 0 && name.find("_mock_fk") == std::string::npos) {
       const auto &fk = definition->get_foreign_key_infos().at(0);
       ObTableSchema *parent = nullptr;
       ret = catalog.get_table(fk.parent_table_id_, requested_version, allocator, parent);
@@ -377,6 +397,16 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
         ret = OB_ERR_UNEXPECTED;
       }
       if (parent != nullptr) { parent->~ObTableSchema(); }
+    }
+    if (ret == OB_SUCCESS) {
+      ObArray<ObAuxTableMetaInfo> auxiliary;
+      ret = catalog.get_aux_tables(table_id, requested_version, auxiliary);
+      for (int64_t i = 0; ret == OB_SUCCESS && i < auxiliary.count(); ++i) {
+        const auto &aux = auxiliary.at(i);
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_AUX_ROW namespace=%lu id=%lu type=%d index_type=%d\n",
+            namespace_id, aux.table_id_, aux.table_type_, aux.index_type_);
+      }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_AUX namespace=%lu count=%ld ret=%d\n", namespace_id, auxiliary.count(), ret);
     }
     if (definition != nullptr) { definition->~ObTableSchema(); definition = nullptr; }
     if (ret == OB_SUCCESS) {
@@ -407,6 +437,13 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       if (ret == OB_SUCCESS && indexes.count() != expected_indexes) { ret = OB_ERR_UNEXPECTED; }
       for (int64_t i = 0; ret == OB_SUCCESS && i < indexes.count(); ++i) {
         const auto &index = indexes.at(i);
+        uint64_t found = OB_INVALID_ID;
+        ret = catalog.get_index_id(definition->get_database_id(), index.get_index_name(), found);
+        if (ret == OB_SUCCESS && found != index.get_index_id()) { ret = OB_ERR_UNEXPECTED; }
+        ObTableType type = MAX_TABLE_TYPE;
+        int64_t version = 0;
+        if (ret == OB_SUCCESS) { ret = catalog.get_table_id(definition->get_database_id(), 0, index.get_index_name(), true, found, type, version); }
+        if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
         fprintf(stderr, "NATIVE_SCHEMA_CATALOG_INDEX_INFO namespace=%lu id=%lu name=%.*s version=%ld type=%d\n",
             namespace_id, index.get_index_id(), index.get_index_name().length(), index.get_index_name().ptr(),
             index.get_schema_version(), index.get_index_type());
@@ -415,6 +452,58 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
           namespace_id, table_id, versions.empty() ? 0 : versions.at(0).get_schema_version(), indexes.count(), ret);
       if (ret == OB_SUCCESS) { ret = catalog.get_table_index_infos(allocator, definition->get_database_id() + 1000000000, table_id, indexes); }
       if (ret == OB_SUCCESS && !indexes.empty()) { ret = OB_ERR_UNEXPECTED; }
+      uint64_t found = OB_INVALID_ID;
+      ObTableType type = MAX_TABLE_TYPE;
+      int64_t version = 0;
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_id(definition->get_database_id(), 0, ObString::make_string("t"), false, found, type, version); }
+      if (ret == OB_SUCCESS && (found != table_id || type != definition->get_table_type()
+          || version != definition->get_schema_version())) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_id(definition->get_database_id(), 0, ObString::make_string("T"), true, found, type, version); }
+      if (ret == OB_SUCCESS && found != table_id) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_id(definition->get_database_id(), 0, ObString::make_string("T"), false, found, type, version); }
+      if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_id(definition->get_database_id() + 1000000000, 0, ObString::make_string("t"), true, found, type, version); }
+      if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+      for (auto it = definition->constraint_begin(); ret == OB_SUCCESS && it != definition->constraint_end(); ++it) {
+        ret = catalog.get_constraint_id(definition->get_database_id(), (*it)->get_constraint_name_str(), found);
+        if (ret == OB_SUCCESS && found != (*it)->get_constraint_id()) { ret = OB_ERR_UNEXPECTED; }
+        if (ret == OB_SUCCESS) { ret = catalog.get_constraint_id(definition->get_database_id(), ObString::make_string("CK"), found); }
+        if (ret == OB_SUCCESS && found != (*it)->get_constraint_id()) { ret = OB_ERR_UNEXPECTED; }
+      }
+      for (int64_t i = 0; i < definition->get_foreign_key_infos().count(); ++i) {
+        const auto &fk = definition->get_foreign_key_infos().at(i);
+        if (ret != OB_SUCCESS || fk.child_table_id_ != table_id) { continue; }
+        ret = catalog.get_foreign_key_id(definition->get_database_id(), fk.foreign_key_name_, found);
+        if (ret == OB_SUCCESS && found != fk.foreign_key_id_) { ret = OB_ERR_UNEXPECTED; }
+        if (ret == OB_SUCCESS) { ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("FK"), found); }
+        if (ret == OB_SUCCESS && found != fk.foreign_key_id_) { ret = OB_ERR_UNEXPECTED; }
+      }
+      if (ret == OB_SUCCESS && (name.find("_drop_fk") != std::string::npos || name.find("_old_fk") != std::string::npos)) {
+        ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("fk"), found);
+        if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+      }
+      if (ret == OB_SUCCESS) { ret = catalog.get_constraint_id(definition->get_database_id(), ObString::make_string("__absent_constraint"), found); }
+      if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = catalog.get_foreign_key_id(definition->get_database_id(), ObString::make_string("__absent_fk"), found); }
+      if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS && name.find("_mock_fk") != std::string::npos) {
+        uint64_t mock_id = OB_INVALID_ID;
+        ret = catalog.get_mock_fk_parent_table_id(definition->get_database_id(), ObString::make_string("missing_parent"), mock_id);
+        if (ret == OB_SUCCESS && (definition->get_foreign_key_infos().empty()
+            || mock_id != definition->get_foreign_key_infos().at(0).parent_table_id_)) { ret = OB_ERR_UNEXPECTED; }
+        ObSEArray<uint64_t, 3> ids;
+        ObArray<ObSchemaIdVersion> versions;
+        if (ret == OB_SUCCESS) { ret = ids.push_back(mock_id); }
+        if (ret == OB_SUCCESS) { ret = ids.push_back(mock_id); }
+        if (ret == OB_SUCCESS) { ret = ids.push_back(1000000000); }
+        if (ret == OB_SUCCESS) { ret = catalog.get_mock_fk_parent_table_schema_versions(ids, versions); }
+        if (ret == OB_SUCCESS && (versions.count() != 1 || versions.at(0).get_schema_id() != mock_id)) { ret = OB_ERR_UNEXPECTED; }
+        if (ret == OB_SUCCESS) { ret = catalog.get_mock_fk_parent_table_id(definition->get_database_id(), ObString::make_string("MISSING_PARENT"), found); }
+        if (ret == OB_SUCCESS && found != OB_INVALID_ID) { ret = OB_ERR_UNEXPECTED; }
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_MOCK_PARENT namespace=%lu id=%lu version=%ld ret=%d\n",
+            namespace_id, mock_id, versions.empty() ? 0 : versions.at(0).get_schema_version(), ret);
+      }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_NAMES namespace=%lu ret=%d\n", namespace_id, ret);
     }
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FULL namespace=%lu table=%llu ret=%d\n", namespace_id, table_id, ret);
@@ -534,6 +623,72 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS) { ret = owner_end == OB_SUCCESS ? participant_end : owner_end; }
     if (ret == OB_SUCCESS) { stage = "read_rollback"; ret = outside(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_INDEX_METADATA_TX namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
+  if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
+    ObArenaAllocator allocator(ObMemAttr("CatalogNameTx"));
+    ObTableSchema *source = nullptr;
+    ret = catalog.get_table(table_id, INT64_MAX, allocator, source, observer::NativeSchemaCatalog::TableSource::CURRENT);
+    const uint64_t database = source == nullptr ? OB_INVALID_ID : source->get_database_id();
+    const uint64_t first_id = 7000000000ULL + namespace_id * 10;
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    if (ret == OB_SUCCESS) { ret = native.begin(owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+    }
+    for (int i = 0; ret == OB_SUCCESS && i < 6; ++i) {
+      ObTableSchema table;
+      ret = table.assign(*source);
+      table.set_table_id(first_id + i);
+      table.set_session_id(i == 1 ? 71 : i == 2 ? 72 : 0);
+      table.set_table_type(i == 1 || i == 2 ? TMP_TABLE : i == 4 ? USER_INDEX : i == 5 ? AUX_LOB_META : USER_TABLE);
+      if (i == 3) {
+        ObTableMode mode = table.get_table_mode_struct(); mode.state_flag_ |= TABLE_STATE_IS_HIDDEN_MASK;
+        table.set_table_mode_struct(mode);
+      }
+      if (i >= 4) { table.set_data_table_id(table_id); }
+      if (i == 4) { table.set_index_type(INDEX_TYPE_NORMAL_LOCAL); }
+      if (ret == OB_SUCCESS) { ret = table.set_table_name(i < 3 ? "lookup_name" : i == 3 ? "hidden_name" : i == 4 ? "idx_name" : "lob_name"); }
+      if (ret == OB_SUCCESS) { ret = writer.insert_table(table, false); }
+    }
+    auto verify = [&](observer::NativeSchemaCatalog &reader, bool present) {
+      int rc = OB_SUCCESS;
+      for (uint64_t session : {0UL, 71UL, 72UL, 73UL}) {
+        uint64_t found = OB_INVALID_ID;
+        ObTableType type = MAX_TABLE_TYPE;
+        int64_t version = 0;
+        if (rc == OB_SUCCESS) { rc = reader.get_table_id(database, session, ObString::make_string("LOOKUP_NAME"), true, found, type, version); }
+        const uint64_t expected = !present ? OB_INVALID_ID : first_id + (session == 71 ? 1 : session == 72 ? 2 : 0);
+        if (rc == OB_SUCCESS && found != expected) { rc = OB_ERR_UNEXPECTED; }
+      }
+      for (const char *name : {"LOOKUP_NAME", "hidden_name", "idx_name", "lob_name"}) {
+        uint64_t found = OB_INVALID_ID;
+        ObTableType type = MAX_TABLE_TYPE;
+        int64_t version = 0;
+        if (rc == OB_SUCCESS) { rc = reader.get_table_id(database, 0, ObString::make_string(name), false, found, type, version); }
+        if (rc == OB_SUCCESS && found != OB_INVALID_ID) { rc = OB_ERR_UNEXPECTED; }
+      }
+      uint64_t found = OB_INVALID_ID;
+      if (rc == OB_SUCCESS) { rc = reader.get_index_id(database, ObString::make_string("IDX_NAME"), found); }
+      if (rc == OB_SUCCESS && found != (present ? first_id + 4 : OB_INVALID_ID)) { rc = OB_ERR_UNEXPECTED; }
+      return rc;
+    };
+    auto outside = [&]() {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      return rc == OB_SUCCESS ? verify(reader, false) : rc;
+    };
+    const char *stage = "own_read";
+    if (ret == OB_SUCCESS) { ret = verify(writer, true); }
+    if (ret == OB_SUCCESS) { stage = "external_read"; ret = outside(); }
+    const int owner_end = owner.is_active() ? native.rollback(owner) : OB_SUCCESS;
+    const int participant_end = writer.close();
+    if (ret == OB_SUCCESS) { ret = owner_end == OB_SUCCESS ? participant_end : owner_end; }
+    if (ret == OB_SUCCESS) { stage = "read_rollback"; ret = outside(); }
+    if (source != nullptr) { source->~ObTableSchema(); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_NAMES_TX namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
   if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
     // A catalog attached to a native owner must see its uncommitted metadata;

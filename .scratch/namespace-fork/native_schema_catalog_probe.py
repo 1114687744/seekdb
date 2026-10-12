@@ -29,6 +29,8 @@ def run(binary, selected=None):
              (2, 0, 0, 0, 0, 0)),
             ('fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
              "CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(id)", '', (2, 0, 0, 0, 1, 0)),
+            ('mock_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "CONSTRAINT fk FOREIGN KEY(id) REFERENCES missing_parent(id)", '', (2, 0, 0, 0, 1, 0)),
             ('self_fk', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', parent_id INT, "
              "KEY parent_idx(parent_id), CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES t(id)",
              '', (3, 0, 1, 0, 1, 0)),
@@ -53,7 +55,13 @@ def run(binary, selected=None):
                 columns = columns.replace('REFERENCES parent', f'REFERENCES {database}.parent')
             if label == 'self_fk':
                 columns = columns.replace('REFERENCES t', f'REFERENCES {database}.t')
+            if label == 'mock_fk':
+                columns = columns.replace('REFERENCES missing_parent', f'REFERENCES {database}.missing_parent')
+                experiment.sql(f'USE {database}')
+                experiment.sql('SET SESSION foreign_key_checks=0')
             experiment.sql(f'CREATE TABLE {database}.t({columns}){options}')
+            if label == 'mock_fk':
+                experiment.sql('SET SESSION foreign_key_checks=1')
             table_id = experiment.sql("SELECT t.table_id FROM oceanbase.__all_table t JOIN oceanbase.__all_database d "
                                       f"ON t.database_id=d.database_id WHERE d.database_name='{database}' "
                                       "AND t.table_name='t'")[0][0]
@@ -91,7 +99,17 @@ def run(binary, selected=None):
             current_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table WHERE table_id={table_id}')[0][0]
             current_indexes = experiment.sql('SELECT table_id, table_name, schema_version, index_type FROM oceanbase.__all_table '
                                              f'WHERE data_table_id={table_id} AND index_type>0')
+            auxiliary = experiment.sql('SELECT a.table_id,a.table_type,a.index_type '
+                'FROM oceanbase.__all_table_history a '
+                f'WHERE a.data_table_id={table_id} AND a.is_deleted=0 '
+                'AND a.schema_version=(SELECT MAX(b.schema_version) FROM oceanbase.__all_table_history b '
+                f'WHERE b.table_id=a.table_id AND b.schema_version<={requested_version}) ORDER BY a.table_id')
+            if label == 'mock_fk':
+                mock_id, mock_version = experiment.sql('SELECT mock_fk_parent_table_id, schema_version '
+                    'FROM oceanbase.__all_mock_fk_parent_table '
+                    f'WHERE database_id=(SELECT database_id FROM oceanbase.__all_table WHERE table_id={table_id})')[0]
             if label == 'plain':
+                core_self = experiment.sql("SELECT table_id, schema_version FROM oceanbase.__all_virtual_core_all_table WHERE table_name='__all_core_table'")
                 core_tables = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_all_table '
                                              'WHERE table_id<>1')[0][0]
                 core_columns = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_column_table '
@@ -115,6 +133,14 @@ def run(binary, selected=None):
                     f'min={minimum} latest={latest} original={original} ret=0') in trace
             assert (f'NATIVE_SCHEMA_CATALOG_CURRENT_METADATA namespace={child_id} table={table_id} '
                     f'version={current_version} indexes={len(current_indexes)} ret=0') in trace, trace[-2000:]
+            assert f'NATIVE_SCHEMA_CATALOG_NAMES namespace={child_id} ret=0' in trace, trace[-2000:]
+            assert (f'NATIVE_SCHEMA_CATALOG_AUX namespace={child_id} count={len(auxiliary)} ret=0') in trace, trace[-2000:]
+            for aux_id, aux_type, index_type in auxiliary:
+                assert (f'NATIVE_SCHEMA_CATALOG_AUX_ROW namespace={child_id} id={aux_id} '
+                        f'type={aux_type} index_type={index_type}') in trace, auxiliary
+            if label == 'mock_fk':
+                assert (f'NATIVE_SCHEMA_CATALOG_MOCK_PARENT namespace={child_id} id={mock_id} '
+                        f'version={mock_version} ret=0') in trace, trace[-2000:]
             for index_id, index_name, version, index_type in current_indexes:
                 assert (f'NATIVE_SCHEMA_CATALOG_INDEX_INFO namespace={child_id} id={index_id} name={index_name} '
                         f'version={version} type={index_type}') in trace, current_indexes
@@ -130,6 +156,10 @@ def run(binary, selected=None):
             if label == 'plain':
                 assert (f'NATIVE_SCHEMA_CATALOG_CORE namespace={child_id} tables={core_tables} '
                         f'columns={core_columns} ret=0') in trace, trace[-2000:]
+                assert (f'NATIVE_SCHEMA_CATALOG_CORE_SELF namespace={child_id} '
+                        f'id={core_self[0][0]} version={core_self[0][1]} ret=0') in trace, trace[-2000:]
+                assert (f'NATIVE_SCHEMA_CATALOG_NAMES_TX namespace={child_id} '
+                        'stage=read_rollback ret=0') in trace, trace[-2000:]
                 assert (f'NATIVE_SCHEMA_CATALOG_CORE_HISTORY namespace={child_id} '
                         'stage=read_rollback ret=0') in trace, trace[-2000:]
                 assert f'NATIVE_SCHEMA_CATALOG_TOMBSTONE namespace={child_id} ret=0' in trace
@@ -147,7 +177,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'versions', 'part', 'fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

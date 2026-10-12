@@ -510,7 +510,9 @@ int read_core_tables(NativeSchemaCatalog &catalog, int64_t version,
     uint64_t id = OB_INVALID_ID;
     int rc = row.get_int("schema_version", v);
     if (rc == OB_SUCCESS) { rc = row.get_uint("table_id", id); }
-    if (rc != OB_SUCCESS || v > version || id == OB_ALL_CORE_TABLE_TID) { return rc; }
+    // The core table's complete definition is compiled. Its persisted metadata
+    // row still participates in name and version queries, as in the SQL view.
+    if (rc != OB_SUCCESS || v > version || (with_columns && id == OB_ALL_CORE_TABLE_TID)) { return rc; }
     auto &latest = tables[id];
     if (v <= latest.version) { return OB_SUCCESS; }
     std::unique_ptr<ObTableSchema> table(new (std::nothrow) ObTableSchema());
@@ -559,6 +561,152 @@ int read_core_tables(NativeSchemaCatalog &catalog, int64_t version,
     if (!table.second.value) { continue; }
     if (with_columns && table.second.value->get_column_count() <= 0) { ret = OB_ERR_UNEXPECTED; }
     else { ret = out.push_back(*table.second.value); }
+  }
+  return ret;
+}
+
+bool catalog_name_equal(const ObString &a, const ObString &b, bool insensitive)
+{
+  return ObCharset::strcmp(insensitive ? CS_TYPE_UTF8MB4_GENERAL_CI : CS_TYPE_UTF8MB4_BIN, a, b) == 0;
+}
+
+int name_key(uint64_t inner_id, const char *column_name, const ObString &name, ObObj &key)
+{
+  const auto creator = share::fixed_inner_table_creator(inner_id);
+  if (creator == nullptr) { return OB_INVALID_ARGUMENT; }
+  ObTableSchema fixed;
+  int ret = creator(fixed);
+  const auto *column = OB_SUCC(ret) ? fixed.get_column_schema(ObString::make_string(column_name)) : nullptr;
+  if (OB_SUCC(ret) && column == nullptr) { ret = OB_ERR_COLUMN_NOT_FOUND; }
+  if (OB_SUCC(ret)) {
+    key.set_meta_type(column->get_meta_type());
+    key.set_string(column->get_data_type(), name);
+  }
+  return ret;
+}
+
+struct TableLookupRow
+{
+  uint64_t id = OB_INVALID_ID;
+  uint64_t database = OB_INVALID_ID;
+  uint64_t session = 0;
+  ObString name;
+  ObTableType type = MAX_TABLE_TYPE;
+  ObTableMode mode;
+  int64_t version = OB_INVALID_VERSION;
+  bool user_visible() const
+  { return !mode.is_user_hidden_table() && !is_index_table(type) && !is_aux_lob_table(type); }
+};
+
+int read_lookup_row(const CatalogRows &rows, TableLookupRow &out)
+{
+  int64_t type = MAX_TABLE_TYPE, mode = 0;
+  int ret = rows.get_uint("table_id", out.id);
+  if (OB_FAIL(ret)
+      || OB_FAIL(rows.get_uint("database_id", out.database))
+      || OB_FAIL(rows.get_uint("session_id", out.session))
+      || OB_FAIL(rows.get_varchar("table_name", out.name))
+      || OB_FAIL(rows.get_int("table_type", type))
+      || OB_FAIL(rows.get_int("table_mode", mode))
+      || OB_FAIL(rows.get_int("schema_version", out.version))) {
+  } else {
+    out.type = static_cast<ObTableType>(type);
+    out.mode.mode_ = static_cast<uint32_t>(mode);
+  }
+  return ret;
+}
+
+// Visit only the columns needed for name resolution. Callback strings borrow
+// the current row; no table columns, partitions or relationship schemas load.
+int visit_named_tables(NativeSchemaCatalog &catalog, uint64_t database, const ObString &name,
+    const std::function<int(const TableLookupRow &)> &visitor)
+{
+  int ret = OB_SUCCESS;
+  if (is_oceanbase_sys_database_id(database)) {
+    ObArray<ObTableSchema> core;
+    ret = read_core_tables(catalog, INT64_MAX, core, false);
+    for (int64_t i = 0; OB_SUCC(ret) && i < core.count(); ++i) {
+      const auto &table = core.at(i);
+      if (table.get_database_id() != database) { continue; }
+      TableLookupRow row;
+      row.id = table.get_table_id(); row.database = table.get_database_id();
+      row.session = table.get_session_id(); row.name = table.get_table_name_str();
+      row.type = table.get_table_type(); row.mode = table.get_table_mode_struct(); row.version = table.get_schema_version();
+      ret = visitor(row);
+    }
+  }
+  ObObj keys[2];
+  keys[0].set_int(database);
+  if (OB_SUCC(ret)) { ret = name_key(OB_ALL_TABLE_IDX_DB_TB_NAME_TID, "table_name", name, keys[1]); }
+  std::set<uint64_t> ids;
+  if (OB_SUCC(ret)) {
+    ret = collect_related_ids(catalog, OB_ALL_TABLE_IDX_DB_TB_NAME_TID, ObRowkey(keys, 2),
+                             INT64_MAX, "table_id", ids);
+  }
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ObObj key; key.set_int(id);
+    CatalogRows rows;
+    TableLookupRow row;
+    if (OB_FAIL(rows.open(catalog, OB_ALL_TABLE_TID, ObRowkey(&key, 1), INT64_MAX, false, 0, false, {}, false))) {
+    } else if (OB_FAIL(rows.next())) {
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    } else if (OB_FAIL(read_lookup_row(rows, row))) {
+    } else if (row.database == database) { ret = visitor(row); }
+  }
+  return ret;
+}
+
+int find_named_relation(NativeSchemaCatalog &catalog, uint64_t database, const ObString &name,
+    bool foreign_key, uint64_t &out)
+{
+  out = OB_INVALID_ID;
+  if (database == OB_INVALID_ID || name.empty()) { return OB_INVALID_ARGUMENT; }
+  const uint64_t index = foreign_key ? OB_ALL_FOREIGN_KEY_IDX_FK_NAME_TID : OB_ALL_CONSTRAINT_IDX_CST_NAME_TID;
+  const char *name_column = foreign_key ? "foreign_key_name" : "constraint_name";
+  const char *id_column = foreign_key ? "foreign_key_id" : "constraint_id";
+  ObObj key;
+  int ret = name_key(index, name_column, name, key);
+  std::set<std::pair<uint64_t, uint64_t>> candidates;
+  {
+    CatalogRows rows;
+    if (OB_SUCC(ret)) { ret = rows.open(catalog, index, ObRowkey(&key, 1), INT64_MAX); }
+    while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+      uint64_t owner = OB_INVALID_ID, id = OB_INVALID_ID;
+      if (OB_FAIL(rows.get_uint(id_column, id))) {
+      } else if (!foreign_key && OB_FAIL(rows.get_uint("table_id", owner))) {
+      } else { candidates.emplace(owner, id); }
+    }
+    if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  }
+  for (const auto &candidate : candidates) {
+    if (OB_FAIL(ret) || out != OB_INVALID_ID) { break; }
+    uint64_t owner = candidate.first;
+    bool matches = false;
+    {
+      ObObj keys[2]; keys[0].set_int(owner); keys[1].set_int(candidate.second);
+      const ObRowkey prefix(foreign_key ? &keys[1] : keys, foreign_key ? 1 : 2);
+      CatalogRows rows;
+      ObString stored_name;
+      if (OB_FAIL(rows.open(catalog, foreign_key ? OB_ALL_FOREIGN_KEY_TID : OB_ALL_CONSTRAINT_TID,
+                           prefix, INT64_MAX, false, 0, false, {}, false))) {
+      } else if (OB_FAIL(rows.next())) {
+        if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+      } else if (OB_FAIL(rows.get_varchar(name_column, stored_name))) {
+      } else if (foreign_key && OB_FAIL(rows.get_uint("child_table_id", owner))) {
+      } else { matches = catalog_name_equal(name, stored_name, true); }
+    }
+    if (OB_SUCC(ret) && matches) {
+      key.set_int(owner);
+      CatalogRows rows;
+      TableLookupRow table;
+      if (OB_FAIL(rows.open(catalog, OB_ALL_TABLE_TID, ObRowkey(&key, 1), INT64_MAX, false, 0, false, {}, false))) {
+      } else if (OB_FAIL(rows.next())) {
+        if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+      } else if (OB_FAIL(read_lookup_row(rows, table))) {
+      } else if (table.database == database && table.user_visible()
+                 && (foreign_key || !is_mysql_tmp_table(table.type))) { out = candidate.second; }
+    }
   }
   return ret;
 }
@@ -780,43 +928,52 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
       } else { ret = ObSchemaRetrieveUtils::retrieve_trigger_list(rows, table->get_trigger_list()); }
     }
   }
-  {
-    std::set<uint64_t> ids;
-    if (OB_SUCC(ret)) {
-      ret = collect_related_ids(*this, history ? OB_ALL_TABLE_HISTORY_IDX_DATA_TABLE_ID_TID
-                                              : OB_ALL_TABLE_IDX_DATA_TABLE_ID_TID,
-                                prefix, version, "table_id", ids);
-    }
-    for (const uint64_t related : ids) {
-      if (OB_FAIL(ret)) { break; }
-      ObObj key;
-      key.set_int(related);
-      CatalogRows rows;
-      if (OB_FAIL(open(rows, OB_ALL_TABLE_TID, OB_ALL_TABLE_HISTORY_TID, ObRowkey(&key, 1),
-                                true, 0, true, [table_id](const CatalogRows &row, bool &accept) {
-        int64_t data_table = 0, deleted = 0;
-        int rc = row.get_int("is_deleted", deleted);
-        if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("data_table_id", data_table); }
-        accept = !deleted && data_table == table_id;
-        return rc;
-      }))) {
-      } else {
-        ObSEArray<ObAuxTableMetaInfo, 8> auxiliary;
-        if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_aux_tables(rows, auxiliary))) {
-        } else {
-          // Candidates are sorted by table ID, matching full schema consumers.
-          for (int64_t i = 0; OB_SUCC(ret) && i < auxiliary.count(); ++i) {
-            const auto &aux = auxiliary.at(i);
-            if (aux.table_type_ == USER_INDEX) { ret = table->add_simple_index_info(aux); }
-            else if (aux.table_type_ == AUX_LOB_META) { table->set_aux_lob_meta_tid(aux.table_id_); }
-            else if (aux.table_type_ == AUX_LOB_PIECE) { table->set_aux_lob_piece_tid(aux.table_id_); }
-          }
-        }
-      }
+  if (OB_SUCC(ret)) {
+    ObSEArray<ObAuxTableMetaInfo, 8> auxiliary;
+    ret = get_aux_tables(table_id, version, auxiliary, source);
+    for (int64_t i = 0; OB_SUCC(ret) && i < auxiliary.count(); ++i) {
+      const auto &aux = auxiliary.at(i);
+      if (aux.table_type_ == USER_INDEX) { ret = table->add_simple_index_info(aux); }
+      else if (aux.table_type_ == AUX_LOB_META) { table->set_aux_lob_meta_tid(aux.table_id_); }
+      else if (aux.table_type_ == AUX_LOB_PIECE) { table->set_aux_lob_piece_tid(aux.table_id_); }
     }
   }
   if (OB_SUCC(ret)) { out = table; }
   else if (table != nullptr) { table->~ObTableSchema(); }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_aux_tables(uint64_t table_id, int64_t version,
+    ObIArray<ObAuxTableMetaInfo> &out, TableSource source)
+{
+  out.reset();
+  const bool history = source == TableSource::HISTORY;
+  if (version <= 0 || table_id == OB_INVALID_ID || (!history && version != INT64_MAX)) {
+    return OB_INVALID_ARGUMENT;
+  }
+  ObObj key;
+  key.set_int(table_id);
+  std::set<uint64_t> ids;
+  int ret = collect_related_ids(*this, history ? OB_ALL_TABLE_HISTORY_IDX_DATA_TABLE_ID_TID
+                                              : OB_ALL_TABLE_IDX_DATA_TABLE_ID_TID,
+                                ObRowkey(&key, 1), version, "table_id", ids);
+  // The index supplies candidates. Recheck each latest visible base row so
+  // deleted or reassigned auxiliary tables do not survive through old keys.
+  for (const uint64_t related : ids) {
+    if (OB_FAIL(ret)) { break; }
+    key.set_int(related);
+    CatalogRows rows;
+    if (OB_FAIL(rows.open(*this, history ? OB_ALL_TABLE_HISTORY_TID : OB_ALL_TABLE_TID,
+                         ObRowkey(&key, 1), version, true, 0, history,
+                         [table_id](const CatalogRows &row, bool &accept) {
+      int64_t data_table = 0, deleted = 0;
+      int rc = row.get_int("is_deleted", deleted);
+      if (rc == OB_SUCCESS && !deleted) { rc = row.get_int("data_table_id", data_table); }
+      accept = !deleted && data_table == table_id;
+      return rc;
+    }, history))) {
+    } else { ret = ObSchemaRetrieveUtils::retrieve_aux_tables(rows, out); }
+  }
   return ret;
 }
 
@@ -1094,6 +1251,89 @@ int NativeSchemaCatalog::get_table_index_infos(ObIAllocator &allocator, uint64_t
                || OB_FAIL(rows.get_int("schema_version", version))
                || OB_FAIL(rows.get_int("index_type", index_type))) {
     } else { ret = append(name, id, version, static_cast<ObIndexType>(index_type)); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_table_id(uint64_t database, uint64_t session, const ObString &name,
+    bool insensitive, uint64_t &out, ObTableType &type, int64_t &version)
+{
+  out = OB_INVALID_ID; type = MAX_TABLE_TYPE; version = OB_INVALID_VERSION;
+  if (database == OB_INVALID_ID || name.empty()) { return OB_INVALID_ARGUMENT; }
+  bool system_name = false;
+  int ret = ObSysTableChecker::is_sys_table_name(database, name, system_name);
+  int best = 0;
+  if (OB_SUCC(ret)) {
+    ret = visit_named_tables(*this, database, name, [&](const TableLookupRow &row) {
+      if (!row.user_visible() || (row.session != 0 && row.session != session)) { return OB_SUCCESS; }
+      const bool normal_match = catalog_name_equal(name, row.name, insensitive);
+      const bool inner_match = system_name && row.session == 0 && is_inner_table(row.id)
+          && catalog_name_equal(name, row.name, true);
+      const int rank = normal_match ? (row.session != 0 ? 3 : 2) : inner_match ? 1 : 0;
+      if (rank > best) { best = rank; out = row.id; type = row.type; version = row.version; }
+      return OB_SUCCESS;
+    });
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_index_id(uint64_t database, const ObString &name, uint64_t &out)
+{
+  out = OB_INVALID_ID;
+  if (database == OB_INVALID_ID || name.empty()) { return OB_INVALID_ARGUMENT; }
+  return visit_named_tables(*this, database, name, [&](const TableLookupRow &row) {
+    if (out == OB_INVALID_ID && row.type == USER_INDEX && catalog_name_equal(name, row.name, true)) { out = row.id; }
+    return OB_SUCCESS;
+  });
+}
+
+int NativeSchemaCatalog::get_constraint_id(uint64_t database, const ObString &name, uint64_t &out)
+{ return find_named_relation(*this, database, name, false, out); }
+
+int NativeSchemaCatalog::get_foreign_key_id(uint64_t database, const ObString &name, uint64_t &out)
+{ return find_named_relation(*this, database, name, true, out); }
+
+int NativeSchemaCatalog::get_mock_fk_parent_table_id(uint64_t database, const ObString &name, uint64_t &out)
+{
+  out = OB_INVALID_ID;
+  if (database == OB_INVALID_ID || name.empty()) { return OB_INVALID_ARGUMENT; }
+  // This fixed table has no name index. Preserve its byte-exact name policy.
+  CatalogRows rows;
+  int ret = rows.open(*this, OB_ALL_MOCK_FK_PARENT_TABLE_TID, ObRowkey(), INT64_MAX, false, 0, false, {}, false);
+  while (OB_SUCC(ret) && out == OB_INVALID_ID && OB_SUCC(rows.next())) {
+    uint64_t owner = OB_INVALID_ID;
+    ObString stored;
+    if (OB_FAIL(rows.get_uint("database_id", owner))) {
+    } else if (owner != database) {
+    } else if (OB_FAIL(rows.get_varchar("mock_fk_parent_table_name", stored))) {
+    } else if (name == stored) { ret = rows.get_uint("mock_fk_parent_table_id", out); }
+  }
+  return ret == OB_ITER_END ? OB_SUCCESS : ret;
+}
+
+int NativeSchemaCatalog::get_mock_fk_parent_table_schema_versions(const ObIArray<uint64_t> &table_ids,
+    ObIArray<ObSchemaIdVersion> &out)
+{
+  if (table_ids.empty()) { return OB_INVALID_ARGUMENT; }
+  std::set<uint64_t> ids;
+  for (int64_t i = 0; i < table_ids.count(); ++i) {
+    if (table_ids.at(i) == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+    ids.insert(table_ids.at(i));
+  }
+  int ret = OB_SUCCESS;
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ObObj key; key.set_int(id);
+    CatalogRows rows;
+    int64_t version = OB_INVALID_VERSION;
+    ObSchemaIdVersion pair;
+    if (OB_FAIL(rows.open(*this, OB_ALL_MOCK_FK_PARENT_TABLE_TID, ObRowkey(&key, 1),
+                         INT64_MAX, false, 0, false, {}, false))) {
+    } else if (OB_FAIL(rows.next())) {
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    } else if (OB_FAIL(rows.get_int("schema_version", version))) {
+    } else if (OB_FAIL(pair.init(id, version))) {
+    } else { ret = out.push_back(pair); }
   }
   return ret;
 }

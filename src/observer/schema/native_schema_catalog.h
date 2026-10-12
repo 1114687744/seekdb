@@ -7,6 +7,7 @@
 #include "common/ob_range.h"
 #include "common/row/ob_row.h"
 #include "namespace/catalog.h"
+#include "share/schema/ob_schema_struct.h"
 
 namespace oceanbase {
 namespace common { class ObISQLClient; }
@@ -70,6 +71,8 @@ public:
   enum class TableSource { HISTORY, CURRENT };
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
                 share::schema::ObTableSchema *&, TableSource = TableSource::HISTORY);
+  int get_aux_tables(uint64_t table_id, int64_t schema_version,
+      common::ObIArray<share::schema::ObAuxTableMetaInfo> &, TableSource = TableSource::HISTORY);
   // Core definitions are cell records in __all_core_table. Its own definition
   // is compiled; the returned persisted definitions exclude that fixed table.
   int get_core_tables(int64_t schema_version,
@@ -93,6 +96,16 @@ public:
       common::ObIArray<share::schema::ObSchemaIdVersion> &);
   int get_table_index_infos(common::ObIAllocator &, uint64_t database_id,
       uint64_t data_table_id, common::ObIArray<share::schema::ObIndexSchemaInfo> &);
+  // Name policy is supplied by the Namespace's caller. A missing name is
+  // success with OB_INVALID_ID, matching the DDL metadata lookup contract.
+  int get_table_id(uint64_t database_id, uint64_t session_id, const common::ObString &,
+      bool case_insensitive, uint64_t &table_id, share::schema::ObTableType &, int64_t &schema_version);
+  int get_index_id(uint64_t database_id, const common::ObString &, uint64_t &);
+  int get_constraint_id(uint64_t database_id, const common::ObString &, uint64_t &);
+  int get_foreign_key_id(uint64_t database_id, const common::ObString &, uint64_t &);
+  int get_mock_fk_parent_table_id(uint64_t database_id, const common::ObString &, uint64_t &);
+  int get_mock_fk_parent_table_schema_versions(const common::ObIArray<uint64_t> &,
+      common::ObIArray<share::schema::ObSchemaIdVersion> &);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.

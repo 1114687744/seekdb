@@ -1522,6 +1522,14 @@ int ObSchemaServiceSQLImpl::fetch_aux_tables(
 {
   int ret = OB_SUCCESS;
   aux_tables.reset();
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_aux_tables(table_id, schema_version, aux_tables);
+    });
+  }
 
   SMART_VAR(ObMySQLProxy::MySQLResult, res) {
     ObMySQLResult *result = NULL;
@@ -5798,6 +5806,8 @@ int ObSchemaServiceSQLImpl::get_table_id(
     int64_t &schema_version)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   // name_case_mode effects database_name/table_name only.
   // It's a readonly system variable, so we can use name_case_mode from local schema guard.
   ObNameCaseMode name_case_mode = OB_NAME_CASE_INVALID;
@@ -5820,6 +5830,14 @@ int ObSchemaServiceSQLImpl::get_table_id(
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc tb_name failed", KR(ret), K(table_name));
   } else if (OB_FAIL(multi_version_schema_service_.get_runtime_name_case_mode(name_case_mode))) {
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_table_id(database_id, session_id, table_name,
+          name_case_mode != OB_ORIGIN_AND_SENSITIVE, table_id, table_type, schema_version);
+    });
   } else if (OB_FAIL(ObSysTableChecker::is_sys_table_name(database_id, table_name, is_system_table))) {
   } else {
     ObSqlString sql;
@@ -5936,6 +5954,8 @@ int ObSchemaServiceSQLImpl::get_index_id(
     uint64_t &index_id)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   ObSqlString sql;
   const bool skip_escape = false;
   ObCStringHelper helper;
@@ -5956,6 +5976,13 @@ int ObSchemaServiceSQLImpl::get_index_id(
   } else if (OB_ISNULL(idx_name)) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc idx_name failed", KR(ret), K(index_name));
+  } else if (lifecycle == nullptr) {
+    return OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    return with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_index_id(database_id, index_name, index_id);
+    });
   } else if (FALSE_IT(case_compare = true)) {
   } else if (is_oceanbase_sys_database_id(database_id)) {
     if (OB_FAIL(sql.assign_fmt(
@@ -5996,6 +6023,8 @@ int ObSchemaServiceSQLImpl::get_mock_fk_parent_table_id(
     uint64_t &mock_fk_parent_table_id)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   ObSqlString sql;
   // here, mock_fk_parent_table_name comparsion is case sensitive.
   const bool case_compare = false;
@@ -6015,6 +6044,13 @@ int ObSchemaServiceSQLImpl::get_mock_fk_parent_table_id(
   } else if (OB_ISNULL(tb_name)) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc tb_name failed", KR(ret), K(table_name));
+  } else if (lifecycle == nullptr) {
+    return OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    return with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_mock_fk_parent_table_id(database_id, table_name, mock_fk_parent_table_id);
+    });
   } else if (OB_FAIL(sql.assign_fmt(
              "SELECT mock_fk_parent_table_id, mock_fk_parent_table_name "
              "FROM %s WHERE database_id = '%lu' AND mock_fk_parent_table_name = '%s'",
@@ -6036,6 +6072,8 @@ int ObSchemaServiceSQLImpl::get_constraint_id(
     uint64_t &constraint_id)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   const bool skip_escape = false;
   constraint_id = OB_INVALID_ID;
   ObCStringHelper helper;
@@ -6050,6 +6088,13 @@ int ObSchemaServiceSQLImpl::get_constraint_id(
   } else if (OB_ISNULL(cst_name)) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc cst_name failed", KR(ret), K(constraint_name));
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_constraint_id(database_id, constraint_name, constraint_id);
+    });
   } else {
     SMART_VAR(ObMySQLProxy::MySQLResult, res) {
     ObSqlString sql;
@@ -6115,6 +6160,8 @@ int ObSchemaServiceSQLImpl::get_foreign_key_id(
     uint64_t &foreign_key_id)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   const bool skip_escape = false;
   foreign_key_id = OB_INVALID_ID;
   ObCStringHelper helper;
@@ -6129,6 +6176,13 @@ int ObSchemaServiceSQLImpl::get_foreign_key_id(
   } else if (OB_ISNULL(fk_name)) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc fk_name failed", KR(ret), K(foreign_key_name));
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_foreign_key_id(database_id, foreign_key_name, foreign_key_id);
+    });
   } else {
     SMART_VAR(ObMySQLProxy::MySQLResult, res) {
     ObSqlString sql;
@@ -6410,12 +6464,21 @@ int ObSchemaServiceSQLImpl::get_mock_fk_parent_table_schema_versions(
     common::ObIArray<ObSchemaIdVersion> &versions)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   if (OB_UNLIKELY(!check_inner_stat())) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail", KR(ret));
   } else if (OB_UNLIKELY(table_ids.count() <= 0)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", KR(ret), "cnt", table_ids.count());
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_mock_fk_parent_table_schema_versions(table_ids, versions);
+    });
   } else {
     ObSqlString sql;
     ObMySQLResult *result = NULL;

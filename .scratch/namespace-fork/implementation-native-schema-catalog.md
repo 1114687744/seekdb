@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`。当前版本和索引列表查询也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。名称查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`。名称、辅助表及 DDL 发布定义读取也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。mock FK 父表定义装载和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -170,3 +170,20 @@
 - part 用例在未提交事务内改变索引的 data_table_id、名称和版本，验证旧归属消失、新归属可见，独立事务保持旧值，回滚后恢复。typed 用例验证新建当前表版本在自身事务、独立事务、回滚及提交后的可见性。六个冷 Namespace 的服务槽位均为 0；新断言已随既有 probe 进入四件套。
 - `/tmp/native-schema-catalog-current-metadata-production-build1.log` 移除测试钩子后的生产编译通过；`/tmp/native-schema-catalog-current-metadata-production-ddl1.log` 通过 DDL、强制内表索引、父子隔离及崩溃重启。主备回归通过，结果见 `gate-results/native-schema-catalog/native-current-metadata-standby/results.json`；包括刷新与回放竞争、物化/LOB 回放、孩子 DDL、父 TRUNCATE/DROP、删除准入、提升后装载/写入与再次 fork。
 - 本轮仍须完成表/索引/约束/外键的名称查询、mock FK 父表查询，以及完整 DDL 更新、删除、分区与关系写入。核心 tablet minor 行版本结束标记异常仍按前述 TODO 单独跟踪。
+
+### 名称查询接入
+
+- 表、索引、约束和外键名称查询，以及 mock FK 父表名称/当前版本查询已接入原生目录，测试验证中。普通名称使用既有物理索引收集候选，在同一视图回读当前记录与所属表；mock FK 父表没有名称索引，保留既有扫描及字节精确比较规则。
+- 表名称策略由调用方显式传入。按指定 session 的临时表、普通表、内表名称匹配的顺序选择；隐藏表、索引与 LOB 辅助表不作为普通表名返回。旧 SQL 表名查询误用输出 table_type 检查候选类型，新路径按候选行类型过滤。
+- `/tmp/native-schema-catalog-names-build1.log` 编译通过；`names-probe1.log` 中 typed 通过，plain 的客户端对照暴露核心表自身记录遗漏：`__all_virtual_core_all_table` 确实包含 table_id=1。完整定义装载跳过它并使用编译定义，但名称/当前版本查询必须读取其持久记录。已修正 metadata-only 核心读取，增加名称与版本的客户端对照，待重跑。
+- 继续核对调用点发现 `fetch_aux_tables` 仍被 `namespace_schema_publication.cpp` 和 `ob_server_schema_service.cpp` 使用，不能当作死代码。前者的 `publication_schema` 还用 SQL 查询存在/删除状态。这些属于本轮必须接入的表目录读取。
+- mock FK 父表的简单/完整定义、列及外键关系仍有独立 SQL 装载入口（`fetch_mock_fk_parent_tables`、`fetch_all_mock_fk_parent_table_info` 等）；名称与版本查询接入不代表这些装载入口已完成。
+- `/tmp/native-schema-catalog-names-build2.log` 编译通过；`names-probe2.log` 的 typed/plain/part/drop_index/fk 通过，核心表自身名称/当前版本与 SQL 对照一致（ID=1，版本=1048584）。随后 mock_fk 在 SQL 解析阶段失败：未选择默认库时，`ObDDLResolver` 从 session 取得无效 database_id，尚未进入原生目录。单独 `names-mock-repro1.log` 重现相同 1210。仅在用例中增加 `USE` 后，`names-mock-probe1.log` 的 mock_fk/drop_fk/old_fk 全部通过，冷服务槽位仍为 0。
+- TODO（解析器）：缺失 FK 父表的预检查使用 session database_id 和 foreign_key_name；应核对显式限定数据库及父表名。现有代码路径可解释上述失败，但尚未做基线版本的运行对照，不宣称是本轮引入或已修复。原生目录回归先使用明确选择数据库的会话。
+
+### 辅助表与 DDL 发布读取接入
+
+- 将完整定义已有的辅助表读取提取为 `get_aux_tables`，正常 `fetch_aux_tables` 使用同一原生入口。历史索引只提供候选，按目标版本读取最新可见主记录并重新检查删除/归属，结果按 ID 排序。
+- `NamespaceSchemaPublication` 在 DDL owner 中持有一个原生目录操作，读取已发布版本的 history 和本次事务的 current；不存在/已删除的表不加入对应定义集合。完整定义已包含 LOB 辅助关系，移除发布过程原有的 SQL 存在性检查和重复辅助表读取。
+- 四件套既有冷读取用例增加 SQL 历史查询对照辅助表 ID/类型/索引类型，增加外键/约束名称大小写及已删除外键名称断言。`/tmp/native-schema-catalog-names-aux-build1.log` 编译通过；`names-aux-probe1.log` 的 typed/plain/part/drop_index/fk/mock_fk/drop_fk/old_fk 全部通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_nfdf4hie`。八个孩子服务槽位均保持 0，包含自身事务与独立读隔离、回滚以及临时表/隐藏表/索引/LOB 名称选择。
+- `/tmp/native-schema-catalog-names-aux-production-build1.log` 移除测试钩子后生产编译通过；`names-aux-production-ddl1.log` 的实际 DDL、LOB、父子隔离、SQL 索引读取及崩溃重启通过。Namespace 主备回归通过（121.63 秒），结果见 `gate-results/native-schema-catalog/native-names-aux-standby/results.json`；涵盖刷新与回放竞争、孩子 DDL、父 TRUNCATE/DROP 后历史来源、删除准入以及提升后的恢复、写入和再次 fork。
