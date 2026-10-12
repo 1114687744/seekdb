@@ -42,9 +42,8 @@ class ObAccessService;
 //
 // Rows contain the primary-key columns first, in key order, followed by the
 // remaining columns in schema order. Every write supplies a complete row.
-// The first implementation supports integer and binary string columns, NULL
-// for nullable non-key columns, and ascending primary keys. Unsupported table
-// features are rejected at bind; no SQL expressions/defaults are evaluated.
+// Every write supplies stored values, including timestamps and defaults. No
+// SQL expressions/defaults or on-update expressions are evaluated here.
 class NativeInnerTable final
 {
   struct ReadSnapshots;
@@ -103,6 +102,33 @@ public:
   // stop ends a scan successfully. Reentry on the same transaction is rejected.
   using RowVisitor = std::function<int(const common::ObNewRow &, bool &stop)>;
 
+  // An upper-layer owner may resolve a read to a different physical source.
+  // It must protect that source and snapshot for the whole native operation.
+  // The bound tablet remains the schema identity; this type carries no logical
+  // namespace or inheritance policy. An invalid cap means no additional cap.
+  struct ReadSource final
+  {
+    common::ObTabletID tablet;
+    share::SCN snapshot_cap;
+  };
+
+  // A streaming scan. Table, transaction and NativeInnerTable must outlive it.
+  // The returned row is borrowed until next()/close(). Close the cursor before
+  // another operation on the same transaction; destruction also closes it.
+  class Cursor final
+  {
+  public:
+    Cursor();
+    ~Cursor();
+    int next(const common::ObNewRow *&);
+    int close();
+  private:
+    friend class NativeInnerTable;
+    struct State;
+    std::unique_ptr<State> state_;
+    DISALLOW_COPY_AND_ASSIGN(Cursor);
+  };
+
   NativeInnerTable(ObAccessService &, transaction::ObTransService &);
   ~NativeInnerTable();
   int bind(Table &, const common::ObTabletID &, const share::schema::ObTableSchema &);
@@ -117,33 +143,52 @@ public:
   // End that owner before detach so retention covers its commit. Detach does
   // not dereference the descriptor, which may already have been released.
   int attach(Transaction &, transaction::ObTxDesc &, int64_t deadline);
+  int attach(Transaction &, transaction::ObTxDesc &, int64_t deadline, const SnapshotAcquirer &);
   int attach(Transaction &, const Transaction &owner, int64_t deadline);
+  // Join storage work (such as CREATE MDS) to this owner. The callback must
+  // neither end nor release the descriptor; participants must survive commit.
+  int with_native_transaction(Transaction &, const std::function<int(transaction::ObTxDesc &)> &);
   int detach(Transaction &);
   int commit(Transaction &);
   int rollback(Transaction &);
   int retain_snapshot(const Transaction &, SnapshotHandle &);
   int min_retained_snapshot(share::SCN &);
 
-  int get(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
+  int get(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &,
+          const ReadSource *source = nullptr);
   // Current committed rows plus own writes. Caller must establish why a
   // moving read is valid (e.g. immutable objects protected against GC).
   int get_current(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
   int get_for_update(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &);
   // Both endpoints have one cell per key column; MIN/MAX cells express open
   // prefix bounds. The range's table_id is ignored: bind selects the target.
-  int scan(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool reverse = false);
+  int scan(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool reverse = false,
+           const ReadSource *source = nullptr);
+  int open_scan(Transaction &, const Table &, const common::ObNewRange &, Cursor &, bool reverse = false,
+                const ReadSource *source = nullptr);
   int insert(Transaction &, const Table &, const common::ObNewRow &);
+  // Replace the stored values of an existing row without changing its key.
+  // Supports LOB columns through the storage engine's update protocol.
+  int update(Transaction &, const Table &, const common::ObNewRow &);
+  // Blind upsert uses put_rows, which does not support LOB columns. Callers
+  // storing LOBs select insert/update within their owning transaction.
   int put(Transaction &, const Table &, const common::ObNewRow &);
   int erase(Transaction &, const Table &, const common::ObRowkey &, bool &existed);
 
 private:
-  enum class Write { INSERT, PUT, ERASE, LOCK };
+  enum class Write { INSERT, PUT, UPDATE, ERASE, LOCK };
   int check(const Transaction &, bool write) const;
   int check_table(const Table &) const;
   int check_cells(const Table &, const common::ObObj *, int64_t count, bool key, bool bounds) const;
-  int read(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &, bool latest);
-  int scan_rows(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool latest, bool reverse);
-  int write(Transaction &, const Table &, const common::ObNewRow &, Write);
+  int read(Transaction &, const Table &, const common::ObRowkey &, common::ObIAllocator &, common::ObNewRow &, bool latest,
+           const ReadSource *source = nullptr, bool raw_lob = false);
+  int scan_rows(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool latest, bool reverse,
+                const ReadSource *source = nullptr);
+  int open_scan_impl(Transaction &, const Table &, const common::ObNewRange &, Cursor &, bool latest, bool reverse,
+                     const ReadSource *source = nullptr, bool raw_lob = false);
+  int write(Transaction &, const Table &, const common::ObNewRow &, Write, const common::ObNewRow *old_row = nullptr);
+  int lock_and_read(Transaction &, const Table &, const common::ObRowkey &,
+                     common::ObIAllocator &, common::ObNewRow &, bool raw_lob);
   int begin_impl(Transaction &, int64_t deadline, bool read_only,
                  transaction::ObTxDesc *borrowed = nullptr, const SnapshotAcquirer *acquire = nullptr);
   int end(Transaction &, bool commit);

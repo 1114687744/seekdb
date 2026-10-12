@@ -38,7 +38,7 @@ public:
   ObTableCreator(
       const share::SCN &frozen_scn,
       ObMySQLTransaction &trans)
-                : tablet_creator_(frozen_scn, trans),
+                : tablet_creator_(frozen_scn),
                   trans_(trans),
                   inited_(false),
                   fork_table_info_builder_{} {}

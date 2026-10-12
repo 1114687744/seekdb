@@ -110,6 +110,8 @@ public:
   // Join another KV tablet's transaction using the same native owner. As for
   // the descriptor overload, end the owner before detaching this participant.
   int attach(Transaction &tx, const Transaction &owner, int64_t deadline);
+  int with_native_transaction(Transaction &tx,
+      const std::function<int(transaction::ObTxDesc &)> &operation);
   int detach(Transaction &tx);
   int commit(Transaction &tx);
   int rollback(Transaction &tx);

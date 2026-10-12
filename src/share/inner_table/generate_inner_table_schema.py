@@ -3092,6 +3092,16 @@ private:
   h_f.write("typedef int (*schema_create_func)(share::schema::ObTableSchema &table_schema);\n")
   h_f.write("\n")
 
+  # Native readers need the same compiled definition as tablet creation without
+  # consulting a Namespace's SchemaService. Generate this lookup from the
+  # existing declarations so a new inner table cannot miss a hand-written list.
+  h_f.write("inline schema_create_func fixed_inner_table_creator(uint64_t table_id)\n{\n  switch (table_id) {\n")
+  for (table_name, table_id) in new_table_name_postfix_ids:
+    if is_core_table(table_id) or is_sys_table(table_id):
+      method = table_name.replace('$', '_').lower().strip('_')
+      h_f.write("    case %d: return ObInnerTableSchema::%s_schema;\n" % (table_id, method))
+  h_f.write("    default: return nullptr;\n  }\n}\n\n")
+
   method_name = "  ObInnerTableSchema::{0}_schema,\n"
   h_f.write("const schema_create_func all_core_table_schema_creator [] = {\n")
   for (table_name, table_id) in table_name_postfix_ids:

@@ -245,6 +245,8 @@ struct VersionHisVal;
 class ObSchemaRetrieveUtils
 {
 public:
+  static int sort_partition_array(ObPartitionSchema &partition_schema);
+  static int sort_subpartition_array(ObPartitionSchema &partition_schema);
 
 /******************************************************************
  *

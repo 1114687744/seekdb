@@ -794,9 +794,6 @@ private:
   template<typename SCHEMA>
   int sort_table_partition_info(SCHEMA &table_schema);
 
-  static int sort_partition_array(ObPartitionSchema &partition_schema);
-  static int sort_subpartition_array(ObPartitionSchema &partition_schema);
-
   template<typename SCHEMA>
   int try_mock_partition_array(SCHEMA &table_schema);
   int fetch_sys_variable(

@@ -148,6 +148,12 @@ int InstanceMetaStore::attach(Transaction &tx, ObTxDesc &descriptor, const int64
   return begin_impl(tx, deadline, false, [&] { return table_.attach(tx.native_, descriptor, deadline); });
 }
 
+int InstanceMetaStore::with_native_transaction(Transaction &tx,
+    const std::function<int(ObTxDesc &)> &operation)
+{
+  return tx.owner_ != this ? OB_INVALID_ARGUMENT : table_.with_native_transaction(tx.native_, operation);
+}
+
 int InstanceMetaStore::attach(Transaction &tx, const Transaction &owner, int64_t deadline)
 {
   if (owner.owner_ == nullptr || owner.owner_ == this || !owner.is_active()) {

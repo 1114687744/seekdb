@@ -112,9 +112,13 @@ int NativeInnerTable::bind(Table &table, const ObTabletID &tablet_id, const ObTa
       if (column == nullptr) {
         ret = OB_ERR_UNEXPECTED;
       } else if ((!ob_is_integer_type(desc.col_type_.get_type())
-                  && !desc.col_type_.is_varbinary())
+                  && !ob_is_string_type(desc.col_type_.get_type())
+                  && desc.col_type_.get_type() != ObTimestampType
+                  && desc.col_type_.get_type() != ObDateTimeType
+                  && desc.col_type_.get_type() != ObDateType
+                  && desc.col_type_.get_type() != ObTimeType
+                  && desc.col_type_.get_type() != ObYearType)
                  || column->is_autoincrement() || column->is_generated_column()
-                 || column->is_on_update_current_timestamp()
                  || (i < schema.get_rowkey_column_num() && desc.col_order_ != ASC)) {
         ret = OB_NOT_SUPPORTED;
       } else {
@@ -170,6 +174,16 @@ int NativeInnerTable::attach(Transaction &tx, const Transaction &owner, const in
     return OB_INVALID_ARGUMENT;
   }
   return attach(tx, *owner.descriptor_, std::min(deadline, owner.deadline_));
+}
+
+int NativeInnerTable::attach(Transaction &tx, ObTxDesc &descriptor, const int64_t deadline,
+    const SnapshotAcquirer &acquire)
+{
+  if (!descriptor.is_in_tx() || descriptor.is_shadow()
+      || !descriptor.is_RC_isolevel() || !acquire) {
+    return OB_INVALID_ARGUMENT;
+  }
+  return begin_impl(tx, deadline, descriptor.is_rdonly(), &descriptor, &acquire);
 }
 
 int NativeInnerTable::begin_impl(Transaction &tx, const int64_t deadline,
@@ -250,6 +264,13 @@ int NativeInnerTable::detach(Transaction &tx)
   }
   reset_transaction(tx);
   return OB_SUCCESS;
+}
+
+int NativeInnerTable::with_native_transaction(Transaction &tx,
+    const std::function<int(ObTxDesc &)> &operation)
+{
+  const int ret = check(tx, false);
+  return ret != OB_SUCCESS ? ret : !operation ? OB_INVALID_ARGUMENT : operation(*tx.descriptor_);
 }
 
 void NativeInnerTable::reset_transaction(Transaction &tx)
@@ -346,17 +367,84 @@ int NativeInnerTable::check_cells(const Table &table, const ObObj *cells, int64_
       if (bytes.length() < 0 || (bytes.length() > 0 && bytes.ptr() == nullptr)) {
         return OB_INVALID_ARGUMENT;
       }
-      if (bytes.length() > column->get_data_length()) { return OB_SIZE_OVERFLOW; }
+      // Text length belongs to its storage type; fixed schema definitions use
+      // zero accuracy length for LOBs. A locator is validated by the LOB layer.
+      const int64_t maximum = ob_is_text_tc(cell.get_type())
+          ? ObAccuracy::MAX_ACCURACY[cell.get_type()].get_length() : column->get_data_length();
+      if ((!cell.is_lob_storage() || !cell.has_lob_header())
+          && bytes.length() > maximum) { return OB_SIZE_OVERFLOW; }
     }
   }
   return OB_SUCCESS;
 }
 
-int NativeInnerTable::scan_rows(Transaction &tx, const Table &table, const ObNewRange &range,
-    const RowVisitor &visitor, bool latest, bool reverse)
+struct NativeInnerTable::Cursor::State
+{
+  State(NativeInnerTable &owner, Transaction &transaction, const Table &table)
+      : owner(owner), transaction(transaction), table(table) {}
+  NativeInnerTable &owner;
+  Transaction &transaction;
+  const Table &table;
+  ObArenaAllocator allocator{ObMemAttr("NativeInnerRd")};
+  ObTableScanParam param;
+  ObSEArray<ObObj, 8> cells;
+  ObNewRow row;
+  ObNewRowIterator *iterator = nullptr;
+  bool ended = false;
+};
+
+NativeInnerTable::Cursor::Cursor() = default;
+NativeInnerTable::Cursor::~Cursor() { close(); }
+
+int NativeInnerTable::Cursor::next(const ObNewRow *&out)
+{
+  out = nullptr;
+  if (!state_) { return OB_NOT_INIT; }
+  auto &s = *state_;
+  if (s.ended) { return OB_ITER_END; }
+  if (s.transaction.deadline_ <= ObTimeUtility::current_time()) { return OB_TIMEOUT; }
+  blocksstable::ObDatumRow *datum = nullptr;
+  int ret = static_cast<ObTableScanIterator *>(s.iterator)->get_next_row(datum);
+  if (ret == OB_ITER_END) { s.ended = true; }
+  if (OB_SUCC(ret)) {
+    if (datum == nullptr || datum->get_column_count() != s.cells.count()) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < s.cells.count(); ++i) {
+        ret = datum->storage_datums_[i].to_obj_enhance(
+            s.cells.at(i), s.table.state_->descriptions.at(i).col_type_);
+      }
+      if (OB_SUCC(ret)) { out = &s.row; }
+    }
+  }
+  return ret;
+}
+
+int NativeInnerTable::Cursor::close()
+{
+  int ret = OB_SUCCESS;
+  if (state_) {
+    if (state_->iterator != nullptr) {
+      ret = state_->owner.access_.revert_scan_iter(state_->iterator);
+      state_->iterator = nullptr;
+    }
+    state_->transaction.scanning_ = false;
+    state_.reset();
+  }
+  return ret;
+}
+
+int NativeInnerTable::open_scan_impl(Transaction &tx, const Table &table, const ObNewRange &range,
+    Cursor &cursor, bool latest, bool reverse, const ReadSource *source, bool raw_lob)
 {
   int ret = check(tx, false);
-  if (OB_SUCC(ret) && !visitor) { ret = OB_INVALID_ARGUMENT; }
+  if (OB_SUCC(ret) && cursor.state_) { ret = OB_INIT_TWICE; }
+  if (OB_SUCC(ret) && source != nullptr
+      && (!source->tablet.is_valid() || latest
+          || (source->snapshot_cap.is_valid()
+              && (source->snapshot_cap.is_min() || source->snapshot_cap.is_max())))) {
+    ret = OB_INVALID_ARGUMENT;
+  }
   if (OB_SUCC(ret)) {
     ret = check_cells(table, range.start_key_.get_obj_ptr(), range.start_key_.get_obj_cnt(), true, true);
   }
@@ -364,13 +452,22 @@ int NativeInnerTable::scan_rows(Transaction &tx, const Table &table, const ObNew
     ret = check_cells(table, range.end_key_.get_obj_ptr(), range.end_key_.get_obj_cnt(), true, true);
   }
   if (OB_SUCC(ret)) {
-    ObArenaAllocator allocator(ObMemAttr("NativeInnerRd"));
-    ObTableScanParam param;
-    ObNewRange keys = range;
-    keys.table_id_ = table.state_->schema.get_table_id();
+    std::unique_ptr<Cursor::State> state(new (std::nothrow) Cursor::State(*this, tx, table));
+    if (!state) { return OB_ALLOCATE_MEMORY_FAILED; }
+    auto &s = *state;
+    auto &param = s.param;
+    ObNewRange keys;
+    // Both the range objects and their variable-length key cells belong to the
+    // cursor. The caller may release its range as soon as open_scan returns.
+    if (OB_FAIL(deep_copy_range(s.allocator, range, keys))) {
+    } else {
+      keys.table_id_ = table.state_->schema.get_table_id();
+      ret = param.key_ranges_.push_back(keys);
+    }
     param.index_id_ = table.state_->schema.get_table_id();
-    param.tablet_id_ = table.state_->tablet;
+    param.tablet_id_ = source != nullptr ? source->tablet : table.state_->tablet;
     param.schema_tablet_id_ = table.state_->tablet;
+    if (source != nullptr) { param.fb_snapshot_ = source->snapshot_cap; }
     param.table_param_ = &table.state_->read_plan;
     param.schema_version_ = table.state_->schema.get_schema_version();
     param.runtime_schema_version_ = table.state_->schema.get_schema_version();
@@ -379,61 +476,61 @@ int NativeInnerTable::scan_rows(Transaction &tx, const Table &table, const ObNew
     param.trans_desc_ = tx.descriptor_;
     param.tx_id_ = tx.descriptor_->get_tx_id();
     param.scan_flag_.scan_order_ = reverse ? ObQueryFlag::Reverse : ObQueryFlag::Forward;
-    param.allocator_ = &allocator;
-    param.scan_allocator_ = &allocator;
+    param.scan_flag_.skip_read_lob_ = raw_lob;
+    param.allocator_ = &s.allocator;
+    param.scan_allocator_ = &s.allocator;
     param.reserved_cell_count_ = table.state_->columns.count();
     param.limit_param_.limit_ = -1;
     param.limit_param_.offset_ = 0;
-    // The current transaction sequence includes preceding writes. Ordinary
-    // reads retain the pinned commit snapshot; locked reads use the snapshot
-    // acquired after obtaining the row lock.
-    if (OB_FAIL(transactions_.get_read_snapshot(*tx.descriptor_, ObTxIsolationLevel::RC,
-                                               tx.deadline_, param.snapshot_))) {
+    // Keep own-write sequence current while retaining the operation's commit
+    // snapshot. Only a locked/current read advances the commit snapshot.
+    if (OB_SUCC(ret)) {
+      ret = transactions_.get_read_snapshot(*tx.descriptor_, ObTxIsolationLevel::RC,
+                                            tx.deadline_, param.snapshot_);
     }
     if (OB_SUCC(ret) && !latest) { param.snapshot_.core_.version_ = tx.snapshot_.core_.version_; }
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(param.column_ids_.assign(table.state_->columns))) {
-    } else if (OB_FAIL(param.key_ranges_.push_back(keys))) {
-    } else {
-      ObSEArray<ObObj, 8> cells;
-      for (int64_t i = 0; OB_SUCC(ret) && i < table.state_->columns.count(); ++i) {
-        ret = cells.push_back(ObObj());
-      }
-      ObNewRowIterator *iter = nullptr;
+    if (OB_SUCC(ret)) { ret = param.column_ids_.assign(table.state_->columns); }
+    for (int64_t i = 0; OB_SUCC(ret) && i < table.state_->columns.count(); ++i) {
+      ret = s.cells.push_back(ObObj());
+    }
+    s.row.assign(s.cells.get_data(), s.cells.count());
+    if (OB_SUCC(ret)) {
       tx.scanning_ = true;
-      if (OB_SUCC(ret)) { ret = access_.table_scan(param, iter); }
-      bool stop = false;
-      blocksstable::ObDatumRow *row = nullptr;
-      while (OB_SUCC(ret) && !stop
-          && OB_SUCC(ret = static_cast<ObTableScanIterator *>(iter)->get_next_row(row))) {
-        if (row == nullptr || row->get_column_count() != cells.count()) {
-          ret = OB_ERR_UNEXPECTED;
-        } else {
-          for (int64_t i = 0; OB_SUCC(ret) && i < cells.count(); ++i) {
-            ret = row->storage_datums_[i].to_obj_enhance(cells.at(i), table.state_->descriptions.at(i).col_type_);
-          }
-          ObNewRow result;
-          result.assign(cells.get_data(), cells.count());
-          if (OB_SUCC(ret)) { ret = visitor(result, stop); }
-        }
-      }
-      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
-      if (iter != nullptr) {
-        const int cleanup_ret = access_.revert_scan_iter(iter);
-        if (OB_SUCC(ret)) { ret = cleanup_ret; }
-      }
-      tx.scanning_ = false;
+      ret = access_.table_scan(param, s.iterator);
+      // Transfer even on failure so cleanup follows the same path.
+      cursor.state_ = std::move(state);
+      if (OB_FAIL(ret)) { cursor.close(); }
     }
   }
   return ret;
 }
 
+int NativeInnerTable::open_scan(Transaction &tx, const Table &table, const ObNewRange &range,
+    Cursor &cursor, bool reverse, const ReadSource *source)
+{ return open_scan_impl(tx, table, range, cursor, false, reverse, source); }
+
+int NativeInnerTable::scan_rows(Transaction &tx, const Table &table, const ObNewRange &range,
+    const RowVisitor &visitor, bool latest, bool reverse, const ReadSource *source)
+{
+  if (!visitor) { return OB_INVALID_ARGUMENT; }
+  Cursor cursor;
+  int ret = open_scan_impl(tx, table, range, cursor, latest, reverse, source);
+  bool stop = false;
+  const ObNewRow *row = nullptr;
+  while (OB_SUCC(ret) && !stop && OB_SUCC(ret = cursor.next(row))) {
+    ret = visitor(*row, stop);
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  const int cleanup = cursor.close();
+  return ret == OB_SUCCESS ? cleanup : ret;
+}
+
 int NativeInnerTable::scan(Transaction &tx, const Table &table, const ObNewRange &range,
-    const RowVisitor &visitor, bool reverse)
-{ return scan_rows(tx, table, range, visitor, false, reverse); }
+    const RowVisitor &visitor, bool reverse, const ReadSource *source)
+{ return scan_rows(tx, table, range, visitor, false, reverse, source); }
 
 int NativeInnerTable::read(Transaction &tx, const Table &table, const ObRowkey &key,
-    ObIAllocator &allocator, ObNewRow &row, bool latest)
+    ObIAllocator &allocator, ObNewRow &row, bool latest, const ReadSource *source, bool raw_lob)
 {
   row.reset();
   int ret = check(tx, false);
@@ -443,28 +540,32 @@ int NativeInnerTable::read(Transaction &tx, const Table &table, const ObRowkey &
     range.start_key_ = range.end_key_ = key;
     range.border_flag_.set_inclusive_start();
     range.border_flag_.set_inclusive_end();
-    bool found = false;
-    ret = scan_rows(tx, table, range, [&](const ObNewRow &result, bool &stop) {
-      found = stop = true;
-      return ob_write_row(allocator, result, row);
-    }, latest, false);
-    if (OB_SUCC(ret) && !found) { ret = OB_ENTRY_NOT_EXIST; }
+    Cursor cursor;
+    ret = open_scan_impl(tx, table, range, cursor, latest, false, source, raw_lob);
+    const ObNewRow *result = nullptr;
+    if (OB_SUCC(ret)) { ret = cursor.next(result); }
+    if (ret == OB_ITER_END) { ret = OB_ENTRY_NOT_EXIST; }
+    if (OB_SUCC(ret)) { ret = ob_write_row(allocator, *result, row); }
+    const int cleanup = cursor.close();
+    if (OB_SUCC(ret)) { ret = cleanup; }
   }
   return ret;
 }
 
 int NativeInnerTable::get(Transaction &tx, const Table &table, const ObRowkey &key,
-    ObIAllocator &allocator, ObNewRow &row)
-{ return read(tx, table, key, allocator, row, false); }
+    ObIAllocator &allocator, ObNewRow &row, const ReadSource *source)
+{ return read(tx, table, key, allocator, row, false, source); }
 
 int NativeInnerTable::get_current(Transaction &tx, const Table &table,
     const ObRowkey &key, ObIAllocator &allocator, ObNewRow &row)
 { return read(tx, table, key, allocator, row, true); }
 
-int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow &row, Write operation)
+int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow &row,
+    Write operation, const ObNewRow *old_row)
 {
   int ret = check(tx, true);
-  if (OB_SUCC(ret) && row.projector_size_ != 0) { ret = OB_INVALID_ARGUMENT; }
+  if (OB_SUCC(ret) && (row.projector_size_ != 0
+      || (operation == Write::UPDATE && old_row == nullptr))) { ret = OB_INVALID_ARGUMENT; }
   if (OB_SUCC(ret)) { ret = check_cells(table, row.cells_, row.count_, operation == Write::LOCK, false); }
   if (OB_SUCC(ret)) {
     ObArenaAllocator allocator(ObMemAttr("NativeInnerWr"));
@@ -491,12 +592,13 @@ int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow 
       class Row final : public blocksstable::ObDatumRowIterator
       {
       public:
-        blocksstable::ObDatumRow row;
-        bool consumed = false;
+        blocksstable::ObDatumRow row, old;
+        bool has_old = false;
+        int consumed = 0;
         int get_next_row(blocksstable::ObDatumRow *&out) override {
-          if (consumed) { return OB_ITER_END; }
-          consumed = true;
-          out = &row;
+          if (consumed >= (has_old ? 2 : 1)) { return OB_ITER_END; }
+          out = has_old && consumed == 0 ? &old : &row;
+          ++consumed;
           return OB_SUCCESS;
         }
       } rows;
@@ -505,12 +607,28 @@ int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow 
         ret = rows.row.storage_datums_[i].from_obj_enhance(row.cells_[i]);
       }
       rows.row.row_flag_.set_flag(blocksstable::ObDmlFlag::DF_INSERT);
+      ObSEArray<uint64_t, 8> updated;
+      if (OB_SUCC(ret) && operation == Write::UPDATE) {
+        rows.has_old = true;
+        ret = rows.old.init(old_row->count_);
+        for (int64_t i = 0; OB_SUCC(ret) && i < old_row->count_; ++i) {
+          ret = rows.old.storage_datums_[i].from_obj_enhance(old_row->cells_[i]);
+          if (OB_SUCC(ret) && i >= table.state_->schema.get_rowkey_column_num()) {
+            ret = updated.push_back(table.state_->columns.at(i));
+          }
+        }
+        rows.old.row_flag_.set_flag(blocksstable::ObDmlFlag::DF_UPDATE);
+        rows.row.row_flag_.set_flag(blocksstable::ObDmlFlag::DF_UPDATE);
+      }
       int64_t affected = 0;
       if (OB_FAIL(ret)) {
       } else if (operation == Write::INSERT) {
         ret = access_.insert_rows(table.state_->tablet, *tx.descriptor_, param, table.state_->columns, &rows, affected);
       } else if (operation == Write::PUT) {
         ret = access_.put_rows(table.state_->tablet, *tx.descriptor_, param, table.state_->columns, &rows, affected);
+      } else if (operation == Write::UPDATE) {
+        ret = access_.update_rows(table.state_->tablet, *tx.descriptor_, param,
+            table.state_->columns, updated, &rows, affected);
       } else if (operation == Write::ERASE) {
         ret = access_.delete_rows(table.state_->tablet, *tx.descriptor_, param, table.state_->columns, &rows, affected);
       } else {
@@ -523,8 +641,8 @@ int NativeInnerTable::write(Transaction &tx, const Table &table, const ObNewRow 
   return ret;
 }
 
-int NativeInnerTable::get_for_update(Transaction &tx, const Table &table, const ObRowkey &key,
-    ObIAllocator &allocator, ObNewRow &row)
+int NativeInnerTable::lock_and_read(Transaction &tx, const Table &table, const ObRowkey &key,
+    ObIAllocator &allocator, ObNewRow &row, bool raw_lob)
 {
   row.reset();
   ObNewRow keys;
@@ -541,9 +659,30 @@ int NativeInnerTable::get_for_update(Transaction &tx, const Table &table, const 
     }
     ob_usleep(1000);
   }
-  if (OB_SUCC(ret)) { ret = read(tx, table, key, allocator, row, true); }
+  if (OB_SUCC(ret)) { ret = read(tx, table, key, allocator, row, true, nullptr, raw_lob); }
   return ret;
 }
+int NativeInnerTable::get_for_update(Transaction &tx, const Table &table, const ObRowkey &key,
+    ObIAllocator &allocator, ObNewRow &row)
+{ return lock_and_read(tx, table, key, allocator, row, false); }
+
+int NativeInnerTable::update(Transaction &tx, const Table &table, const ObNewRow &row)
+{
+  int ret = check(tx, true);
+  if (OB_SUCC(ret) && row.projector_size_ != 0) { ret = OB_INVALID_ARGUMENT; }
+  if (OB_SUCC(ret)) { ret = check_cells(table, row.cells_, row.count_, false, false); }
+  if (OB_SUCC(ret)) {
+    ObArenaAllocator allocator(ObMemAttr("NativeInnerUpd"));
+    ObNewRow previous;
+    const ObRowkey key(row.cells_, table.state_->schema.get_rowkey_column_num());
+    if (OB_FAIL(lock_and_read(tx, table, key, allocator, previous, true))) {
+    } else if (table.state_->schema.get_rowkey_column_num() == table.state_->columns.count()) {
+      // The key is the complete row; the lock established that it exists.
+    } else { ret = write(tx, table, row, Write::UPDATE, &previous); }
+  }
+  return ret;
+}
+
 int NativeInnerTable::insert(Transaction &tx, const Table &table, const ObNewRow &row)
 { return write(tx, table, row, Write::INSERT); }
 int NativeInnerTable::put(Transaction &tx, const Table &table, const ObNewRow &row)
@@ -552,7 +691,7 @@ int NativeInnerTable::erase(Transaction &tx, const Table &table, const ObRowkey 
 {
   ObArenaAllocator allocator(ObMemAttr("NativeInnerDel"));
   ObNewRow old_row;
-  int ret = get_for_update(tx, table, key, allocator, old_row);
+  int ret = lock_and_read(tx, table, key, allocator, old_row, true);
   existed = ret == OB_SUCCESS;
   if (ret == OB_ENTRY_NOT_EXIST) { ret = OB_SUCCESS; }
   else if (OB_SUCC(ret)) { ret = write(tx, table, old_row, Write::ERASE); }

@@ -64,7 +64,7 @@ int ObTableCreator::init_with_fork_table_info(
 int ObTableCreator::execute()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(tablet_creator_.execute())) {
+  if (OB_FAIL(tablet_creator_.execute(trans_))) {
   } else if (tablet_infos_.count() > 0
              && OB_FAIL(share::ObTabletMappingTableOperator::batch_update(trans_, tablet_infos_))) {
     LOG_ERROR("fail to batch update tablet info", KR(ret));

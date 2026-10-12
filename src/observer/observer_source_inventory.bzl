@@ -160,6 +160,8 @@ OBSERVER_UNITY_GROUPS = [
         name = "ob_server_schema_0",
         language = "c++",
         srcs = [
+            "src/observer/schema/native_schema_catalog.cpp",
+            "src/observer/schema/ob_schema_retrieve_utils.cpp",
             "src/observer/schema/ob_schema_service_sql_impl.cpp",
             "src/observer/ob_server_duty_task.cpp",
             "src/observer/ob_system_package_load_task.cpp",

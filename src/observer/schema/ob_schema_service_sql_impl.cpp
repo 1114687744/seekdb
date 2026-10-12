@@ -20,6 +20,10 @@
 #include "share/ob_share_util.h"
 // TODO, move basic structs to ob_schema_struct.h
 #include "observer/schema/ob_schema_retrieve_utils.h"
+#include "observer/schema/native_schema_catalog.h"
+#include "query/session/ob_inner_sql_connection_access.h"
+#include "storage/tx_storage/ob_access_service.h"
+#include "storage/tx/ob_trans_service.h"
 #include "sql/resolver/ob_resolver_utils.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
 #include "share/ob_sql_client_decorator.h"
@@ -912,49 +916,29 @@ int ObSchemaServiceSQLImpl::get_full_table_schema_from_inner_table(
     ObArenaAllocator &allocator,
     ObMySQLTransaction &trans)
 {
-  int ret = OB_SUCCESS;
-  
-  ObTableSchema *tmp_table_schema = NULL;
-  ObArray<ObAuxTableMetaInfo> aux_table_metas;
-  int64_t schema_version = OB_INVALID_VERSION;
-
-  if (OB_FAIL(get_table_schema(schema_status,
-                               table_id,
-                               INT64_MAX - 1,
-                               trans,
-                               allocator,
-                               tmp_table_schema))) {
-  } else if (OB_ISNULL(tmp_table_schema)) {
-    ret = OB_ERR_NULL_VALUE;
-    LOG_WARN("can not get table schema", KR(ret), K(table_id));
-  } else if (OB_FAIL(fetch_aux_tables(schema_status,
-                                      table_id,
-                                      tmp_table_schema->get_schema_version(),
-                                      trans,
-                                      aux_table_metas))) {
-  } else {
-    schema_version = tmp_table_schema->get_schema_version();
-    FOREACH_CNT_X(tmp_aux_table_meta, aux_table_metas, OB_SUCC(ret)) {
-      const ObAuxTableMetaInfo &aux_table_meta = *tmp_aux_table_meta;
-      if (USER_INDEX == aux_table_meta.table_type_) {
-        if (OB_FAIL(tmp_table_schema->add_simple_index_info(ObAuxTableMetaInfo(
-                                                          aux_table_meta.table_id_,
-                                                          aux_table_meta.table_type_,
-                                                          aux_table_meta.index_type_)))) {
-        }
-      } else if (AUX_LOB_META == aux_table_meta.table_type_) {
-        tmp_table_schema->set_aux_lob_meta_tid(aux_table_meta.table_id_);
-      } else if (AUX_LOB_PIECE == aux_table_meta.table_type_) {
-        tmp_table_schema->set_aux_lob_piece_tid(aux_table_meta.table_id_);
-      }
-    }
-    if (OB_SUCC(ret)) {
-      if (OB_FAIL(table_schema.assign(*tmp_table_schema))) {
-      }
-    }
+  auto *access = share::server_service<storage::ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (!check_inner_stat() || access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  // This entry is a strong DDL reread in an active owner, not a standalone
+  // history lookup. A weak historical timestamp needs its own protected view.
+  if (!trans.is_started() || schema_status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
+  std::shared_ptr<observer::NativeSchemaCatalog> catalog(new (std::nothrow)
+      observer::NativeSchemaCatalog(trans.target_namespace(), *access, *transactions));
+  if (!catalog) { return OB_ALLOCATE_MEMORY_FAILED; }
+  int ret = trans.retain_until_end(catalog);
+  if (OB_SUCC(ret)) {
+    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
+        trans.get_connection(), [&](transaction::ObTxDesc &native) {
+      ObTableSchema *definition = nullptr;
+      int rc = catalog->attach(native, THIS_WORKER.get_timeout_ts());
+      if (rc == OB_SUCCESS) { rc = catalog->get_table(table_id, INT64_MAX - 1, allocator, definition); }
+      if (rc == OB_SUCCESS) { rc = table_schema.assign(*definition); }
+      return rc;
+    });
   }
   return ret;
 }
+
 
 int ObSchemaServiceSQLImpl::get_db_schema_from_inner_table(
     const ObRefreshSchemaStatus &schema_status,
@@ -4444,8 +4428,8 @@ int ObSchemaServiceSQLImpl::sort_table_partition_info(
     LOG_WARN("invalid table_schema", KR(ret), K(table_schema));
   } else {
     if (OB_FAIL(try_mock_partition_array(table_schema))) {
-    } else if (OB_FAIL(ObSchemaServiceSQLImpl::sort_partition_array(table_schema))) {
-    } else if (OB_FAIL(ObSchemaServiceSQLImpl::sort_subpartition_array(table_schema))) {
+    } else if (OB_FAIL(ObSchemaRetrieveUtils::sort_partition_array(table_schema))) {
+    } else if (OB_FAIL(ObSchemaRetrieveUtils::sort_subpartition_array(table_schema))) {
     }
   }
   return ret;
@@ -5323,140 +5307,6 @@ int ObSchemaServiceSQLImpl::get_refresh_schema_info(ObRefreshSchemaInfo &schema_
   return ret;
 }
 
-int ObSchemaServiceSQLImpl::sort_partition_array(ObPartitionSchema &partition_schema)
-{
-  int ret = OB_SUCCESS;
-  if (!partition_schema.is_valid()) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid partition schema", K(ret), K(partition_schema));
-  } else if (!partition_schema.is_user_partition_table()) {
-    // skip
-  } else if (OB_ISNULL(partition_schema.get_part_array())) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("partition array is empty", K(ret), K(partition_schema));
-  } else {
-    int64_t part_num = partition_schema.get_first_part_num();
-    int64_t partition_num = partition_schema.get_partition_num();
-    if (part_num != partition_num) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("partition num not match", K(ret), K(part_num), K(partition_num));
-    } else if (OB_ISNULL(partition_schema.get_part_array())
-               || partition_num <= 0) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("partition array is empty", K(ret), K(partition_schema));
-    } else if (partition_schema.is_range_part()) {
-      lib::ob_sort(partition_schema.get_part_array(),
-          partition_schema.get_part_array() + partition_num,
-          ObBasePartition::range_like_func_less_than);
-      lib::ob_sort(partition_schema.get_hidden_part_array(),
-          partition_schema.get_hidden_part_array() + partition_schema.get_hidden_partition_num(),
-          ObBasePartition::range_like_func_less_than);
-    } else if (partition_schema.is_hash_like_part()) {
-      lib::ob_sort(partition_schema.get_part_array(),
-          partition_schema.get_part_array() + partition_num,
-          ObBasePartition::hash_like_func_less_than);
-      lib::ob_sort(partition_schema.get_hidden_part_array(),
-          partition_schema.get_hidden_part_array() + partition_schema.get_hidden_partition_num(),
-          ObBasePartition::hash_like_func_less_than);
-    } else if (partition_schema.is_list_part()) {
-      lib::ob_sort(partition_schema.get_part_array(),
-          partition_schema.get_part_array() + partition_num,
-          ObBasePartition::list_part_func_layout);
-      lib::ob_sort(partition_schema.get_hidden_part_array(),
-          partition_schema.get_hidden_part_array() + partition_schema.get_hidden_partition_num(),
-          ObBasePartition::list_part_func_layout);
-    } else {
-      //nothing
-    }
-  }
-  return ret;
-}
-
-int ObSchemaServiceSQLImpl::sort_subpartition_array(ObPartitionSchema &partition_schema)
-{
-  int ret = OB_SUCCESS;
-  if (!partition_schema.is_valid()) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid partition schema", K(ret), K(partition_schema));
-  } else if (!partition_schema.is_user_partition_table()
-             || PARTITION_LEVEL_TWO != partition_schema.get_part_level()) {
-    // skip
-  } else if (OB_ISNULL(partition_schema.get_part_array())
-             || partition_schema.get_partition_num() <= 0) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("partition array is empty", K(ret), K(partition_schema));
-  } else {
-    // sort subpartition array
-    for (int64_t i = 0; OB_SUCC(ret) && i < partition_schema.get_partition_num(); i++) {
-      ObPartition* partition = partition_schema.get_part_array()[i];
-      if (OB_ISNULL(partition)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("partition is null", K(ret), K(i), K(partition_schema));
-      } else {
-        ObSubPartition **subpart_array = partition->get_subpart_array();
-        int64_t subpart_num = partition->get_sub_part_num();
-        int64_t subpartition_num = partition->get_subpartition_num();
-        if (subpart_num != subpartition_num) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_ERROR("subpartition num not match", K(ret), K(subpart_num), K(subpartition_num));
-        } else if (OB_ISNULL(subpart_array) || subpartition_num <= 0) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_ERROR("subpartition array is empty", K(ret), K(i), K(partition_schema));
-        } else if (partition_schema.is_range_subpart()) {
-          lib::ob_sort(subpart_array, subpart_array + subpartition_num, ObBasePartition::less_than);
-          lib::ob_sort(partition->get_hidden_subpart_array(),
-                    partition->get_hidden_subpart_array() + partition->get_hidden_subpartition_num(),
-                    ObBasePartition::less_than);
-        } else if (partition_schema.is_hash_like_subpart()) {
-          lib::ob_sort(subpart_array, subpart_array + subpartition_num,
-                    ObSubPartition::hash_like_func_less_than);
-          lib::ob_sort(partition->get_hidden_subpart_array(),
-                    partition->get_hidden_subpart_array() + partition->get_hidden_subpartition_num(),
-                    ObSubPartition::hash_like_func_less_than);
-        } else if (partition_schema.is_list_subpart()) {
-          lib::ob_sort(subpart_array, subpart_array + subpartition_num,
-                    ObBasePartition::list_part_func_layout);
-          lib::ob_sort(partition->get_hidden_subpart_array(),
-                    partition->get_hidden_subpart_array() + partition->get_hidden_subpartition_num(),
-                    ObBasePartition::list_part_func_layout);
-        }
-      }
-    }
-
-    // sort def_subpartition_array
-    if (OB_SUCC(ret) && partition_schema.has_sub_part_template_def()) {
-      int64_t def_subpart_num = partition_schema.get_def_sub_part_num();
-      int64_t def_subpartition_num = partition_schema.get_def_subpartition_num();
-      if (OB_ISNULL(partition_schema.get_def_subpart_array())) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("def_subpartition array is empty", K(ret), K(partition_schema));
-      } else if (def_subpart_num != def_subpartition_num) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("def_subpartition num not match", K(ret), K(def_subpart_num), K(def_subpartition_num));
-      } else if (def_subpartition_num <= 0) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("def_subpartition array is empty", K(ret), K(partition_schema));
-      } else if (partition_schema.is_range_subpart()) {
-        lib::ob_sort(partition_schema.get_def_subpart_array(),
-            partition_schema.get_def_subpart_array() + def_subpartition_num,
-            ObBasePartition::less_than);
-      } else if (partition_schema.is_hash_like_subpart()) {
-        lib::ob_sort(partition_schema.get_def_subpart_array(),
-            partition_schema.get_def_subpart_array() + def_subpartition_num,
-            ObSubPartition::hash_like_func_less_than);
-      } else if (partition_schema.is_list_subpart()) {
-        lib::ob_sort(partition_schema.get_def_subpart_array(),
-            partition_schema.get_def_subpart_array() + def_subpartition_num,
-            ObBasePartition::list_part_func_layout);
-      } else {
-        //nothing
-      }
-    } else {
-    }
-  }
-  return ret;
-}
-
 // Find the latest committed schema version for change-stream readers.
 int ObSchemaServiceSQLImpl::get_schema_version_by_timestamp(
     ObISQLClient &sql_client,
@@ -5534,8 +5384,8 @@ int ObSchemaServiceSQLImpl::sort_table_partition_info_v2(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid table_schema", KR(ret), K(table_schema));
   } else {
-    if (OB_FAIL(ObSchemaServiceSQLImpl::sort_partition_array(table_schema))) {
-    } else if (OB_FAIL(ObSchemaServiceSQLImpl::sort_subpartition_array(table_schema))) {
+    if (OB_FAIL(ObSchemaRetrieveUtils::sort_partition_array(table_schema))) {
+    } else if (OB_FAIL(ObSchemaRetrieveUtils::sort_subpartition_array(table_schema))) {
     }
   }
   return ret;

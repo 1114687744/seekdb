@@ -358,68 +358,74 @@ void ObTabletCreator::set_materialization_for_prototype()
   }
 }
 
-int ObTabletCreator::execute()
+int ObTabletCreator::execute(ObMySQLTransaction &trans)
 {
+  auto *access = share::server_service<storage::ObAccessService>();
+  if (access == nullptr) { return OB_NOT_INIT; }
+  auto &store = access->storage_schema_store();
+  std::shared_ptr<storage::InstanceMetaStore::Transaction> tx;
   int ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-      trans_.get_connection(), [&](transaction::ObTxDesc &native) {
-    return prepare_layouts(native, trans_.target_namespace());
+      trans.get_connection(), [&](transaction::ObTxDesc &native) {
+    int rc = TableStorageLayouts::attach(trans, native, store, tx);
+    if (rc == OB_SUCCESS) {
+      TableStorageLayouts layouts(store, *tx, trans.target_namespace());
+      rc = prepare_layouts(layouts);
+    }
+    return rc;
   });
   if (ret != OB_SUCCESS) { reset(); return ret; }
   return execute_impl([&](const obcall::ObBatchCreateTabletArg &arg, const char *buf, int64_t size, int64_t deadline) {
-    return query::ObInnerSQLConnectionAccess::register_multi_data_source(
-        trans_.get_connection(), transaction::ObTxDataSourceType::CREATE_TABLET_NEW_MDS, buf, size);
-  }, true);
+    int rc = query::ObInnerSQLConnectionAccess::register_multi_data_source(
+        trans.get_connection(), transaction::ObTxDataSourceType::CREATE_TABLET_NEW_MDS, buf, size);
+    // Child SQL routing performs its binding using the routed physical IDs.
+    if (rc == OB_SUCCESS && arg.set_binding_info_outside_create()
+        && observer::namespace_worker_prototype::in_process_session_ns(
+            query::ObInnerSQLConnectionAccess::get_session(trans.get_connection())) == 0) {
+      rc = ObTabletBindingMdsHelper::modify_tablet_binding_for_create(arg, deadline, trans);
+    }
+    return rc;
+  });
 }
 
-int ObTabletCreator::execute(transaction::ObTxDesc &trans, uint64_t namespace_id)
+int ObTabletCreator::execute(transaction::ObTxDesc &trans, TableStorageLayouts &layouts)
 {
   auto *service = share::server_service<transaction::ObTransService>();
   if (service == nullptr) { return OB_NOT_INIT; }
-  int ret = prepare_layouts(trans, namespace_id);
+  int ret = prepare_layouts(layouts);
   if (ret != OB_SUCCESS) { reset(); return ret; }
   return execute_impl([&](const obcall::ObBatchCreateTabletArg &arg, const char *buf, int64_t size, int64_t deadline) {
-    int ret = service->register_mds_into_tx(
+    int rc = service->register_mds_into_tx(
         trans, transaction::ObTxDataSourceType::CREATE_TABLET_NEW_MDS, buf, size);
-    if (ret == OB_SUCCESS && arg.set_binding_info_outside_create()) {
-      ret = ObTabletBindingMdsHelper::modify_tablet_binding_for_create(arg, deadline, trans, *service);
+    if (rc == OB_SUCCESS && arg.set_binding_info_outside_create()) {
+      rc = ObTabletBindingMdsHelper::modify_tablet_binding_for_create(arg, deadline, trans, *service);
     }
-    return ret;
-  }, false);
+    return rc;
+  });
 }
 
-int ObTabletCreator::prepare_layouts(transaction::ObTxDesc &native, uint64_t namespace_id)
+int ObTabletCreator::prepare_layouts(TableStorageLayouts &layouts)
 {
-  auto *access = share::server_service<storage::ObAccessService>();
-  if (!inited_ || access == nullptr) { return OB_NOT_INIT; }
-  if (single_batch_arg_ == nullptr || namespace_id == 0) { return OB_INVALID_ARGUMENT; }
-  auto &store = access->storage_schema_store();
-  std::shared_ptr<storage::InstanceMetaStore::Transaction> tx;
-  int ret = TableStorageLayouts::attach(trans_, native, store, tx);
-  if (ret == OB_SUCCESS) {
-    TableStorageLayouts layouts(store, *tx, namespace_id);
-    for (auto *batch = single_batch_arg_; ret == OB_SUCCESS && batch != nullptr; batch = batch->next_) {
-      for (auto *schema : batch->batch_arg_.create_tablet_schemas_) {
-        if (ret != OB_SUCCESS) { break; }
-        ret = schema == nullptr ? OB_ERR_UNEXPECTED : layouts.prepare_create(*schema);
-      }
+  if (!inited_) { return OB_NOT_INIT; }
+  if (single_batch_arg_ == nullptr) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  for (auto *batch = single_batch_arg_; ret == OB_SUCCESS && batch != nullptr; batch = batch->next_) {
+    for (auto *schema : batch->batch_arg_.create_tablet_schemas_) {
+      if (ret != OB_SUCCESS) { break; }
+      ret = schema == nullptr ? OB_ERR_UNEXPECTED : layouts.prepare_create(*schema);
     }
   }
   return ret;
 }
 
 int ObTabletCreator::execute_impl(
-    const std::function<int(const obcall::ObBatchCreateTabletArg &, const char *, int64_t, int64_t)> &register_mds, bool logical_binding)
+    const std::function<int(const obcall::ObBatchCreateTabletArg &, const char *, int64_t, int64_t)> &register_mds)
 {
   int ret = OB_SUCCESS;
   ObTimeoutCtx ctx;
   const int64_t default_timeout_ts = GCONF.rpc_timeout;
-  common::sqlclient::ObISQLConnection *conn = NULL;
   if (OB_UNLIKELY(!inited_)) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObTabletCreator not init", KR(ret));
-  } else if (OB_ISNULL(conn = trans_.get_connection())) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("conn_ is NULL", KR(ret));
   } else if (OB_ISNULL(single_batch_arg_)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("batch arg count is invalid", KR(ret));
@@ -445,18 +451,7 @@ int ObTabletCreator::execute_impl(
         int64_t end_time = ObTimeUtility::current_time();
         LOG_INFO("generate create arg", KR(ret), K(buf_len), K(batch_arg->batch_arg_.tablets_.count()),
                                         K(batch_arg->batch_arg_), "cost_ts", end_time - start_time);
-        // Child namespace storage performs the binding after registering
-        // CREATE_TABLET_NEW_MDS with the routed physical tablets.
-        if (OB_SUCC(ret) && logical_binding && batch_arg->batch_arg_.set_binding_info_outside_create()
-            && observer::namespace_worker_prototype::in_process_session_ns(
-                query::ObInnerSQLConnectionAccess::get_session(conn)) == 0) {
-          const int64_t start_time = ObTimeUtility::current_time();
-          if (OB_FAIL(ObTabletBindingMdsHelper::modify_tablet_binding_for_create(batch_arg->batch_arg_, ctx.get_abs_timeout(), trans_))) {
-          }
-          const int64_t end_time = ObTimeUtility::current_time();
-          LOG_INFO("modify binding for create", KR(ret), K(buf_len), K(batch_arg->batch_arg_.tablets_.count()),
-                                                "cost_ts", end_time - start_time);
-        }
+
       }
       batch_arg = batch_arg->next_;
     }

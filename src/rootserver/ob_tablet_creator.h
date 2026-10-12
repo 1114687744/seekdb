@@ -34,6 +34,7 @@ namespace oceanbase
 namespace transaction { class ObTxDesc; }
 namespace rootserver
 {
+class TableStorageLayouts;
 struct ObTabletCreatorArg
 {
 public:
@@ -120,21 +121,19 @@ public:
 // 2. BATCH_ARG_SIZE cannot be more than multi-trans buffer limit (1.5M)
 const static int64_t BATCH_ARG_SIZE = 1024 * 1024;  // 1M
 
-  ObTabletCreator(
-      const share::SCN &major_frozen_scn,
-      ObMySQLTransaction &trans)
+  explicit ObTabletCreator(const share::SCN &major_frozen_scn)
                 : major_frozen_scn_(major_frozen_scn),
                   allocator_("TbtCret"),
                   single_batch_arg_(NULL),
-                  trans_(trans),
                   need_check_tablet_cnt_(false),
                   inited_(false) {}
   
   virtual ~ObTabletCreator();
   int init(const bool need_check_tablet_cnt);
-  int execute();
+  int execute(ObMySQLTransaction &trans);
   // The batch already contains physical IDs; register it in the explicit owner.
-  int execute(transaction::ObTxDesc &trans, uint64_t namespace_id);
+  // layouts joins the same native owner and outlives its commit/rollback.
+  int execute(transaction::ObTxDesc &trans, TableStorageLayouts &layouts);
   int add_create_tablet_arg(const ObTabletCreatorArg &arg);
   // Takes a private copy of storage-only creation descriptors and bindings.
   // Callers may release the input immediately; execute() registers them in the
@@ -143,13 +142,11 @@ const static int64_t BATCH_ARG_SIZE = 1024 * 1024;  // 1M
   void set_materialization_for_prototype();
   void reset();
 private:
-  int prepare_layouts(transaction::ObTxDesc &native, uint64_t namespace_id);
-  int execute_impl(const std::function<int(const obcall::ObBatchCreateTabletArg &, const char *, int64_t, int64_t)> &register_mds,
-      bool logical_binding);
+  int prepare_layouts(TableStorageLayouts &layouts);
+  int execute_impl(const std::function<int(const obcall::ObBatchCreateTabletArg &, const char *, int64_t, int64_t)> &register_mds);
   const share::SCN major_frozen_scn_;
   ObArenaAllocator allocator_;
   ObBatchCreateTabletHelper *single_batch_arg_;
-  ObMySQLTransaction &trans_;
   bool need_check_tablet_cnt_;
   bool inited_;
 };

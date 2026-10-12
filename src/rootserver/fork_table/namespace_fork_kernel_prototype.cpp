@@ -7,6 +7,7 @@
 #include "observer/namespace_worker_protocol_prototype.h"
 #include "rootserver/ob_tablet_creator.h"
 #include "rootserver/fork_table/table_creation_descriptor.h"
+#include "rootserver/fork_table/table_storage_layouts.h"
 #include "rootserver/fork_table/namespace_schema_publication.h"
 #include "rootserver/ob_tablet_drop.h"
 #include "rootserver/ddl_task/ob_ddl_task_util.h"
@@ -1504,19 +1505,19 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
     return step_ret;
   };
   InstanceMetaStore::Transaction directory_tx;
-  ObMySQLTransaction trans;
+  InstanceMetaStore::Transaction layout_tx;
+  auto &layout_store = share::server_service<ObAccessService>()->storage_schema_store();
   rootserver::InstanceNamespaceMetadata metadata(*directory_kv_store(), directory_tx,
       rootserver::InstanceNamespaceMetadata::PageRead::LOCKED_ROOT);
   bool already = false;
   const int64_t deadline = directory_deadline();
-  // CREATE MDS and source roots share the connection's native
-  // transaction. Its namespace row lock serializes the entire binding unit.
-  if (OB_FAIL(materialize_step("transaction", trans.start(directory_sql_proxy())))) {
+  // CREATE MDS, layouts and source roots share one native owner. The
+  // namespace row lock serializes the entire binding unit.
+  if (OB_FAIL(materialize_step("transaction", directory_kv_store()->begin(directory_tx, deadline)))) {
   } else {
-    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-        trans.get_connection(), [&](transaction::ObTxDesc &native) -> int {
-      if (OB_FAIL(materialize_step("directory_transaction",
-          directory_kv_store()->attach(directory_tx, native, deadline)))) {
+    ret = directory_kv_store()->with_native_transaction(directory_tx, [&](transaction::ObTxDesc &native) -> int {
+      if (OB_FAIL(materialize_step("layout_transaction",
+          layout_store.attach(layout_tx, native, deadline)))) {
       } else {
         rootserver::InstanceNamespaceRecord record;
         if (OB_FAIL(materialize_step("roots", metadata.get_namespace(db, record, true)))) {
@@ -1588,7 +1589,8 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
   }
   if (OB_SUCC(ret) && !already) {
     failure_stage = "tablet_create";
-    rootserver::ObTabletCreator creator(SCN::min_scn(), trans);
+    rootserver::ObTabletCreator creator(SCN::min_scn());
+    rootserver::TableStorageLayouts layouts(layout_store, layout_tx, db);
     obcall::ObBatchCreateTabletArg batch;
     ret = batch.init_create_tablet(SCN::min_scn(), false);
     ObArray<ObTabletID> ids;
@@ -1618,9 +1620,8 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
     }
     const ObTabletID data_tablet(encoded(db, items.front().local_tablet));
     auto create_physical_tablets = [&]() {
-      return query::ObInnerSQLConnectionAccess::with_native_transaction(
-          trans.get_connection(), [&](transaction::ObTxDesc &native) {
-        int create_ret = creator.execute(native, db);
+      return directory_kv_store()->with_native_transaction(directory_tx, [&](transaction::ObTxDesc &native) {
+        int create_ret = creator.execute(native, layouts);
         if (create_ret == OB_SUCCESS) {
           create_ret = ObTabletAutoincrementService::get_instance().copy_sequences_for_fork(
               source_ids, ids, source_snapshot_versions, native);
@@ -1650,8 +1651,7 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
   }
   if (OB_SUCC(ret) && !already) {
     failure_stage = "sources";
-    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-        trans.get_connection(), [&](transaction::ObTxDesc &native) -> int {
+    ret = directory_kv_store()->with_native_transaction(directory_tx, [&](transaction::ObTxDesc &native) -> int {
       ns::CatalogChanges sources;
       for (const auto &item : items) {
         if (OB_FAIL(ret)) { break; }
@@ -1672,15 +1672,16 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
       return ret;
     });
   }
-  // End explicitly even for KV failures: the SQL wrapper's destructor cannot
-  // infer those errors. Keep KV reader/GC protection until the owner finishes.
-  if (trans.is_started()) {
+  // Keep both participants and source protection alive until the native
+  // owner has finished. No SQL connection or Namespace runtime is involved.
+  if (directory_tx.is_active()) {
     if (OB_SUCC(ret)) { failure_stage = "commit"; }
-    const int end = trans.end(ret == OB_SUCCESS);
+    const int end = ret == OB_SUCCESS ? directory_kv_store()->commit(directory_tx)
+                                      : directory_kv_store()->rollback(directory_tx);
     if (ret == OB_SUCCESS) { ret = end; }
   }
-  if (directory_tx.is_active()) {
-    const int detach_ret = directory_kv_store()->detach(directory_tx);
+  if (layout_tx.is_active()) {
+    const int detach_ret = layout_store.detach(layout_tx);
     if (ret == OB_SUCCESS) { ret = detach_ret; }
   }
   if (ret != OB_SUCCESS) {
