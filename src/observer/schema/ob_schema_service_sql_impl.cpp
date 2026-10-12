@@ -891,18 +891,20 @@ int ObSchemaServiceSQLImpl::get_table_schema_from_inner_table(
         }
       }
     } else {
-      // set schema_version to get newest table_schema
-      int64_t schema_version = INT64_MAX - 1;
-      ObArray<uint64_t> table_ids;
-      ObArray<ObTableSchema *> tables;
-      ObArenaAllocator allocator(ObModIds::OB_SCHEMA);
-      if (OB_FAIL(table_ids.push_back(table_id))) {
-      } else if (OB_FAIL(get_batch_table_schema(schema_status, schema_version,
-                                                table_ids, sql_client, allocator, tables))) {
-      } else if (tables.count() <= 0) {
-        ret = OB_TABLE_NOT_EXIST;
-        LOG_WARN("table array should not be empty", KR(ret), K(schema_status));
-      } else if (OB_FAIL(table_schema.assign(*tables.at(0)))){
+      // Preserve the existing latest-history semantics (INT64_MAX - 1),
+      // including writes made earlier by this DDL's native owner.
+      if (schema_status.snapshot_timestamp_ > 0) { ret = OB_INVALID_ARGUMENT; }
+      else {
+        ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+            [&](observer::NativeSchemaCatalog &catalog) {
+          ObArenaAllocator allocator(ObModIds::OB_SCHEMA);
+          ObTableSchema *definition = nullptr;
+          int rc = catalog.get_table(table_id, INT64_MAX - 1, allocator, definition);
+          if (rc == OB_ERR_SCHEMA_HISTORY_EMPTY) { rc = OB_TABLE_NOT_EXIST; }
+          if (rc == OB_SUCCESS) { rc = table_schema.assign(*definition); }
+          if (definition != nullptr) { definition->~ObTableSchema(); }
+          return rc;
+        });
       }
     }
   }

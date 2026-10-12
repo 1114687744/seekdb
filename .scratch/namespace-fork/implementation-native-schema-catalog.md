@@ -67,7 +67,7 @@
 1. **写入行生成**：表/列的字段生成已抽为 `SchemaCatalogFields`，原生行和 SQL splicer 共用字段映射；`typed` 用例已验证 NULL/空串、unsigned、enum、中文默认值及名称索引。分区、约束/FK 等字段生成仍待按同一方式接入。
 2. **写入执行**：`batch_add_table_for_create_table/batch_add_columns_for_create_table` 已接同一 DDL owner 的当前表/history 写入；`add_table/add_single_column/add_columns_for_not_core` 也已改造，最新增量已通过下述生产定向回归。保留初始化 bootstrap 与 core 特有表示的既有入口。ALTER 当前行更新、删除、分区、约束/FK 等仍待覆盖；直接 `sql_client.write` 的 UPDATE/INSERT SELECT/DELETE 也必须接入。
 3. **真实索引**：固定定义生成器已导出物理索引与归属，原生 writer 同事务维护普通非唯一内表索引；`indexed`、`typed` 和客户端 FORCE INDEX 查询已通过。辅助关系读取仍待使用索引或批量收集，避免每表完整扫描。
-4. **剩余读取**：`get_table_schema_from_inner_table/get_not_core_table_schema/get_not_core_table_schemas`。DDL reread 需要原 owner，SchemaService 批量读取需要同一受保护 SCN；批量 FK/trigger/aux 关系应按一批收集，避免对每个表全扫描。
+4. **剩余读取**：普通 `get_table_schema_from_inner_table` 已借用 DDL owner 接入；`get_not_core_table_schema/get_not_core_table_schemas` 及 SchemaService 其他批量入口仍待迁移。批量读取需要同一受保护 SCN；FK/trigger/aux 关系应使用已有索引或按一批收集，避免对每个表全扫描。
 5. **边界**：当前完整 DDL 回读入口明确要求 active strong transaction。弱读与旧 SCN 不能只把 snapshot_timestamp 数字塞进去；必须传入已受保护的目录 view，或在保护期间获取可读 weak SCN。bootstrap/core 元数据入口要显式处理其固定定义及初始化顺序，不以 Namespace 1 回退。
 
 以上五项的剩余部分仍是本轮完整目标的必做项，不能以已通过的部分读写测试替代。
@@ -84,7 +84,7 @@
 - 索引修正已通过：`/tmp/native-schema-catalog-indexed3.log`，`indexed` 测试最终 `erase_committed ret=0`。普通索引删除使用主行保护下的 `erase_index_row`，不再给非唯一索引单独加锁。
 - `/tmp/native-schema-catalog-indexed2.log` 的 `typed` 初次失败在名称索引读取：测试传入的 varchar 查询键没有采用固定定义的 collation，严格原生接口返回 `OB_INVALID_ARGUMENT`。补齐测试键类型后 `/tmp/native-schema-catalog-typed1.log` 通过，包含同事务完整定义回读、独立读不可见、回滚和提交后可见，Namespace 服务槽位仍为 0。
 - 生产 CREATE TABLE 表/列 current/history 接入后，`/tmp/native-schema-catalog-create2.log` 通过客户端 FORCE INDEX 读取、父子 DDL 隔离、分区/索引/约束/LOB 建表、TRUNCATE/DROP 与崩溃重启。首次 `/tmp/native-schema-catalog-create1.log` 的断言把 `cur_default_value_v2` 当作客户端字符串；该内表列实际返回 bytes，修正断言为 UTF-8 字节后通过。用例已加入四件套 direct gate。
-- 普通 DDL 回读迁移必须保持 **current 与 history 的区别**：一个 DDL 可能先改 current 行，再回读生成 history；不能把现有 current 回读直接替换为 `get_table(...V)` 的 history 选择。后续原生 current 读取应显式表达，并在同 owner 下复用完整解码。
+- 已重新核对 **current 与 history 的区别**：`get_table_schema_from_inner_table` 明确传 `INT64_MAX-1`，现有普通 DDL 回读读取最新 history，原生替换应保留这个语义；批量 `get_not_core_table_schemas` 的调用传 `INT64_MAX` 时才读取 current。前一版说明将普通 DDL 回读当作 current，判断有误。后续批量原生读取仍必须区分两者。
 - 原生 UPDATE 的字段生成也应保留未指定字段（尤其创建时间等）的既有值；不能用整行默认值构造 INSERT 的方式覆盖部分更新。
 
 ### 最新生产版本验证
@@ -92,6 +92,13 @@
 - `/tmp/native-schema-catalog-production-build2.log`：测试注入已移除，生产版本编译通过。
 - `/tmp/native-schema-catalog-production-create1.log`：表/列 CREATE 批量写入、`add_table` 的历史插入、`add_single_column` 均已接入后的生产回归通过。客户端强制走内表名称索引，父子分别修改/建表，分区表 TRUNCATE/DROP，进程崩溃重启后再次验证 current/history、默认值和 90KB/120KB LOB 数据。
 - `/tmp/native-schema-catalog-production-truncate2.log`：父空间先执行元数据 DDL 再 fork，随后 TRUNCATE；孩子首次数据读取仍取得旧数据，通过。
-- 这轮没有完成其余 UPDATE/DELETE/分区与约束写入、普通 current 回读、SchemaService 批量加载；完整目标保持进行中。
+- 这轮没有完成其余 UPDATE/DELETE/分区与约束写入、SchemaService 批量加载与其 current 读取语义；完整目标保持进行中。
 
 - 最新生产 Namespace 主备回归通过（114.86 秒）：`.scratch/namespace-fork/gate-results/native-schema-catalog/native-writes-standby/results.json` 的 `namespace_fork_local.exit_code=0`。覆盖物化与 LOB 事务回放、孩子 DDL 刷新、父 TRUNCATE/DROP 历史来源、Namespace 删除准入、备库提升后的 schema 恢复及写入、提升后再次 fork。
+
+### 普通 DDL 回读接入
+
+- `get_table_schema_from_inner_table` 的非 core 分支已使用原生目录，仍读取 owner 可见的最新 history（`INT64_MAX-1`），保持不存在时 `OB_TABLE_NOT_EXIST` 的调用约定。只接收 active DDL 事务；任意旧 SCN 仍须上层提供受保护 view。
+- `/tmp/native-schema-catalog-ddl-read-build1.log` 编译通过；`/tmp/native-schema-catalog-ddl-read1.log` 通过包含 LOB/分区/索引建表、ALTER、TRUNCATE、父子隔离和崩溃重启的生产回归。
+- 后续批量加载前要消除 `get_table` 对 FK/trigger/aux history 的逐表全扫描。固定定义已有 `idx_fk_his_child_tid/idx_fk_his_parent_tid/idx_trigger_his_base_obj_id/idx_data_table_id`；可先按关系索引收集候选对象 ID，再在同视图按主键读取目标 V 的最新 history 并重新检查归属与删除标记。索引的 schema_version 不一定是 key 的最后一列，不能直接沿用主 history 的逐键去重规则。
+- 已发现既有解码器中部分 `while (OB_SUCC(ret) && OB_SUCC(result.next()))` 没有将 next 的错误写回 ret；原生接入必须补上错误传播并定向验证，避免发生扫描错误时接受不完整定义。这项尚未处理，完整读取目标不能算完成。
