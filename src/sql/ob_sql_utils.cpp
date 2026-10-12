@@ -3678,6 +3678,9 @@ int ObSQLUtils::async_recompile_view(const share::schema::ObTableSchema &old_vie
   int ret = OB_SUCCESS;
   ObTableSchema new_view_schema(&alloc);
   bool changed = false;
+  auto *schema_service = session_info.effective_schema_service();
+  auto *root_command_service = observer::namespace_worker_prototype::effective_root_command_service(&session_info);
+  if (schema_service == nullptr || root_command_service == nullptr) { return OB_NOT_INIT; }
   if (reset_column_infos) {
     // failed to resolve view definition, do nothing
   } else if (OB_ISNULL(select_stmt)) {
@@ -3691,7 +3694,7 @@ int ObSQLUtils::async_recompile_view(const share::schema::ObTableSchema &old_vie
              || (old_view_schema.is_sys_view()
                  && old_view_schema.get_schema_version() <= GCTX.start_time_
                  && OB_HASH_NOT_EXIST == dependency_info_queue
-                    .read_consistent_sys_view_from_set(old_view_schema.get_table_id())))) {
+                    .read_consistent_sys_view_from_set(*schema_service, old_view_schema.get_table_id())))) {
     if (!reset_column_infos) {
       ObArray<ObString> dummy_column_list;
       ObArray<ObString> column_comments;
@@ -3714,22 +3717,20 @@ int ObSQLUtils::async_recompile_view(const share::schema::ObTableSchema &old_vie
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("get wrong schema", K(ret), K(new_view_schema));
       } else if (old_view_schema.is_sys_view() && OB_FAIL(check_sys_view_changed(
-          old_view_schema, new_view_schema, changed, dependency_info_queue))) {
+          old_view_schema, new_view_schema, changed, dependency_info_queue, *schema_service))) {
         LOG_WARN("failed to check sys view changed", K(ret));
       } else if (!select_stmt->get_ref_obj_table()->is_inited() || (old_view_schema.is_sys_view() && !changed)) {
         // do nothing
-      } else if (OB_FAIL(dependency_info_queue.add_view_id_to_set(new_view_schema.get_table_id()))) {
+      } else if (OB_FAIL(dependency_info_queue.add_view_id_to_set(*schema_service, new_view_schema.get_table_id()))) {
         if (OB_HASH_EXIST == ret) {
           ret = OB_SUCCESS;
           LOG_WARN("table id exists", K(new_view_schema.get_table_id()));
         } else {
           LOG_WARN("failed to set table id", K(ret));
         }
-      } else if (OB_ISNULL(session_info.effective_schema_service())) {
-        ret = OB_NOT_INIT;
       } else if (OB_FAIL(process_reference_obj_table(*select_stmt->get_ref_obj_table(),
         new_view_schema.get_table_id(), &new_view_schema, dependency_info_queue,
-        *session_info.effective_schema_service()))) {
+        *schema_service, *root_command_service))) {
       }
     }
   }
@@ -3739,7 +3740,8 @@ int ObSQLUtils::async_recompile_view(const share::schema::ObTableSchema &old_vie
 int ObSQLUtils::check_sys_view_changed(const share::schema::ObTableSchema &old_view_schema,
                                        const share::schema::ObTableSchema &new_view_schema,
                                        bool &changed,
-                                       ObMaintainDepInfoTaskQueue &dependency_info_queue)
+                                       ObMaintainDepInfoTaskQueue &dependency_info_queue,
+                                       const share::schema::ObMultiVersionSchemaService &schema_service)
 {
   int ret = OB_SUCCESS;
   changed = false;
@@ -3778,7 +3780,7 @@ int ObSQLUtils::check_sys_view_changed(const share::schema::ObTableSchema &old_v
   }
   if (OB_SUCC(ret) && !changed) {
     if (OB_FAIL(dependency_info_queue.add_consistent_sys_view_id_to_set(
-        old_view_schema.get_table_id()))) {
+        schema_service, old_view_schema.get_table_id()))) {
     }
   }
   return ret;

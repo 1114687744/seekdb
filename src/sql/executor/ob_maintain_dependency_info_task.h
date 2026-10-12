@@ -76,6 +76,7 @@ public:
   {
     schema_service_ = &schema_service;
   }
+  const share::schema::ObMultiVersionSchemaService *schema_service() const { return schema_service_; }
   bool reset_view_column_infos() const { return reset_view_column_infos_; }
 
 private:
@@ -97,7 +98,7 @@ public:
   static const int64_t MAX_SYS_VIEW_SIZE = 65536;
   constexpr static const double MAX_QUEUE_USAGE_RATIO = 0.8;
   ObMaintainDepInfoTaskQueue()
-      : last_execute_time_(0), root_command_service_(nullptr) {}
+      : last_execute_time_(0) {}
   virtual ~ObMaintainDepInfoTaskQueue()
   {
     view_info_set_.destroy();
@@ -108,25 +109,32 @@ public:
   inline int64_t get_last_execute_time() const { return last_execute_time_; }
   inline void set_last_execute_time(const int64_t execute_time)
   { last_execute_time_ = execute_time; }
-  void bind_root_command_service(
-      query::ObIRootCommandService &root_command_service)
+  // The executor is shared, but view identities belong to the explicitly
+  // bound schema service. Namespace runtimes retain these services until stop.
+  struct ViewKey
   {
-    root_command_service_ = &root_command_service;
-  }
-  query::ObIRootCommandService *get_root_command_service() const
-  {
-    return root_command_service_;
-  }
-  int add_view_id_to_set(const uint64_t view_id) { return view_info_set_.set_refactored(view_id); }
-  int erase_view_id_from_set(const uint64_t view_id) { return view_info_set_.erase_refactored(view_id); }
-  int add_consistent_sys_view_id_to_set(const uint64_t view_id) { return sys_view_consistent_.set_refactored(view_id); }
-  int read_consistent_sys_view_from_set(const uint64_t view_id) { return sys_view_consistent_.exist_refactored(view_id); }
+    const share::schema::ObMultiVersionSchemaService *owner;
+    uint64_t view_id;
+    int hash(uint64_t &value) const
+    {
+      value = common::murmurhash(&view_id, sizeof(view_id), reinterpret_cast<uint64_t>(owner));
+      return common::OB_SUCCESS;
+    }
+    bool operator==(const ViewKey &other) const { return owner == other.owner && view_id == other.view_id; }
+  };
+  int add_view_id_to_set(const share::schema::ObMultiVersionSchemaService &owner, uint64_t view_id)
+  { return view_info_set_.set_refactored(ViewKey{&owner, view_id}); }
+  int erase_view_id_from_set(const share::schema::ObMultiVersionSchemaService &owner, uint64_t view_id)
+  { return view_info_set_.erase_refactored(ViewKey{&owner, view_id}); }
+  int add_consistent_sys_view_id_to_set(const share::schema::ObMultiVersionSchemaService &owner, uint64_t view_id)
+  { return sys_view_consistent_.set_refactored(ViewKey{&owner, view_id}); }
+  int read_consistent_sys_view_from_set(const share::schema::ObMultiVersionSchemaService &owner, uint64_t view_id)
+  { return sys_view_consistent_.exist_refactored(ViewKey{&owner, view_id}); }
   bool is_queue_almost_full() const { return queue_.size() > queue_.capacity() * MAX_QUEUE_USAGE_RATIO; }
 private:
   int64_t last_execute_time_;
-  common::hash::ObHashSet<uint64_t, common::hash::ReadWriteDefendMode> view_info_set_;
-  common::hash::ObHashSet<uint64_t, common::hash::ReadWriteDefendMode> sys_view_consistent_;
-  query::ObIRootCommandService *root_command_service_;
+  common::hash::ObHashSet<ViewKey, common::hash::ReadWriteDefendMode> view_info_set_;
+  common::hash::ObHashSet<ViewKey, common::hash::ReadWriteDefendMode> sys_view_consistent_;
 };
 
 // demoted from share::schema::ObReferenceObjTable to sql free function(sql-bound: ObMaintainObjDepInfoTask/Queue; detached from the class through public getters)
@@ -134,7 +142,8 @@ int process_reference_obj_table(share::schema::ObReferenceObjTable &ref_obj_tabl
                                 const uint64_t dep_obj_id,
                                 const share::schema::ObTableSchema *view_schema,
                                 ObMaintainDepInfoTaskQueue &task_queue,
-                                share::schema::ObMultiVersionSchemaService &schema_service);
+                                share::schema::ObMultiVersionSchemaService &schema_service,
+                                query::ObIRootCommandService &root_command_service);
 
 }  // namespace sql
 }  // namespace oceanbase

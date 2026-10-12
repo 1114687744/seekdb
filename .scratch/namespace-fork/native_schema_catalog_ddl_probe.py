@@ -278,9 +278,68 @@ def verify_partitions(query, ids):
     assert query(f"SELECT COUNT(*) FROM oceanbase.__all_part_history WHERE table_id={ids['h']} AND is_deleted=1") == ((130,),)
 
 
+def prepare_views(query):
+    query('CREATE DATABASE native_views')
+    query('CREATE TABLE native_views.base(id INT PRIMARY KEY,v INT,KEY ix(v))')
+    query('INSERT INTO native_views.base VALUES(1,7)')
+    query('CREATE VIEW native_views.v AS SELECT id,v FROM native_views.base')
+    assert query('SELECT * FROM native_views.v') == ((1, 7),)
+
+
+def exercise_views(query, prepared=False):
+    if not prepared:
+        prepare_views(query)
+    ids = query('SELECT table_id,schema_version FROM oceanbase.__all_table WHERE database_id='
+                "(SELECT database_id FROM oceanbase.__all_database WHERE database_name='native_views')")
+    # Creation records include the main table, its physical index and the view.
+    original_versions = []
+    for tid, _ in ids:
+        original = query(f'SELECT ori_schema_version FROM oceanbase.__all_ori_schema_version WHERE table_id={tid}')
+        # A batched creation shares its final publication version; individual
+        # table histories may start at earlier versions within the same DDL.
+        assert len(original) == 1 and original[0][0] > 0, (tid, original)
+        original_versions.append((tid, original[0][0]))
+    view_id = query("SELECT table_id FROM oceanbase.__all_table WHERE table_name='v' AND database_id="
+                    "(SELECT database_id FROM oceanbase.__all_database WHERE database_name='native_views')")[0][0]
+    original_type = query(f"SELECT data_type FROM oceanbase.__all_column WHERE table_id={view_id} AND column_name='v'")
+    query('ALTER TABLE native_views.base MODIFY v BIGINT')
+    # Recompilation can be queued after a client resolves the changed view.
+    import time
+    deadline = time.monotonic() + 30
+    while True:
+        assert query('SELECT * FROM native_views.v') == ((1, 7),)
+        current_type = query(f"SELECT data_type FROM oceanbase.__all_column WHERE table_id={view_id} AND column_name='v'")
+        if current_type and current_type != original_type:
+            break
+        assert time.monotonic() < deadline, ('view columns were not recompiled', original_type, current_type)
+        time.sleep(.2)
+    return view_id, original_versions, current_type
+
+
+def verify_views(query, evidence):
+    view_id, original_versions, current_type = evidence
+    assert query('SELECT * FROM native_views.v') == ((1, 7),)
+    assert query(f"SELECT data_type FROM oceanbase.__all_column WHERE table_id={view_id} AND column_name='v'") == current_type
+    columns = [row[0] for row in query('SHOW COLUMNS FROM oceanbase.__all_column')
+               if row[0] not in ('gmt_create', 'gmt_modified')]
+    fields = ','.join(columns)
+    current = query(f'SELECT {fields} FROM oceanbase.__all_column WHERE table_id={view_id} ORDER BY column_id')
+    history = query('SELECT '+','.join('h.'+column for column in columns)+' FROM oceanbase.__all_column_history h '
+                    f'WHERE h.table_id={view_id} AND h.is_deleted=0 AND h.schema_version='
+                    '(SELECT MAX(v.schema_version) FROM oceanbase.__all_column_history v '
+                    'WHERE v.table_id=h.table_id AND v.column_id=h.column_id) ORDER BY h.column_id')
+    assert len(current) == 2 and current == history, (current, history)
+    indexed = query(f'SELECT {fields} FROM oceanbase.__all_column FORCE INDEX (idx_tb_column_name) '
+                    f'WHERE table_id={view_id} ORDER BY column_id')
+    assert indexed == current, (indexed, current)
+    for tid, version in original_versions:
+        assert query(f'SELECT ori_schema_version FROM oceanbase.__all_ori_schema_version WHERE table_id={tid}') == ((version,),)
+
+
 def run(binary):
     experiment = BootstrapExperiment(binary, 'native_catalog_ddl', prototype=6)
     child = None
+    peer = None
     try:
         experiment.start()
         experiment.sql('CREATE DATABASE native_ddl')
@@ -305,8 +364,11 @@ def run(binary):
                        'CONSTRAINT fk_mock FOREIGN KEY(fk_id) REFERENCES mock_parent(id))')
         experiment.sql('SET SESSION foreign_key_checks=1')
         prepare_partition_tables(experiment.sql)
+        prepare_views(experiment.sql)
         experiment.sql('FORK NAMESPACE native_ddl_child FROM ns1')
+        experiment.sql('FORK NAMESPACE native_view_peer FROM ns1')
         child = connect(experiment, 'root@native_ddl_child')
+        peer = connect(experiment, 'root@native_view_peer')
         experiment.sql('CREATE TABLE native_ddl.mock_parent(id INT PRIMARY KEY)')
         experiment.sql('USE native_ddl', child)
         experiment.sql('SET SESSION foreign_key_checks=0', child)
@@ -346,8 +408,20 @@ def run(binary):
         partition_evidence = exercise_partitions(lambda statement: experiment.sql(statement, child), prepared=True)
         fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
+        # Same view ID in two Namespaces must identify two independent tasks.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            jobs = [workers.submit(exercise_views,
+                                   lambda statement, c=c: experiment.sql(statement, c), True)
+                    for c in (child, peer)]
+            view_evidence, peer_view_evidence = [job.result() for job in jobs]
 
         def verify():
+            verify_views(lambda statement: experiment.sql(statement, child), view_evidence)
+            verify_views(lambda statement: experiment.sql(statement, peer), peer_view_evidence)
+            assert experiment.sql('SELECT * FROM native_views.v') == ((1, 7),)
+            assert experiment.sql(f'SELECT data_type FROM oceanbase.__all_column WHERE table_id={view_evidence[0]} '
+                                  "AND column_name='v'") != view_evidence[2]
             verify_partitions(lambda statement: experiment.sql(statement, child), partition_evidence)
             assert experiment.sql('SELECT * FROM native_part.r ORDER BY id') == ((1, 1), (11, 2))
             assert experiment.sql('SELECT COUNT(*) FROM native_part.h') == ((3,),)
@@ -419,12 +493,15 @@ def run(binary):
         experiment.record('PASS', case='native_catalog_ddl_sql_indexes_and_fork')
         child.close()
         child = None
+        peer.close()
+        peer = None
         experiment.connection.close()
         experiment.connection = None
         experiment.proc.kill()
         experiment.proc.wait(timeout=15)
         experiment.start()
         child = connect(experiment, 'root@native_ddl_child')
+        peer = connect(experiment, 'root@native_view_peer')
         verify()
         experiment.record('PASS', case='native_catalog_ddl_crash_recovery')
         experiment.sql('CREATE TABLE native_ddl.mock_parent(id INT PRIMARY KEY)', child)
@@ -436,6 +513,8 @@ def run(binary):
         assert experiment.sql('SELECT COUNT(*) FROM native_ddl.mock_child') == ((0,),)
         experiment.record('PASS', case='native_catalog_mock_parent_resolution_after_restart')
     finally:
+        if peer is not None:
+            peer.close()
         if child is not None:
             child.close()
         experiment.close()

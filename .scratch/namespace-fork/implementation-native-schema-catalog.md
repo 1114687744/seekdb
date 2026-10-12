@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入也已通过冷读取、生产 DDL/重启和主备验证，其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 等其余关联入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -293,3 +293,17 @@
 - DDL 操作记录及 core/bootstrap 边界仍须最终核对。`ObDDLSqlService::log_operation` 和建表批量 `ddl_operation_dml` 仍使用 SQL；它们参与定义发布和增量装载，须保证本轮正常表定义链路完整接入同一原生 owner。其他 schema 类型仍在范围之外。
 
 - 分区阶段生产 Namespace 主备回归退出 0（147.14 秒），见 `gate-results/native-schema-catalog/native-partition-standby/results.json`。`native_catalog_partition_replay` 及提升后复查通过，包含范围/列表/两类二级分区的 current/history 和名称索引，以及 130 个分区删除标记；原有父 TRUNCATE/DROP 历史来源、Namespace 删除、提升后写入及再次 fork 继续通过。测试和失败用例随四件套共用脚本提交；没有运行全量 mysqltest 或 sysbench。整体目标仍未完成。
+
+### 视图列与原始创建版本写入（实施中）
+
+- `update_view_columns` 在一个原生目录操作中逐列 upsert current 并写入完整 history，复用 `SchemaCatalogFields::column` 和现有内表索引维护；全部借用所属 DDL 事务。`batch_insert_ori_schema_version` 复用原生行插入，批量记录共用一个目录操作；inner table 沿用不记录原始创建版本的既有规则。
+- 四件套共用 DDL/主备脚本新增视图重新编译回归：基表列从 INT 改为 BIGINT，客户端解析触发重新编译，有界等待列元数据改变，随后逐字段核对 current/history、列名称索引及原始创建版本不变。覆盖父子隔离、重启和主备回放/提升。
+- 旧二进制对照 `view-prior1.log` 首次失败在测试断言：批量创建的 `ori_schema_version` 是最终发布版本，并非每个对象最早 history 版本；源码 `ObTableHelper` 的统一 `last_schema_version` 与运行结果一致。测试修正为保存创建记录并验证后续 DDL 不改变它；`view-prior2.log` 全部通过。
+- `/tmp/native-schema-catalog-view-build1.log` 生产编译通过（未启用探针钩子）；当前版本 DDL/重启和 Namespace 主备验证运行中，尚未计为通过。
+- `view-ddl1.log` 和 `native-view-standby` 首次失败：孩子基表已改为 BIGINT，视图列仍为 INT。最小对照 `view-fork-prior1.log` 使用已有 `physical-gc-plan-artifacts/seekdb-production`，同样失败；`view-fork-diagnosis1.log` 证明依赖记录在 fork 前已提交并被孩子继承。`view-status1.log` 进一步证明孩子 view current/history 已正确标为 INVALID，缺口在重新编译阶段。初始 Namespace 的新二进制 `view-root-current1.log` 通过，原生列 upsert 已被实际调用。
+- 根因：共享 `ObSql::queue_` 保存初始化时的管理服务；`process_reference_obj_table` 从队列取得该服务，却从请求取得所属 schema 服务，组成两个不同 Namespace 的执行上下文。原有两个去重集合也仅以 view_id 为键。任务改为由当前会话显式传入两个所属服务；队列不再持有管理服务，去重键改为所属 schema 服务与 view_id，任务终止（含失败）时清理自己的去重项。复用现有共享线程和集合，不新增 Namespace 服务或线程。Registry 在进程生命周期内保留这些 schema 服务，键中的服务指针不跨其生命周期使用。`view-build2.log` 正在编译，尚未计为修复通过。
+- `view-build2.log` 编译失败在新去重键的 hash 签名：该仓库 HashSet 要求 `int hash(uint64_t&)`，已修正并启动 `view-build3.log`。生产 DDL 用例扩为两个 fork 孩子并发修改同号视图；同时检查父空间原列类型和重启后各自的完整列元数据。未因已有缺陷降低原测试断言。
+- `view-build3.log` 生产编译退出 0；`view-ddl2.log` 退出 0。两个孩子同号视图并发重新编译、父空间保持原列类型、列 current/history 和名称索引、原始版本不变，以及崩溃重启后的相同断言均通过。`native-view-standby2` 回放/提升验证仍在运行。
+- `native-view-standby2` 失败在首次客户端查询新视图（1146）：持久内表中已经读到新列类型，但已装载 Namespace 的 schema cache 尚未刷新到视图创建版本。与既有约束、分区回归一致，补充客户端视图可见性的有界等待，再运行全部元数据断言；未修改生产代码。`native-view-standby3` 正在重跑，不把前一次失败计为通过。
+
+- 视图阶段生产 Namespace 主备回归退出 0（153.19 秒），见 `gate-results/native-schema-catalog/native-view-standby3/results.json`。`native_catalog_view_replay` 及提升后的复查通过，包含视图列 current/history、名称索引和原始创建版本；原有分区、约束、外键、父历史来源、Namespace 删除及提升后 fork 均通过。原失败场景保留在四件套共用 DDL/主备脚本中；未运行全量 mysqltest 或 sysbench。整体目标继续处理 trigger 相关写入及 DDL 操作记录等最终收尾。

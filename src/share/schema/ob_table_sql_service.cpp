@@ -2992,42 +2992,23 @@ int ObTableSqlService::batch_insert_ori_schema_version(
     const ObIArray<uint64_t> &table_ids,
     const int64_t &ori_schema_version)
 {
-  int ret = OB_SUCCESS;
-
-  
-  int64_t affected_rows = 0;
-  int64_t row_count = 0;
-  ObSqlString insert_sql_string;
-  for (int64_t i = 0; i < table_ids.count() && OB_SUCC(ret); i++) {
-    const uint64_t table_id = table_ids.at(i);
-    if (is_inner_table(table_id)) {
-      // To avoid cyclic dependence, inner table won't record ori schema version
-    } else {
-      if (0 == row_count) {
-        if (OB_FAIL(insert_sql_string.append_fmt(
-              "INSERT INTO %s (TABLE_ID, ORI_SCHEMA_VERSION, gmt_create, gmt_modified) VALUES ",
-              OB_ALL_ORI_SCHEMA_VERSION_TNAME))) {
-        }
-      } else {
-        if (OB_FAIL(insert_sql_string.append(", "))) {
-        }
-      }
-      if (FAILEDx(insert_sql_string.append_fmt("(%lu, %ld, now(6), now(6))",
-              ObSchemaUtils::get_extract_schema_id(table_id),
-              ori_schema_version))) {
-        LOG_WARN("sql string append format string failed, ", KR(ret));
-      } else {
-        row_count++;
-      }
+  // Inner definitions have no original-version row, including during bootstrap.
+  bool has_user_table = false;
+  for (int64_t i = 0; i < table_ids.count(); ++i) { has_user_table |= !is_inner_table(table_ids.at(i)); }
+  if (!has_user_table) { return OB_SUCCESS; }
+  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    int ret = OB_SUCCESS;
+    for (int64_t i = 0; OB_SUCC(ret) && i < table_ids.count(); ++i) {
+      if (is_inner_table(table_ids.at(i))) { continue; }
+      ret = catalog.insert_fields(OB_ALL_ORI_SCHEMA_VERSION_TID, [&](SchemaCatalogRow &fields) {
+        int ret = fields.add_pk_column("table_id", table_ids.at(i));
+        if (OB_SUCC(ret)) { ret = fields.add_column("ori_schema_version", ori_schema_version); }
+        return ret;
+      });
     }
-  }
-  if (0 == row_count || OB_FAIL(ret)) {
-  } else if (OB_FAIL(sql_client.write(insert_sql_string.ptr(), affected_rows))) {
-  } else if (row_count != affected_rows) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("affected_rows expect to 1, ", K(affected_rows), KR(ret));
-  }
-  return ret;
+    return ret;
+  });
 }
 
 int ObTableSqlService::insert_ori_schema_version(
@@ -3556,61 +3537,26 @@ int ObTableSqlService::update_foreign_key_in_mock_fk_parent_table(
 int ObTableSqlService::update_view_columns(ObISQLClient &sql_client,
                                            const ObTableSchema &table)
 {
-  int ret = OB_SUCCESS;
-  const int64_t new_schema_version = table.get_schema_version();
-  
-  
-  if (OB_FAIL(check_ddl_allowed(table))) {
-  }
-  ObSqlString column_sql_obj;
-  ObSqlString column_history_sql_obj;
-  ObSqlString *column_sql_ptr = &column_sql_obj;
-  ObSqlString *column_history_sql_ptr = &column_history_sql_obj;
-  ObSqlString &column_sql = *column_sql_ptr;
-  ObSqlString &column_history_sql = *column_history_sql_ptr;
-  int64_t affected_rows = 0;
-  for (ObTableSchema::const_column_iterator iter = table.column_begin();
-      OB_SUCCESS == ret && iter != table.column_end(); ++iter) {
-    if (OB_ISNULL(*iter)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("iter is NULL", K(ret));
-    } else {
-      ObColumnSchemaV2 column;
-      if (OB_FAIL(column.assign(**iter))) {
-      } else {
-        column.set_schema_version(new_schema_version);
-        
-        column.set_table_id(table.get_table_id());
-      }
-      ObDMLSqlSplicer dml;
-      if (FAILEDx(gen_column_dml(column, dml))) {
-        LOG_WARN("gen_column_dml failed", K(column), K(ret));
-      } else if (OB_FAIL(dml.splice_insert_update_sql(OB_ALL_COLUMN_TNAME, column_sql))) {
-      } else if (OB_FAIL(sql_client.write(column_sql.ptr(), affected_rows))) {
-      } else if (affected_rows > 2) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("affected_rows not equal to column count", K(affected_rows), K(ret));
-      } else if (column_history_sql.empty()) {
-        const int64_t is_deleted = 0;
-        if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-        } else if (OB_FAIL(dml.splice_insert_sql_without_plancache(
-                OB_ALL_COLUMN_HISTORY_TNAME, column_history_sql))) {
-        }
-      } else {
-        ObSqlString value_str;
-        const int64_t is_deleted = 0;
-        if (OB_FAIL(dml.add_column("is_deleted", is_deleted))) {
-        } else if (OB_FAIL(dml.splice_values(value_str))) {
-        } else if (OB_FAIL(column_history_sql.append_fmt(", (%s)", value_str.ptr()))) {
+  int ret = check_ddl_allowed(table, &sql_client);
+  if (OB_SUCC(ret) && table.get_column_count() > 0) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (auto iter = table.column_begin(); OB_SUCC(ret) && iter != table.column_end(); ++iter) {
+        ObColumnSchemaV2 column;
+        if (*iter == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(column.assign(**iter))) {
+        } else {
+          column.set_schema_version(table.get_schema_version());
+          column.set_table_id(table.get_table_id());
+          ret = catalog.upsert_fields(OB_ALL_COLUMN_TID, [&](SchemaCatalogRow &fields) {
+            return SchemaCatalogFields::column(column, fields, false);
+          });
+          if (OB_SUCC(ret)) { ret = catalog.insert_column(column, true); }
         }
       }
-    }
-  }
-  if (OB_FAIL(ret)) {
-  } else if (OB_FAIL(sql_client.write(column_history_sql.ptr(), affected_rows))) {
-  } else if (affected_rows != table.get_column_count()) {
-    LOG_WARN("affected_rows not equal to column count", K(affected_rows),
-        "column_count", table.get_column_count(), K(ret));
+      return ret;
+    });
   }
   return ret;
 }

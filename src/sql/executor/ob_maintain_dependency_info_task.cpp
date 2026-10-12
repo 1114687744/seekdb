@@ -270,17 +270,15 @@ void ObMaintainDepInfoTaskQueue::run2()
               rescheduled = true;
             }
           }
-        } else {
-          const ObTableSchema &view_schema = (static_cast<ObMaintainObjDepInfoTask *> (task))->get_view_schema();
-          if (view_schema.is_valid()) {
-            // ignore ret
-            int tmp_ret = OB_SUCCESS;
-            if (OB_SUCCESS != (tmp_ret = view_info_set_.erase_refactored(view_schema.get_table_id()))) {
-            }
-          }
         }
         last_execute_time_ = ObTimeUtility::current_time();
         if (!rescheduled) {
+          auto *view_task = static_cast<ObMaintainObjDepInfoTask *>(task);
+          if (view_task->get_view_schema().is_valid() && view_task->schema_service() != nullptr) {
+            const int erase_ret = erase_view_id_from_set(*view_task->schema_service(),
+                                                       view_task->get_view_schema().get_table_id());
+            UNUSED(erase_ret);
+          }
           task->~ObAsyncTask();
           allocator_.free(task);
           task = NULL;
@@ -295,22 +293,20 @@ int process_reference_obj_table(share::schema::ObReferenceObjTable &ref_obj_tabl
                                                      const uint64_t dep_obj_id,
                                                      const share::schema::ObTableSchema *view_schema,
                                                      sql::ObMaintainDepInfoTaskQueue &task_queue,
-                                                     share::schema::ObMultiVersionSchemaService &schema_service)
+                                                     share::schema::ObMultiVersionSchemaService &schema_service,
+                                                     query::ObIRootCommandService &root_command_service)
 {
   int ret = OB_SUCCESS;
   bool write_enabled = false;
   if (OB_FAIL(share::ObShareUtil::is_server_write_enabled(write_enabled))) {
   } else if (OB_UNLIKELY(!ref_obj_table.is_inited() || !write_enabled)) {
     if (OB_INVALID_ID != dep_obj_id) {
-      OZ (task_queue.erase_view_id_from_set(dep_obj_id));
+      OZ (task_queue.erase_view_id_from_set(schema_service, dep_obj_id));
     }
   } else {
     SMART_VAR(sql::ObMaintainObjDepInfoTask, task) {
       task.bind_schema_service(schema_service);
-      if (OB_NOT_NULL(task_queue.get_root_command_service())) {
-        task.bind_root_command_service(
-            *task_queue.get_root_command_service());
-      }
+      task.bind_root_command_service(root_command_service);
       share::schema::ObReferenceObjTable::ObGetDependencyObjOp op(&task.get_insert_dep_objs(),
                               &task.get_update_dep_objs(),
                               &task.get_delete_dep_objs());
@@ -320,7 +316,7 @@ int process_reference_obj_table(share::schema::ObReferenceObjTable &ref_obj_tabl
       } else if (OB_FAIL(op.get_callback_ret())) {
       } else if (task.is_empty_task()) {
         if (OB_INVALID_ID != dep_obj_id) {
-          OZ (task_queue.erase_view_id_from_set(dep_obj_id));
+          OZ (task_queue.erase_view_id_from_set(schema_service, dep_obj_id));
         }
       } else if (task_queue.is_queue_almost_full()) {
         ret = OB_SIZE_OVERFLOW;
@@ -333,7 +329,7 @@ int process_reference_obj_table(share::schema::ObReferenceObjTable &ref_obj_tabl
   }
   if (OB_FAIL(ret) && OB_INVALID_ID != dep_obj_id) {
     int tmp_ret = OB_SUCCESS;
-    if (OB_SUCCESS != (tmp_ret = task_queue.erase_view_id_from_set(dep_obj_id))) {
+    if (OB_SUCCESS != (tmp_ret = task_queue.erase_view_id_from_set(schema_service, dep_obj_id))) {
     }
     if (OB_SIZE_OVERFLOW == ret) {
       ret = OB_SUCCESS;

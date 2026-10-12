@@ -611,7 +611,8 @@ public:
   static int check_sys_view_changed(const share::schema::ObTableSchema &old_view_schema,
                                     const share::schema::ObTableSchema &new_view_schema,
                                     bool &changed,
-                                    ObMaintainDepInfoTaskQueue &dependency_info_queue);
+                                    ObMaintainDepInfoTaskQueue &dependency_info_queue,
+                                    const share::schema::ObMultiVersionSchemaService &schema_service);
   static bool check_need_disconnect_parser_err(const int ret_code);
   static bool check_json_expr(const ObRawExpr &expr);
 

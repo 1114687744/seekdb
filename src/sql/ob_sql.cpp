@@ -76,7 +76,6 @@ int ObSql::init(common::ObITabletScan *vt_partition_service,
   } else {
     if (OB_FAIL(queue_.init(1, 512))) {
     } else {
-      queue_.bind_root_command_service(root_command_service);
       vt_partition_service_ = vt_partition_service;
       pl_engine_ = &pl_engine;
       plan_cache_access_service_ = &plan_cache_access_service;
