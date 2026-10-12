@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`。核心表定义原生读取已通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。其余名称/当前版本查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`。当前版本和索引列表查询也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证，记录见文末。名称查询和 DDL 更新、删除、分区及关系写入仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -159,3 +159,14 @@
 - `plain` 用例新增核心表/列的逐项比对，数量与客户端虚拟核心表查询核对；另新增同事务插入乱序历史、删除标记、独立事务不可见及回滚测试。它们由四件套既有原生目录 probe 自动执行。
 - `/tmp/native-schema-catalog-core-build5.log` 编译通过。`/tmp/native-schema-catalog-core-probe5.log` 的 plain/part 通过；核心目录为 22 张表、284 列，逐项核对名称、列 ID/类型、主键位置、逻辑 tablet ID；`CORE_HISTORY ... stage=read_rollback ret=0` 验证物理 row_id 与逻辑版本逆序、旧版本读取、删除标记、外部隔离及回滚，两个孩子的服务槽位均为 0。
 - `/tmp/native-schema-catalog-core-production-build1.log` 移除测试钩子后的生产编译通过；`/tmp/native-schema-catalog-core-production-ddl1.log` 通过实际 DDL、索引、父子隔离和崩溃重启。Namespace 主备回归通过，结果见 `gate-results/native-schema-catalog/native-core-standby/results.json`；覆盖刷新与回放竞争、物化/LOB 事务回放、孩子 DDL、父 TRUNCATE/DROP 历史来源、Namespace 删除准入、提升后的装载/写入和再次 fork。
+
+### 当前版本与索引列表查询接入
+
+- 核心定义读取已提交并推送 `b9b7f77ee`。
+- `get_table_schema_versions` 已接入原生目录：当前记录不存在时不输出，重复请求只输出一次，保留原接口向输出数组追加的约定。它与返回 history 最新版本及删除标记的 `get_table_latest_schema_versions` 分开。核心表从 core 单元格中选择最新可见定义，不再经过虚拟表 SQL。
+- `get_table_index_infos` 使用现有 `__all_table.idx_data_table_id` 收集候选，在同一受保护视图中回读当前记录，并检查 database_id、data_table_id 和 USER_INDEX 类型；核心表索引从同视图的 core 定义读取。返回名称复制到调用方分配器。
+- 两个生产入口沿用已建立的 Namespace lifecycle 初始化边界，普通 DDL 借用所属事务；原生方法自身不要求装载 Namespace 服务。
+- `/tmp/native-schema-catalog-current-metadata-build1.log` 编译通过；`/tmp/native-schema-catalog-current-metadata-probe1.log` 通过 typed/plain/part/drop_index/old_fk/history。版本和索引信息与客户端 SQL 核对，包括三个核心内表索引、输出数组追加、重复/不存在 ID、错误 database_id 过滤、删除索引后的空集合及历史/当前区别。
+- part 用例在未提交事务内改变索引的 data_table_id、名称和版本，验证旧归属消失、新归属可见，独立事务保持旧值，回滚后恢复。typed 用例验证新建当前表版本在自身事务、独立事务、回滚及提交后的可见性。六个冷 Namespace 的服务槽位均为 0；新断言已随既有 probe 进入四件套。
+- `/tmp/native-schema-catalog-current-metadata-production-build1.log` 移除测试钩子后的生产编译通过；`/tmp/native-schema-catalog-current-metadata-production-ddl1.log` 通过 DDL、强制内表索引、父子隔离及崩溃重启。主备回归通过，结果见 `gate-results/native-schema-catalog/native-current-metadata-standby/results.json`；包括刷新与回放竞争、物化/LOB 回放、孩子 DDL、父 TRUNCATE/DROP、删除准入、提升后装载/写入与再次 fork。
+- 本轮仍须完成表/索引/约束/外键的名称查询、mock FK 父表查询，以及完整 DDL 更新、删除、分区与关系写入。核心 tablet minor 行版本结束标记异常仍按前述 TODO 单独跟踪。

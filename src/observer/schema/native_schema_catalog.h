@@ -15,6 +15,8 @@ class ObTableSchema;
 class ObColumnSchemaV2;
 class ObSimpleTableSchemaV2;
 class ObTableLatestSchemaVersion;
+class ObSchemaIdVersion;
+class ObIndexSchemaInfo;
 struct VersionHisVal;
 } }
 namespace storage { class ObAccessService; }
@@ -85,6 +87,12 @@ public:
   int get_table_latest_schema_versions(const common::ObIArray<uint64_t> &table_ids,
       common::ObIArray<share::schema::ObTableLatestSchemaVersion> &);
   int get_original_table_version(uint64_t table_id, int64_t &schema_version);
+  // Current metadata only. Versions append once per existing requested ID;
+  // index information resets the output and owns names in the caller's arena.
+  int get_table_schema_versions(const common::ObIArray<uint64_t> &table_ids,
+      common::ObIArray<share::schema::ObSchemaIdVersion> &);
+  int get_table_index_infos(common::ObIAllocator &, uint64_t database_id,
+      uint64_t data_table_id, common::ObIArray<share::schema::ObIndexSchemaInfo> &);
   // Complete stored rows, in fixed schema order (primary key first). Writes
   // join attach()'s owner; any failure requires that owner to roll back.
   // Physical secondary indexes are maintained in the same transaction.

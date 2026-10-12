@@ -999,6 +999,105 @@ int NativeSchemaCatalog::get_original_table_version(uint64_t table_id, int64_t &
   return ret;
 }
 
+int NativeSchemaCatalog::get_table_schema_versions(const ObIArray<uint64_t> &table_ids,
+    ObIArray<ObSchemaIdVersion> &out)
+{
+  if (table_ids.empty()) { return OB_INVALID_ARGUMENT; }
+  std::set<uint64_t> ids;
+  bool has_core = false;
+  for (int64_t i = 0; i < table_ids.count(); ++i) {
+    if (table_ids.at(i) == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+    ids.insert(table_ids.at(i));
+    has_core |= is_core_table(table_ids.at(i));
+  }
+  auto append = [&](uint64_t id, int64_t version) {
+    ObSchemaIdVersion pair;
+    const int rc = pair.init(id, version);
+    return rc == OB_SUCCESS ? out.push_back(pair) : rc;
+  };
+  int ret = OB_SUCCESS;
+  if (has_core) {
+    ObArray<ObTableSchema> core;
+    ret = read_core_tables(*this, INT64_MAX, core, false);
+    for (int64_t i = 0; OB_SUCC(ret) && i < core.count(); ++i) {
+      const auto &table = core.at(i);
+      if (ids.count(table.get_table_id())) { ret = append(table.get_table_id(), table.get_schema_version()); }
+    }
+  }
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    if (is_core_table(id)) { continue; }
+    ObObj key;
+    key.set_int(id);
+    CatalogRows rows;
+    int64_t version = OB_INVALID_VERSION;
+    if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_TID, ObRowkey(&key, 1),
+                         INT64_MAX, false, 0, false, {}, false))) {
+    } else if (OB_FAIL(rows.next())) {
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    } else if (OB_FAIL(rows.get_int("schema_version", version))) {
+    } else { ret = append(id, version); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_table_index_infos(ObIAllocator &allocator, uint64_t database_id,
+    uint64_t data_table_id, ObIArray<ObIndexSchemaInfo> &out)
+{
+  out.reset();
+  if (database_id == OB_INVALID_ID || data_table_id == OB_INVALID_ID) { return OB_INVALID_ARGUMENT; }
+  auto append = [&](const ObString &name, uint64_t id, int64_t version, ObIndexType type) {
+    ObString owned_name;
+    ObIndexSchemaInfo info;
+    int rc = ob_write_string(allocator, name, owned_name, true);
+    if (rc == OB_SUCCESS) { rc = info.init(owned_name, id, version, type); }
+    return rc == OB_SUCCESS ? out.push_back(info) : rc;
+  };
+  int ret = OB_SUCCESS;
+  if (is_oceanbase_sys_database_id(database_id)) {
+    ObArray<ObTableSchema> core;
+    ret = read_core_tables(*this, INT64_MAX, core, false);
+    for (int64_t i = 0; OB_SUCC(ret) && i < core.count(); ++i) {
+      const auto &table = core.at(i);
+      if (table.get_database_id() == database_id && table.get_data_table_id() == data_table_id
+          && table.get_table_type() == USER_INDEX) {
+        ret = append(table.get_table_name_str(), table.get_table_id(),
+                     table.get_schema_version(), table.get_index_type());
+      }
+    }
+  }
+  ObObj key;
+  key.set_int(data_table_id);
+  std::set<uint64_t> ids;
+  if (OB_SUCC(ret)) {
+    ret = collect_related_ids(*this, OB_ALL_TABLE_IDX_DATA_TABLE_ID_TID,
+                             ObRowkey(&key, 1), INT64_MAX, "table_id", ids);
+  }
+  // Close the index cursor before opening a base row. Both use this operation's
+  // view, including its owner's uncommitted index/base changes.
+  for (const auto id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    key.set_int(id);
+    CatalogRows rows;
+    uint64_t database = OB_INVALID_ID, owner = OB_INVALID_ID;
+    int64_t table_type = MAX_TABLE_TYPE, index_type = INDEX_TYPE_IS_NOT, version = OB_INVALID_VERSION;
+    ObString name;
+    if (OB_FAIL(rows.open(*this, OB_ALL_TABLE_TID, ObRowkey(&key, 1),
+                         INT64_MAX, false, 0, false, {}, false))) {
+    } else if (OB_FAIL(rows.next())) {
+      if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+    } else if (OB_FAIL(rows.get_uint("database_id", database))
+               || OB_FAIL(rows.get_uint("data_table_id", owner))
+               || OB_FAIL(rows.get_int("table_type", table_type))) {
+    } else if (database != database_id || owner != data_table_id || table_type != USER_INDEX) {
+    } else if (OB_FAIL(rows.get_varchar("table_name", name))
+               || OB_FAIL(rows.get_int("schema_version", version))
+               || OB_FAIL(rows.get_int("index_type", index_type))) {
+    } else { ret = append(name, id, version, static_cast<ObIndexType>(index_type)); }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::insert_table(const ObTableSchema &table, bool history,
     bool update_object_status_ignore_version)
 {

@@ -119,6 +119,40 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     }
     if (ret == OB_SUCCESS && (!found_table || !found_column)) { ret = OB_ERR_UNEXPECTED; }
     ObArenaAllocator allocator(ObMemAttr("CoreCatalogTest"));
+    ObArray<uint64_t> ids;
+    ObArray<ObSchemaIdVersion> versions;
+    ObSchemaIdVersion sentinel;
+    if (ret == OB_SUCCESS) { ret = sentinel.init(999999999, 1); }
+    if (ret == OB_SUCCESS) { ret = versions.push_back(sentinel); }
+    for (int64_t i = 0; ret == OB_SUCCESS && i < core.count(); ++i) { ret = ids.push_back(core.at(i).get_table_id()); }
+    if (ret == OB_SUCCESS) { ret = ids.push_back(OB_ALL_TABLE_TID); }
+    if (ret == OB_SUCCESS) { ret = ids.push_back(1000000000); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_schema_versions(ids, versions); }
+    if (ret == OB_SUCCESS && (versions.count() != core.count() + 1
+        || versions.at(0).get_schema_id() != sentinel.get_schema_id())) { ret = OB_ERR_UNEXPECTED; }
+    for (int64_t i = 0; ret == OB_SUCCESS && i < core.count(); ++i) {
+      if (versions.at(i + 1).get_schema_id() != core.at(i).get_table_id()
+          || versions.at(i + 1).get_schema_version() != core.at(i).get_schema_version()) { ret = OB_ERR_UNEXPECTED; }
+    }
+    ObArray<ObIndexSchemaInfo> indexes;
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_index_infos(allocator, OB_SYS_DATABASE_ID, OB_ALL_TABLE_TID, indexes); }
+    int64_t expected_indexes = 0;
+    for (int64_t i = 0; ret == OB_SUCCESS && i < core.count(); ++i) {
+      const auto &table = core.at(i);
+      if (table.get_data_table_id() != OB_ALL_TABLE_TID || table.get_table_type() != USER_INDEX) { continue; }
+      bool found = false;
+      for (int64_t j = 0; j < indexes.count(); ++j) {
+        const auto &index = indexes.at(j);
+        if (index.get_index_id() == table.get_table_id()) {
+          found = index.get_index_name() == table.get_table_name_str()
+              && index.get_schema_version() == table.get_schema_version() && index.get_index_type() == table.get_index_type();
+        }
+      }
+      if (!found) { ret = OB_ERR_UNEXPECTED; }
+      ++expected_indexes;
+    }
+    if (ret == OB_SUCCESS && indexes.count() != expected_indexes) { ret = OB_ERR_UNEXPECTED; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_METADATA namespace=%lu indexes=%ld ret=%d\n", namespace_id, indexes.count(), ret);
     for (const uint64_t id : {OB_ALL_CORE_TABLE_TID, OB_ALL_TABLE_TID, OB_ALL_COLUMN_TID}) {
       if (ret != OB_SUCCESS) { break; }
       ObTableSchema *table = nullptr;
@@ -360,6 +394,27 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
       }
       fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CURRENT namespace=%lu table=%llu ret=%d\n",
           namespace_id, table_id, ret);
+      ObSEArray<uint64_t, 3> ids;
+      ObArray<ObSchemaIdVersion> versions;
+      if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+      if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+      if (ret == OB_SUCCESS) { ret = ids.push_back(1000000000); }
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_schema_versions(ids, versions); }
+      if (ret == OB_SUCCESS && (versions.count() != 1 || versions.at(0).get_schema_id() != table_id
+          || versions.at(0).get_schema_version() != definition->get_schema_version())) { ret = OB_ERR_UNEXPECTED; }
+      ObArray<ObIndexSchemaInfo> indexes;
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_index_infos(allocator, definition->get_database_id(), table_id, indexes); }
+      if (ret == OB_SUCCESS && indexes.count() != expected_indexes) { ret = OB_ERR_UNEXPECTED; }
+      for (int64_t i = 0; ret == OB_SUCCESS && i < indexes.count(); ++i) {
+        const auto &index = indexes.at(i);
+        fprintf(stderr, "NATIVE_SCHEMA_CATALOG_INDEX_INFO namespace=%lu id=%lu name=%.*s version=%ld type=%d\n",
+            namespace_id, index.get_index_id(), index.get_index_name().length(), index.get_index_name().ptr(),
+            index.get_schema_version(), index.get_index_type());
+      }
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CURRENT_METADATA namespace=%lu table=%llu version=%ld indexes=%ld ret=%d\n",
+          namespace_id, table_id, versions.empty() ? 0 : versions.at(0).get_schema_version(), indexes.count(), ret);
+      if (ret == OB_SUCCESS) { ret = catalog.get_table_index_infos(allocator, definition->get_database_id() + 1000000000, table_id, indexes); }
+      if (ret == OB_SUCCESS && !indexes.empty()) { ret = OB_ERR_UNEXPECTED; }
     }
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FULL namespace=%lu table=%llu ret=%d\n", namespace_id, table_id, ret);
@@ -406,6 +461,79 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS && !simple.empty()) { ret = OB_ERR_UNEXPECTED; }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_SIMPLE namespace=%lu table=%llu ret=%d\n",
         namespace_id, table_id, ret);
+  }
+  if (ret == OB_SUCCESS && name.find("_part") != std::string::npos && expected_indexes == 1) {
+    ObArenaAllocator allocator(ObMemAttr("IndexMetadataTx"));
+    ObTableSchema *definition = nullptr;
+    ret = catalog.get_table(table_id, INT64_MAX, allocator, definition,
+        observer::NativeSchemaCatalog::TableSource::CURRENT);
+    const uint64_t database_id = definition == nullptr ? OB_INVALID_ID : definition->get_database_id();
+    if (definition != nullptr) { definition->~ObTableSchema(); }
+    ObArray<ObIndexSchemaInfo> indexes;
+    if (ret == OB_SUCCESS) { ret = catalog.get_table_index_infos(allocator, database_id, table_id, indexes); }
+    if (ret == OB_SUCCESS && indexes.count() != 1) { ret = OB_ERR_UNEXPECTED; }
+    const uint64_t index_id = indexes.empty() ? OB_INVALID_ID : indexes.at(0).get_index_id();
+    const int64_t original_version = indexes.empty() ? -1 : indexes.at(0).get_schema_version();
+    const ObString original_name = indexes.empty() ? ObString() : indexes.at(0).get_index_name();
+    const uint64_t new_owner = table_id + 1000000000;
+    ObNewRow changed;
+    {
+      observer::NativeSchemaCatalog::Cursor rows;
+      ObObj key; key.set_int(index_id);
+      if (ret == OB_SUCCESS) { ret = catalog.open_prefix(OB_ALL_TABLE_TID, ObRowkey(&key, 1), rows); }
+      const ObNewRow *row = nullptr;
+      if (ret == OB_SUCCESS) { ret = rows.next(row); }
+      if (ret == OB_SUCCESS) { ret = ob_write_row(allocator, *row, changed); }
+      for (const char *field : {"data_table_id", "table_name", "schema_version"}) {
+        int64_t position = -1;
+        if (ret == OB_SUCCESS) { ret = column_index(*rows.schema(), field, position); }
+        if (ret != OB_SUCCESS) { break; }
+        if (0 == STRCMP(field, "table_name")) {
+          changed.cells_[position].set_string(ObVarcharType, ObString::make_string("__native_index_renamed"));
+        } else { changed.cells_[position].set_int(0 == STRCMP(field, "data_table_id") ? new_owner : original_version + 1); }
+      }
+    }
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    if (ret == OB_SUCCESS) { ret = native.begin(owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+    }
+    auto verify = [&](observer::NativeSchemaCatalog &reader, bool modified) {
+      ObArray<ObIndexSchemaInfo> found;
+      int rc = reader.get_table_index_infos(allocator, database_id, table_id, found);
+      if (rc == OB_SUCCESS && found.count() != (modified ? 0 : 1)) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS && !modified && (found.at(0).get_index_id() != index_id
+          || found.at(0).get_index_name() != original_name)) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS) { rc = reader.get_table_index_infos(allocator, database_id, new_owner, found); }
+      if (rc == OB_SUCCESS && found.count() != (modified ? 1 : 0)) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS && modified && (found.at(0).get_index_id() != index_id
+          || found.at(0).get_index_name() != ObString::make_string("__native_index_renamed")
+          || found.at(0).get_schema_version() != original_version + 1)) { rc = OB_ERR_UNEXPECTED; }
+      ObArray<ObSchemaIdVersion> versions;
+      ObSEArray<uint64_t, 1> ids;
+      if (rc == OB_SUCCESS) { rc = ids.push_back(index_id); }
+      if (rc == OB_SUCCESS) { rc = reader.get_table_schema_versions(ids, versions); }
+      if (rc == OB_SUCCESS && (versions.count() != 1
+          || versions.at(0).get_schema_version() != original_version + (modified ? 1 : 0))) { rc = OB_ERR_UNEXPECTED; }
+      return rc;
+    };
+    auto outside = [&]() {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      return rc == OB_SUCCESS ? verify(reader, false) : rc;
+    };
+    const char *stage = "update";
+    if (ret == OB_SUCCESS) { ret = writer.update(OB_ALL_TABLE_TID, changed); }
+    if (ret == OB_SUCCESS) { stage = "own_read"; ret = verify(writer, true); }
+    if (ret == OB_SUCCESS) { stage = "external_read"; ret = outside(); }
+    const int owner_end = owner.is_active() ? native.rollback(owner) : OB_SUCCESS;
+    const int participant_end = writer.close();
+    if (ret == OB_SUCCESS) { ret = owner_end == OB_SUCCESS ? participant_end : owner_end; }
+    if (ret == OB_SUCCESS) { stage = "read_rollback"; ret = outside(); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_INDEX_METADATA_TX namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
   if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
     // A catalog attached to a native owner must see its uncommitted metadata;
@@ -684,8 +812,15 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     };
     auto verify = [&](observer::NativeSchemaCatalog &reader, bool present) {
       ObArenaAllocator read_allocator(ObMemAttr("CatalogTypedRd"));
+      ObArray<ObSchemaIdVersion> versions;
+      ObSEArray<uint64_t, 1> ids;
+      int rc = ids.push_back(synthetic_id);
+      if (rc == OB_SUCCESS) { rc = reader.get_table_schema_versions(ids, versions); }
+      if (rc == OB_SUCCESS && (versions.count() != (present ? 1 : 0)
+          || (present && versions.at(0).get_schema_version() != definition->get_schema_version()))) { rc = OB_ERR_UNEXPECTED; }
+      if (rc != OB_SUCCESS) { return rc; }
       ObTableSchema *found = nullptr;
-      int rc = reader.get_table(synthetic_id, INT64_MAX - 1, read_allocator, found);
+      rc = reader.get_table(synthetic_id, INT64_MAX - 1, read_allocator, found);
       if (rc != OB_SUCCESS && present) { fprintf(stderr, "NATIVE_SCHEMA_CATALOG_TYPED_READ table=%ld ret=%d\n", synthetic_id, rc); }
       if (!present) { return rc == OB_ERR_SCHEMA_HISTORY_EMPTY ? OB_SUCCESS : OB_ERR_UNEXPECTED; }
       if (rc == OB_SUCCESS && (!found->is_valid() || found->get_column_count() != definition->get_column_count()

@@ -88,6 +88,9 @@ def run(binary, selected=None):
                                     f'WHERE table_id={table_id}')[0][0]
             original = experiment.sql(f'SELECT ori_schema_version FROM oceanbase.__all_ori_schema_version '
                                       f'WHERE table_id={table_id}')[0][0]
+            current_version = experiment.sql(f'SELECT schema_version FROM oceanbase.__all_table WHERE table_id={table_id}')[0][0]
+            current_indexes = experiment.sql('SELECT table_id, table_name, schema_version, index_type FROM oceanbase.__all_table '
+                                             f'WHERE data_table_id={table_id} AND index_type>0')
             if label == 'plain':
                 core_tables = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_all_table '
                                              'WHERE table_id<>1')[0][0]
@@ -110,6 +113,14 @@ def run(binary, selected=None):
             trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
             assert (f'NATIVE_SCHEMA_CATALOG_VERSIONS namespace={child_id} count={min(16, version_count)} '
                     f'min={minimum} latest={latest} original={original} ret=0') in trace
+            assert (f'NATIVE_SCHEMA_CATALOG_CURRENT_METADATA namespace={child_id} table={table_id} '
+                    f'version={current_version} indexes={len(current_indexes)} ret=0') in trace, trace[-2000:]
+            for index_id, index_name, version, index_type in current_indexes:
+                assert (f'NATIVE_SCHEMA_CATALOG_INDEX_INFO namespace={child_id} id={index_id} name={index_name} '
+                        f'version={version} type={index_type}') in trace, current_indexes
+            if label == 'part':
+                assert (f'NATIVE_SCHEMA_CATALOG_INDEX_METADATA_TX namespace={child_id} '
+                        'stage=read_rollback ret=0') in trace, trace[-2000:]
             if label == 'indexed':
                 trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
                 assert f'NATIVE_SCHEMA_CATALOG_INDEXED namespace={child_id} stage=erase_committed ret=0' in trace

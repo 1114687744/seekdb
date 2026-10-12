@@ -6311,12 +6311,21 @@ int ObSchemaServiceSQLImpl::get_table_schema_versions(
   int ret = OB_SUCCESS;
   ObArray<uint64_t> core_table_ids;
   ObArray<uint64_t> other_table_ids;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   if (OB_UNLIKELY(!check_inner_stat())) {
     ret = OB_NOT_INIT;
     LOG_WARN("check inner stat fail", KR(ret));
   } else if (OB_UNLIKELY(table_ids.count() <= 0)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", KR(ret), "cnt", table_ids.count());
+  } else if (lifecycle == nullptr) {
+    ret = OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    ret = with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_table_schema_versions(table_ids, versions);
+    });
   } else if (OB_FAIL(other_table_ids.reserve(table_ids.count()))) {
   } else {
     ObSqlString sql;
@@ -6465,6 +6474,8 @@ int ObSchemaServiceSQLImpl::get_table_index_infos(
   int ret = OB_SUCCESS;
   ObSqlString sql;
   index_infos.reset();
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
   #define GET_INDEX_INFO_SQL "SELECT table_name, table_id, schema_version, index_type FROM %s " \
                              "WHERE 0 = %lu %% 1 AND database_id = %lu AND data_table_id = %lu " \
                              "AND table_type = %d "
@@ -6475,6 +6486,13 @@ int ObSchemaServiceSQLImpl::get_table_index_infos(
              || OB_INVALID_ID == data_table_id)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid arg", KR(ret), KR(ret), K(database_id), K(data_table_id));
+  } else if (lifecycle == nullptr) {
+    return OB_NOT_INIT;
+  } else if (!lifecycle->is_bootstrapping()) {
+    ObRefreshSchemaStatus status;
+    return with_schema_catalog(sql_client, status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_table_index_infos(allocator, database_id, data_table_id, index_infos);
+    });
   } else if (is_oceanbase_sys_database_id(database_id)) {
     if (OB_FAIL(sql.assign_fmt(
                 "SELECT * FROM "
