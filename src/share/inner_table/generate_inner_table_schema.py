@@ -3100,7 +3100,22 @@ private:
     if is_core_table(table_id) or is_sys_table(table_id):
       method = table_name.replace('$', '_').lower().strip('_')
       h_f.write("    case %d: return ObInnerTableSchema::%s_schema;\n" % (table_id, method))
+  for index in new_index_name_ids:
+    if is_sys_index_table(index[1]):
+      method = index[2].replace('$', '_').strip('_').lower() + '_' + index[0].lower()
+      h_f.write("    case %d: return ObInnerTableSchema::%s_schema;\n" % (index[1], method))
   h_f.write("    default: return nullptr;\n  }\n}\n\n")
+
+  # Generate physical index ownership from the same declarations as creation.
+  h_f.write("inline const uint64_t *fixed_inner_table_indexes(uint64_t table_id, int64_t &count)\n{\n  switch (table_id) {\n")
+  indexes_by_table = {}
+  for index in new_index_name_ids:
+    if is_sys_index_table(index[1]):
+      indexes_by_table.setdefault(int(index[3]), []).append(index[1])
+  for table_id, indexes in sorted(indexes_by_table.items()):
+    h_f.write("    case %d: { static const uint64_t ids[] = {%s}; count = %d; return ids; }\n"
+              % (table_id, ', '.join(str(i) for i in indexes), len(indexes)))
+  h_f.write("    default: count = 0; return nullptr;\n  }\n}\n\n")
 
   method_name = "  ObInnerTableSchema::{0}_schema,\n"
   h_f.write("const schema_create_func all_core_table_schema_creator [] = {\n")

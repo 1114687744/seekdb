@@ -2,6 +2,8 @@
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "observer/schema/native_schema_catalog.h"
 #include "observer/schema/ob_schema_retrieve_utils.h"
+#include "share/schema/schema_catalog_fields.h"
+#include "share/schema/schema_catalog_row.h"
 #include <unordered_map>
 #include "rootserver/fork_table/namespace_tablet_access.h"
 #include "share/inner_table/ob_inner_table_schema.h"
@@ -9,6 +11,9 @@
 #include "storage/tablet/ob_tablet.h"
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tx/ob_trans_service.h"
+#include "storage/tx_storage/ob_access_service.h"
+#include "common/mysqlclient/ob_mysql_transaction.h"
+#include "query/session/ob_inner_sql_connection_access.h"
 
 namespace oceanbase {
 namespace observer {
@@ -17,22 +22,119 @@ using namespace share::schema;
 using storage::NativeInnerTable;
 using storage::NamespaceForkKernelPrototype;
 
+struct NativeSchemaCatalog::TableState
+{
+  ObArenaAllocator allocator{ObMemAttr("NativeCatalog")};
+  ObTableSchema schema{&allocator};
+  ObSEArray<ObColDesc, 8> columns;
+  ns::TabletAccess access;
+  NativeInnerTable::Table table;
+  NativeInnerTable::ReadSource source;
+  TO_STRING_KV("table_id", schema.get_table_id(), "tablet", source.tablet);
+
+  int prepare(NativeInnerTable &native, uint64_t namespace_id, uint64_t inner_table_id,
+      const ns::NamespaceCatalogViews::Handle &view, bool write)
+  {
+    const auto creator = share::fixed_inner_table_creator(inner_table_id);
+    if (creator == nullptr) { return OB_INVALID_ARGUMENT; }
+    int ret = creator(schema);
+    if (OB_SUCC(ret)) {
+      ret = write
+          ? access.prepare_write(namespace_id, inner_table_id, schema.get_tablet_id(),
+                                 data_plane::ObNamespaceAccessMode::LEASED)
+          : access.prepare_read(namespace_id, inner_table_id, schema.get_tablet_id(),
+                                data_plane::ObNamespaceAccessMode::LEASED, view);
+    }
+    if (OB_SUCC(ret)) {
+      source.tablet = access.tablet();
+      if (access.cap_scn() > 0) { ret = source.snapshot_cap.convert_for_tx(access.cap_scn()); }
+    }
+    // Fixed layout comes from code, installed version from physical metadata.
+    storage::ObTabletHandle handle;
+    if (OB_SUCC(ret)) {
+      ret = storage::ObTabletCreateDeleteHelper::check_and_get_tablet(
+          storage::ObTabletMapKey(source.tablet), handle, 0,
+          storage::ObMDSGetTabletMode::READ_WITHOUT_CHECK,
+          transaction::ObTransVersion::MAX_TRANS_VERSION);
+    }
+    int64_t version = 0;
+    if (OB_SUCC(ret)) { ret = handle.get_obj()->get_newest_schema_version(version); }
+    if (OB_SUCC(ret)) {
+      schema.set_schema_version(version);
+      ret = schema.get_column_ids(columns);
+    }
+    if (OB_SUCC(ret)) { ret = native.bind(table, access.schema_tablet(), schema); }
+    return ret;
+  }
+
+  int project(const ObNewRow &row, const TableState &index, ObIArray<ObObj> &cells) const
+  {
+    cells.reuse();
+    if (row.count_ != columns.count() || row.cells_ == nullptr) { return OB_INVALID_ARGUMENT; }
+    int ret = OB_SUCCESS;
+    for (const auto &column : index.columns) {
+      if (OB_FAIL(ret)) { break; }
+      int64_t position = -1;
+      for (int64_t i = 0; i < columns.count(); ++i) {
+        if (columns.at(i).col_id_ == column.col_id_) { position = i; break; }
+      }
+      if (position < 0) { ret = OB_NOT_SUPPORTED; }
+      else { ret = cells.push_back(row.cells_[position]); }
+    }
+    return ret;
+  }
+};
+
 struct NativeSchemaCatalog::State
 {
   State(uint64_t id, storage::ObAccessService &access, transaction::ObTransService &transactions)
       : namespace_id(id), transactions(transactions), native(access, transactions) {}
+  ~State()
+  {
+    // A borrowed owner has already ended; owned reads roll back before leases
+    // and views are released, including when the last cursor owns this state.
+    if (transaction.is_active()) {
+      const int ret = transaction.is_borrowed() ? native.detach(transaction) : native.rollback(transaction);
+      if (ret != OB_SUCCESS) { LOG_WARN("native catalog cleanup failed", K(ret)); }
+    }
+  }
   const uint64_t namespace_id;
   transaction::ObTransService &transactions;
   NativeInnerTable native;
   // The transaction ends before the protected directory view is released.
   ns::NamespaceCatalogViews::Handle view;
   NativeInnerTable::Transaction transaction;
+  std::unordered_map<uint64_t, std::unique_ptr<TableState>> writers;
+  bool writable = false;
+  int64_t statement_time = 0;
   int64_t cursors = 0;
 };
 
 NativeSchemaCatalog::NativeSchemaCatalog(uint64_t id, storage::ObAccessService &access,
     transaction::ObTransService &transactions) : state_(new State(id, access, transactions)) {}
 NativeSchemaCatalog::~NativeSchemaCatalog() { close(); }
+
+int NativeSchemaCatalog::with_ddl_transaction(ObISQLClient &client, int64_t deadline,
+    const std::function<int(NativeSchemaCatalog &)> &operation)
+{
+  auto *owner = dynamic_cast<ObMySQLTransaction *>(&client);
+  if (owner == nullptr || !owner->is_started() || !operation) { return OB_INVALID_ARGUMENT; }
+  auto *access = share::server_service<storage::ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  std::shared_ptr<NativeSchemaCatalog> catalog(new (std::nothrow)
+      NativeSchemaCatalog(owner->target_namespace(), *access, *transactions));
+  if (!catalog) { return OB_ALLOCATE_MEMORY_FAILED; }
+  int ret = owner->retain_until_end(catalog);
+  if (OB_SUCC(ret)) {
+    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(owner->get_connection(),
+        [&](transaction::ObTxDesc &native) {
+      const int rc = catalog->attach(native, deadline);
+      return rc == OB_SUCCESS ? operation(*catalog) : rc;
+    });
+  }
+  return ret;
+}
 
 int NativeSchemaCatalog::begin_read(int64_t deadline, bool weak)
 {
@@ -78,6 +180,7 @@ int NativeSchemaCatalog::attach(transaction::ObTxDesc &owner, int64_t deadline)
     }, s.view);
   });
   if (ret != OB_SUCCESS) { s.view.reset(); }
+  else { s.writable = !owner.is_rdonly(); s.statement_time = ObTimeUtility::current_time(); }
   return ret;
 }
 
@@ -88,11 +191,7 @@ struct NativeSchemaCatalog::Cursor::State
   ~State() { --operation->cursors; }
   // The operation and its directory view outlive the physical scan and lease.
   std::shared_ptr<NativeSchemaCatalog::State> operation;
-  ObArenaAllocator allocator{ObMemAttr("NativeCatalog")};
-  ObTableSchema schema{&allocator};
-  ns::TabletAccess access;
-  NativeInnerTable::Table table;
-  NativeInnerTable::ReadSource source;
+  TableState bound;
   NativeInnerTable::Cursor scan;
 };
 
@@ -110,52 +209,42 @@ int NativeSchemaCatalog::Cursor::close()
   return ret;
 }
 const ObTableSchema *NativeSchemaCatalog::Cursor::schema() const
-{ return state_ ? &state_->schema : nullptr; }
+{ return state_ ? &state_->bound.schema : nullptr; }
 
 int NativeSchemaCatalog::prepare_scan(uint64_t inner_table_id, Cursor &cursor)
 {
   auto &s = *state_;
-  const auto creator = share::fixed_inner_table_creator(inner_table_id);
   if (cursor.state_) { return OB_INIT_TWICE; }
   if (!s.transaction.is_active() || !s.view) { return OB_NOT_INIT; }
-  if (creator == nullptr) { return OB_INVALID_ARGUMENT; }
   std::unique_ptr<Cursor::State> prepared(new (std::nothrow) Cursor::State(state_));
   if (!prepared) { return OB_ALLOCATE_MEMORY_FAILED; }
-  auto &c = *prepared;
-  int ret = creator(c.schema);
-  if (OB_SUCC(ret)) {
-    ret = c.access.prepare_read(s.namespace_id, inner_table_id, c.schema.get_tablet_id(),
-        data_plane::ObNamespaceAccessMode::LEASED, s.view);
+  const int ret = prepared->bound.prepare(s.native, s.namespace_id, inner_table_id, s.view, false);
+  if (ret == OB_SUCCESS) { cursor.state_ = std::move(prepared); }
+  return ret;
+}
+
+int NativeSchemaCatalog::prepare_write(uint64_t inner_table_id, TableState *&out)
+{
+  out = nullptr;
+  auto &s = *state_;
+  if (!s.transaction.is_active() || !s.view) { return OB_NOT_INIT; }
+  if (!s.writable || s.cursors != 0) { return OB_INVALID_ARGUMENT; }
+  const auto found = s.writers.find(inner_table_id);
+  if (found != s.writers.end()) { out = found->second.get(); return OB_SUCCESS; }
+  std::unique_ptr<TableState> prepared(new (std::nothrow) TableState());
+  if (!prepared) { return OB_ALLOCATE_MEMORY_FAILED; }
+  const int ret = prepared->prepare(s.native, s.namespace_id, inner_table_id, s.view, true);
+  if (ret == OB_SUCCESS) {
+    out = prepared.get();
+    s.writers.emplace(inner_table_id, std::move(prepared));
   }
-  if (OB_SUCC(ret)) {
-    c.source.tablet = c.access.tablet();
-    if (c.access.cap_scn() > 0) { ret = c.source.snapshot_cap.convert_for_tx(c.access.cap_scn()); }
-  }
-  // The compiled layout is fixed in this build. Obtain its installed version
-  // from physical metadata, without recursively reading the schema catalog.
-  storage::ObTabletHandle handle;
-  if (OB_SUCC(ret)) {
-    ret = storage::ObTabletCreateDeleteHelper::check_and_get_tablet(
-        storage::ObTabletMapKey(c.source.tablet), handle, 0,
-        storage::ObMDSGetTabletMode::READ_WITHOUT_CHECK,
-        transaction::ObTransVersion::MAX_TRANS_VERSION);
-  }
-  if (OB_SUCC(ret)) {
-    int64_t version = 0;
-    if (OB_FAIL(handle.get_obj()->get_newest_schema_version(version))) {
-    } else {
-      c.schema.set_schema_version(version);
-      ret = s.native.bind(c.table, c.access.schema_tablet(), c.schema);
-    }
-  }
-  if (OB_SUCC(ret)) { cursor.state_ = std::move(prepared); }
   return ret;
 }
 
 int NativeSchemaCatalog::start_scan(const ObNewRange &range, Cursor &cursor, bool reverse)
 {
   auto &c = *cursor.state_;
-  const int ret = state_->native.open_scan(state_->transaction, c.table, range, c.scan, reverse, &c.source);
+  const int ret = state_->native.open_scan(state_->transaction, c.bound.table, range, c.scan, reverse, &c.bound.source);
   if (ret != OB_SUCCESS) { cursor.close(); }
   return ret;
 }
@@ -496,6 +585,143 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     }
   }
   if (OB_SUCC(ret)) { out = table; }
+  else if (table != nullptr) { table->~ObTableSchema(); }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_table(const ObTableSchema &table, bool history,
+    bool update_object_status_ignore_version)
+{
+  const uint64_t inner = history ? OB_ALL_TABLE_HISTORY_TID : OB_ALL_TABLE_TID;
+  TableState *target = nullptr;
+  int ret = prepare_write(inner, target);
+  SchemaCatalogRow fields;
+  ObNewRow row;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = SchemaCatalogFields::table(table, update_object_status_ignore_version, fields, history); }
+  if (OB_SUCC(ret) && history) { ret = fields.add_column("is_deleted", 0); }
+  if (OB_SUCC(ret)) { ret = fields.finish(row); }
+  if (OB_SUCC(ret)) { ret = insert(inner, row); }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_column(const ObColumnSchemaV2 &column, bool history)
+{
+  const uint64_t inner = history ? OB_ALL_COLUMN_HISTORY_TID : OB_ALL_COLUMN_TID;
+  TableState *target = nullptr;
+  int ret = prepare_write(inner, target);
+  SchemaCatalogRow fields;
+  ObNewRow row;
+  if (OB_SUCC(ret)) { ret = fields.init(target->schema, state_->statement_time); }
+  if (OB_SUCC(ret)) { ret = SchemaCatalogFields::column(column, fields, history); }
+  if (OB_SUCC(ret) && history) { ret = fields.add_column("is_deleted", 0); }
+  if (OB_SUCC(ret)) { ret = fields.finish(row); }
+  if (OB_SUCC(ret)) { ret = insert(inner, row); }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert_columns(const ObTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  for (auto it = table.column_begin(); OB_SUCC(ret) && it != table.column_end(); ++it) {
+    ObColumnSchemaV2 column;
+    if (it == nullptr || *it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    else { ret = column.assign(**it); }
+    if (OB_SUCC(ret)) {
+      column.set_schema_version(table.get_schema_version());
+      column.set_table_id(table.get_table_id());
+      ret = insert_column(column, false);
+    }
+    if (OB_SUCC(ret)) { ret = insert_column(column, true); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::insert(uint64_t inner_table_id, const ObNewRow &row)
+{
+  bool existed = false;
+  return mutate(inner_table_id, row, Mutation::INSERT, existed);
+}
+
+int NativeSchemaCatalog::update(uint64_t inner_table_id, const ObNewRow &row)
+{
+  bool existed = false;
+  return mutate(inner_table_id, row, Mutation::UPDATE, existed);
+}
+
+int NativeSchemaCatalog::erase(uint64_t inner_table_id, const ObRowkey &key, bool &existed)
+{
+  ObNewRow row;
+  row.assign(const_cast<ObObj *>(key.get_obj_ptr()), key.get_obj_cnt());
+  return mutate(inner_table_id, row, Mutation::ERASE, existed);
+}
+
+int NativeSchemaCatalog::mutate(uint64_t inner_table_id, const ObNewRow &row,
+    Mutation operation, bool &existed)
+{
+  existed = false;
+  auto &s = *state_;
+  TableState *base = nullptr;
+  int ret = prepare_write(inner_table_id, base);
+  ObSEArray<TableState *, 4> indexes;
+  if (OB_SUCC(ret) && (base->schema.is_index_table() || row.cells_ == nullptr
+      || row.projector_size_ != 0 || row.count_ != (operation == Mutation::ERASE
+          ? base->schema.get_rowkey_column_num() : base->columns.count()))) {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  int64_t count = 0;
+  const uint64_t *ids = share::fixed_inner_table_indexes(inner_table_id, count);
+  // Admit every physical target before modifying any row. A missing or
+  // unsupported index must fail the whole owner, never leave an unmaintained index.
+  for (int64_t i = 0; OB_SUCC(ret) && i < count; ++i) {
+    TableState *index = nullptr;
+    if (OB_FAIL(prepare_write(ids[i], index))) {
+    } else if (!index->schema.is_index_table() || index->schema.get_data_table_id() != inner_table_id) {
+      ret = OB_ERR_UNEXPECTED;
+    } else { ret = indexes.push_back(index); }
+  }
+  ObArenaAllocator allocator(ObMemAttr("CatalogMutation"));
+  ObNewRow old;
+  if (OB_SUCC(ret) && operation != Mutation::INSERT) {
+    const ObRowkey key(row.cells_, base->schema.get_rowkey_column_num());
+    ret = s.native.get_for_update(s.transaction, base->table, key, allocator, old);
+    existed = ret == OB_SUCCESS;
+    if (ret == OB_ENTRY_NOT_EXIST && operation == Mutation::ERASE) { return OB_SUCCESS; }
+  }
+  if (OB_SUCC(ret)) {
+    if (operation == Mutation::INSERT) { ret = s.native.insert(s.transaction, base->table, row); }
+    else if (operation == Mutation::UPDATE) { ret = s.native.update(s.transaction, base->table, row); }
+    else {
+      ret = s.native.erase(s.transaction, base->table,
+          ObRowkey(row.cells_, base->schema.get_rowkey_column_num()), existed);
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < indexes.count(); ++i) {
+    auto &index = *indexes.at(i);
+    ObSEArray<ObObj, 8> old_cells, new_cells;
+    ObNewRow previous, next;
+    if (operation != Mutation::INSERT && OB_FAIL(base->project(old, index, old_cells))) {
+    } else if (operation != Mutation::ERASE && OB_FAIL(base->project(row, index, new_cells))) {
+    }
+    previous.assign(old_cells.get_data(), old_cells.count());
+    next.assign(new_cells.get_data(), new_cells.count());
+    bool unchanged = operation == Mutation::UPDATE;
+    for (int64_t j = 0; OB_SUCC(ret) && unchanged && j < previous.count_; ++j) {
+      const auto &a = previous.cells_[j];
+      const auto &b = next.cells_[j];
+      // A collation-equal key may still change the bytes returned by a
+      // covering index (e.g. a case-only rename).
+      unchanged = a.is_string_type() && b.is_string_type()
+          ? a.get_string() == b.get_string() : a == b;
+    }
+    if (OB_SUCC(ret) && unchanged) { continue; }
+    if (OB_SUCC(ret) && operation != Mutation::INSERT) {
+      ret = s.native.erase_index_row(s.transaction, index.table, previous);
+    }
+    if (OB_SUCC(ret) && operation != Mutation::ERASE) {
+      ret = s.native.insert(s.transaction, index.table, next);
+    }
+  }
   return ret;
 }
 
@@ -505,7 +731,7 @@ int NativeSchemaCatalog::close()
   if (s.cursors != 0) { return OB_INVALID_ARGUMENT; }
   const int ret = !s.transaction.is_active() ? OB_SUCCESS
       : s.transaction.is_borrowed() ? s.native.detach(s.transaction) : s.native.rollback(s.transaction);
-  if (ret == OB_SUCCESS) { s.view.reset(); }
+  if (ret == OB_SUCCESS) { s.writers.clear(); s.writable = false; s.view.reset(); }
   return ret;
 }
 

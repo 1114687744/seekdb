@@ -9,7 +9,8 @@
 #include "namespace/catalog.h"
 
 namespace oceanbase {
-namespace share { namespace schema { class ObTableSchema; } }
+namespace common { class ObISQLClient; }
+namespace share { namespace schema { class ObTableSchema; class ObColumnSchemaV2; } }
 namespace storage { class ObAccessService; }
 namespace transaction { class ObTransService; class ObTxDesc; }
 namespace observer {
@@ -40,6 +41,11 @@ public:
   NativeSchemaCatalog(uint64_t namespace_id, storage::ObAccessService &,
                       transaction::ObTransService &);
   ~NativeSchemaCatalog();
+  // Execute in an active DDL owner and retain the directory operation through
+  // commit/rollback. This rejects a standalone SQL proxy; it never starts an
+  // independent transaction. Namespace is the owner's explicit target.
+  static int with_ddl_transaction(common::ObISQLClient &, int64_t deadline,
+      const std::function<int(NativeSchemaCatalog &)> &);
   int begin_read(int64_t deadline, bool weak = false);
   // An old snapshot must already be protected by this view's owner.
   int begin_read(int64_t deadline, const ns::NamespaceCatalogViews::Handle &view);
@@ -53,10 +59,24 @@ public:
   int open_prefix(uint64_t inner_table_id, const common::ObRowkey &prefix, Cursor &, bool reverse = false);
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
                 share::schema::ObTableSchema *&);
+  // Complete stored rows, in fixed schema order (primary key first). Writes
+  // join attach()'s owner; any failure requires that owner to roll back.
+  // Physical secondary indexes are maintained in the same transaction.
+  int insert(uint64_t inner_table_id, const common::ObNewRow &);
+  int update(uint64_t inner_table_id, const common::ObNewRow &);
+  int erase(uint64_t inner_table_id, const common::ObRowkey &, bool &existed);
+  int insert_table(const share::schema::ObTableSchema &, bool history,
+                   bool update_object_status_ignore_version = false);
+  int insert_column(const share::schema::ObColumnSchemaV2 &, bool history);
+  int insert_columns(const share::schema::ObTableSchema &);
   int close();
   const ns::NamespaceCatalogViews::Handle &view() const;
 private:
   struct State;
+  struct TableState;
+  int prepare_write(uint64_t inner_table_id, TableState *&);
+  enum class Mutation { INSERT, UPDATE, ERASE };
+  int mutate(uint64_t inner_table_id, const common::ObNewRow &, Mutation, bool &existed);
   int prepare_scan(uint64_t inner_table_id, Cursor &);
   int start_scan(const common::ObNewRange &, Cursor &, bool reverse);
   std::shared_ptr<State> state_;

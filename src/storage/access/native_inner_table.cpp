@@ -95,7 +95,8 @@ int NativeInnerTable::bind(Table &table, const ObTabletID &tablet_id, const ObTa
   } else if (!tablet_id.is_valid() || schema.get_table_id() == OB_INVALID_ID
              || schema.get_schema_version() <= 0 || schema.get_rowkey_column_num() <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (schema.is_partitioned_table() || schema.is_index_table()
+  } else if (schema.is_partitioned_table()
+             || (schema.is_index_table() && schema.get_index_type() != INDEX_TYPE_NORMAL_LOCAL)
              || schema.get_index_tid_count() != 0 || schema.has_generated_column()
              || schema.get_constraint_count() != 0 || schema.get_trigger_list().count() != 0
              || schema.get_foreign_key_infos().count() != 0) {
@@ -356,7 +357,8 @@ int NativeInnerTable::check_cells(const Table &table, const ObObj *cells, int64_
     const auto *column = table.state_->schema.get_column_schema(desc.col_id_);
     if (bounds && (cell.is_min_value() || cell.is_max_value())) { continue; }
     if (cell.is_null()) {
-      if (i < table.state_->schema.get_rowkey_column_num() || !column->is_nullable()) {
+      if (!column->is_nullable()
+          || (i < table.state_->schema.get_rowkey_column_num() && !table.state_->schema.is_index_table())) {
         return OB_INVALID_ARGUMENT;
       }
     } else if (cell.get_type() != desc.col_type_.get_type()
@@ -695,6 +697,18 @@ int NativeInnerTable::erase(Transaction &tx, const Table &table, const ObRowkey 
   existed = ret == OB_SUCCESS;
   if (ret == OB_ENTRY_NOT_EXIST) { ret = OB_SUCCESS; }
   else if (OB_SUCC(ret)) { ret = write(tx, table, old_row, Write::ERASE); }
+  return ret;
+}
+
+int NativeInnerTable::erase_index_row(Transaction &tx, const Table &table, const ObNewRow &row)
+{
+  int ret = check_table(table);
+  if (OB_SUCC(ret) && (!table.state_->schema.is_index_table()
+      || table.state_->schema.get_index_type() != INDEX_TYPE_NORMAL_LOCAL
+      || table.state_->schema.has_lob_column(false /* ignore_unused_column */))) {
+    ret = OB_NOT_SUPPORTED;
+  }
+  if (OB_SUCC(ret)) { ret = write(tx, table, row, Write::ERASE); }
   return ret;
 }
 

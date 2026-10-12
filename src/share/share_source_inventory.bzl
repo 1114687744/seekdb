@@ -430,6 +430,7 @@ SHARE_UNITY_GROUPS = [
             "src/share/schema/ob_sys_variable_sql_service.cpp",
             "src/share/schema/ob_table_iter.cpp",
             "src/share/schema/ob_table_sql_service.cpp",
+            "src/share/schema/schema_catalog_row.cpp",
             "src/share/schema/ob_trigger_info.cpp",
             "src/share/schema/ob_trigger_mgr.cpp",
             "src/share/schema/ob_trigger_sql_service.cpp",

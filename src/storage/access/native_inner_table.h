@@ -174,6 +174,10 @@ public:
   // storing LOBs select insert/update within their owning transaction.
   int put(Transaction &, const Table &, const common::ObNewRow &);
   int erase(Transaction &, const Table &, const common::ObRowkey &, bool &existed);
+  // Normal local indexes are serialized by their base row, not index locks.
+  // The caller holds that row's write protection in this transaction and
+  // supplies its old projected index row. LOB-bearing indexes are unsupported.
+  int erase_index_row(Transaction &, const Table &, const common::ObNewRow &);
 
 private:
   enum class Write { INSERT, PUT, UPDATE, ERASE, LOCK };

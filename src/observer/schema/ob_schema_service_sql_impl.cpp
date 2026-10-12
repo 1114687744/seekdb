@@ -916,27 +916,17 @@ int ObSchemaServiceSQLImpl::get_full_table_schema_from_inner_table(
     ObArenaAllocator &allocator,
     ObMySQLTransaction &trans)
 {
-  auto *access = share::server_service<storage::ObAccessService>();
-  auto *transactions = share::server_service<transaction::ObTransService>();
-  if (!check_inner_stat() || access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
-  // This entry is a strong DDL reread in an active owner, not a standalone
-  // history lookup. A weak historical timestamp needs its own protected view.
-  if (!trans.is_started() || schema_status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
-  std::shared_ptr<observer::NativeSchemaCatalog> catalog(new (std::nothrow)
-      observer::NativeSchemaCatalog(trans.target_namespace(), *access, *transactions));
-  if (!catalog) { return OB_ALLOCATE_MEMORY_FAILED; }
-  int ret = trans.retain_until_end(catalog);
-  if (OB_SUCC(ret)) {
-    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-        trans.get_connection(), [&](transaction::ObTxDesc &native) {
-      ObTableSchema *definition = nullptr;
-      int rc = catalog->attach(native, THIS_WORKER.get_timeout_ts());
-      if (rc == OB_SUCCESS) { rc = catalog->get_table(table_id, INT64_MAX - 1, allocator, definition); }
-      if (rc == OB_SUCCESS) { rc = table_schema.assign(*definition); }
-      return rc;
-    });
-  }
-  return ret;
+  if (!check_inner_stat()) { return OB_NOT_INIT; }
+  // A weak historical timestamp requires a separately protected directory view.
+  if (schema_status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
+  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    ObTableSchema *definition = nullptr;
+    int ret = catalog.get_table(table_id, INT64_MAX - 1, allocator, definition);
+    if (OB_SUCC(ret)) { ret = table_schema.assign(*definition); }
+    if (definition != nullptr) { definition->~ObTableSchema(); }
+    return ret;
+  });
 }
 
 
