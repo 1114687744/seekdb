@@ -13,6 +13,10 @@ def run(binary, selected=None):
     try:
         experiment.start()
         cases = [
+            ('typed', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
+             "u BIGINT UNSIGNED DEFAULT 18446744073709551615, n INT DEFAULT NULL, "
+             "e VARCHAR(100) DEFAULT '', c ENUM('a','b') DEFAULT 'b'", '', (6, 0, 0, 0, 0, 0)),
+            ('indexed', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('plain', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
              "CONSTRAINT ck CHECK (id >= 0)", ' PARTITION BY HASH(id) PARTITIONS 8', (2, 8, 1, 1, 0, 0)),
@@ -66,6 +70,12 @@ def run(binary, selected=None):
                         for line in log.read_text(errors='replace').splitlines()
                         if f'NATIVE_SCHEMA_CATALOG_FULL namespace={child_id} table={table_id}' in line]
             assert any('ret=0' in line for line in evidence), evidence
+            if label == 'indexed':
+                trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
+                assert f'NATIVE_SCHEMA_CATALOG_INDEXED namespace={child_id} stage=erase_committed ret=0' in trace
+            if label == 'typed':
+                trace = '\n'.join(log.read_text(errors='replace') for log in (experiment.base / 'log').glob('seekdb.log*'))
+                assert f'NATIVE_SCHEMA_CATALOG_TYPED namespace={child_id} stage=committed ret=0' in trace
             if label == 'plain':
                 borrowed = [line for log in (experiment.base / 'log').glob('seekdb.log*')
                             for line in log.read_text(errors='replace').splitlines()
@@ -81,7 +91,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('plain', 'part', 'fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index'))
+    parser.add_argument('--case', action='append', choices=('typed', 'indexed', 'plain', 'part', 'fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

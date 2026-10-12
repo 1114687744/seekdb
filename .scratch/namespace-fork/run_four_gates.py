@@ -92,6 +92,7 @@ gates = [
     ]),
     ('sql', [[tools / 'namespace_sql_worker_prototype.py', '--binary', binary, '--case', 'full']]),
     ('direct', [
+        [local / 'native_schema_catalog_ddl_probe.py', '--binary', binary],
         [local / 'native_scan_probe.py', '--binary', binary],
         [local / 'large_partition_fork_probe.py', '--binary', binary],
         [local / 'freeze_preparation_probe.py', '--binary', binary, '--case', 'large'],
