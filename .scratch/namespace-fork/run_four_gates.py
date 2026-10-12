@@ -12,6 +12,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', required=True, help='production binary without local test hooks')
 parser.add_argument('--native-probe-binary', required=True, help='same source revision, built with gate_probe_injection.py enable (native, shared transaction, preparation, identity, DDL commit and cold materialization hooks)')
 parser.add_argument('--log-dir', type=Path, default=local / 'gate-results' / datetime.now().strftime('%Y%m%d-%H%M%S'))
+parser.add_argument('--profile', choices=('full', 'native-inner-table'), default='full',
+                    help='explicitly scoped regression set; full remains the default')
 parser.add_argument('--gate', action='append', choices=('bootstrap-native-kv', 'bootstrap', 'sql', 'direct', 'tls'), help='rerun selected failed/pending steps; default runs all')
 parser.add_argument('--start-at-script', help='resume one gate at the first command with this script filename; keep prior logs as evidence')
 args = parser.parse_args()
@@ -147,6 +149,30 @@ gates = [
     ]),
     ('tls', [[tools / 'namespace_worker_direct_prototype.py', '--binary', binary, '--case', 'tls']]),
 ]
+if args.profile == 'native-inner-table':
+    # Exercise the actual KV users, GC admission, SQL-owned transactions,
+    # inherited snapshots, replica reads and the original four front doors.
+    # Keep unrelated physical-layout and index-family suites in the full run.
+    selected = {
+        'bootstrap-native-kv': {'run_instance_meta_native_probe.py', 'shared_transaction_probe.py'},
+        'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
+        'sql': {'namespace_sql_worker_prototype.py'},
+        'direct': {'automatic_catalog_gc_probe.py', 'sql_read_view_probe.py',
+                   'shared_transaction_probe.py', 'namespace_worker_direct_prototype.py'},
+        'tls': {'namespace_worker_direct_prototype.py'},
+    }
+    gates = [(name, [command for command in commands
+                    if command[0].name in selected[name]
+                    and '--creation-identities' not in command])
+             for name, commands in gates]
+    gates[0][1].append([local / 'run_standby_suite.py', '--binary', probe,
+                       '--case', 'catalog_read_view',
+                       '--log-dir', args.log_dir / 'native-table-standby-catalog'])
+    gates[3][1].append([local / 'run_standby_suite.py', '--binary', binary,
+                       '--case', 'basic', '--case', 'namespace_fork_local',
+                       '--log-dir', args.log_dir / 'native-table-standby'])
+    print('PROFILE native-inner-table (scoped; not the full gate suite)', flush=True)
+
 for name, commands in gates:
     if args.gate and name not in args.gate:
         continue
@@ -165,4 +191,4 @@ for name, commands in gates:
             if result.returncode:
                 raise SystemExit('FAIL ' + name + ': ' + str(log))
     print('PASS ' + name, flush=True)
-print('PASS selected gates' if args.gate else 'PASS four gates including native KV bootstrap regressions', flush=True)
+print('PASS selected gates' if args.gate else 'PASS four gates profile=' + args.profile, flush=True)

@@ -33,6 +33,7 @@ def wait_probe(experiment, recovered, durable_phase):
         if (f'INSTANCE_META_PROBE_PASS recovered={int(recovered)} ' in observed
                 and 'INSTANCE_META_SEQUENTIAL_SCAN_PASS ' in observed
                 and 'INSTANCE_META_LOCK_WAIT_PASS commit_handoff=1 deadline=1' in observed
+                and 'INSTANCE_NATIVE_INNER_TABLE_PASS failed_begin_cleanup=1 scan_cleanup=1 cross_table_commit_rollback=1' in observed
                 and f'INSTANCE_RECORD_PROBE_PASS root_recovered={int(recovered)} ' in observed
                 and f'INSTANCE_RECORD_DURABLE phase={durable_phase} ' in observed
                 and 'INSTANCE_CATALOG_VIEW_PASS ' in observed
@@ -82,8 +83,28 @@ class GateExperiment(BootstrapExperiment):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
+    parser.add_argument('--locked-root-regression', action='store_true',
+                        help='Run the known failing locked-root/page-snapshot regression alone')
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if args.locked_root_regression:
+        os.environ['SEEKDB_INSTANCE_CATALOG_LOCK_RACE_PROBE'] = '1'
+        experiment = GateExperiment(args.binary, 'catalog_locked_root', prototype=6)
+        try:
+            experiment.start()
+            evidence = [line for log in (experiment.base / 'log').glob('seekdb.log*')
+                        for line in log.read_text(errors='replace').splitlines()
+                        if 'INSTANCE_CATALOG_LOCKED_ROOT_REPRO' in line]
+            if not any('page_ret=0 stage_ret=0' in line for line in evidence):
+                raise RuntimeError('locked-root regression did not pass; check test hooks: ' + str(evidence))
+            experiment.record('PASS', case='catalog_locked_root')
+        finally:
+            for log in (experiment.base / 'log').glob('seekdb.log*'):
+                for line in log.read_text(errors='replace').splitlines():
+                    if 'INSTANCE_CATALOG_LOCKED_ROOT_REPRO' in line:
+                        experiment.record('locked_root_evidence', line=line)
+            experiment.close()
+        return
     os.environ['SEEKDB_INSTANCE_META_PROBE'] = '1'
     experiment = GateExperiment(args.binary, 'instance_meta_native', prototype=6)
     experiment.extra_parameters = [('minor_compact_trigger', '2')]
@@ -103,6 +124,7 @@ def main():
         experiment.record('PASS', case='instance_meta_native', rollback=True, cross_collection=True,
                           duplicate_key=True, own_writes=True, snapshot=True, locked_current_read=True,
                           sequential_put_put_scan=True, scan_reentrant_write_rejected=True,
+                          native_inner_table_cleanup=True, cross_table_commit_rollback=True,
                           binary_value_60000=True, key_512=True, value_65536=True, binary_bounds=True,
                           scan=True, erase=True, snapshot_across_minor=True, writer_conflict=True,
                           typed_records=True, catalog_tree=True, capped_roots=True,

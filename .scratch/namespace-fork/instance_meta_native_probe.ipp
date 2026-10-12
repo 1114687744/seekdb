@@ -1,4 +1,4 @@
-// Local native integration probe. Injected only in a test build; never committed.
+// Native integration probe. Injected only in a test build; excluded from production.
 static int run_instance_meta_native_probe()
 {
   auto &kv = share::server_service<storage::ObAccessService>()->instance_meta_store();
@@ -232,6 +232,59 @@ static int run_instance_meta_native_probe()
   ret = kv.get(remove, second, key, allocator, value);
   META_PROBE_ASSERT(ret == common::OB_ENTRY_NOT_EXIST);
   META_PROBE_CALL(kv.rollback(remove));
+  // Extraction regression: failed snapshot acquisition releases both the
+  // native registration and the directory admission. Callback failure and
+  // early stop must release the iterator without ending the transaction.
+  Tx failed_read;
+  ret = kv.begin_read(failed_read, deadline(), [](share::SCN &) { return OB_EAGAIN; });
+  META_PROBE_ASSERT(ret == OB_EAGAIN && !failed_read.is_active());
+  Tx after_failure_gc;
+  META_PROBE_CALL(kv.begin_directory_gc(after_failure_gc, deadline()));
+  META_PROBE_CALL(kv.rollback(after_failure_gc));
+  META_PROBE_CALL(kv.begin(failed_read, deadline()));
+  ret = kv.scan(failed_read, first, range,
+      [&](const common::ObString &, const common::ObString &, bool &) { return OB_EAGAIN; });
+  META_PROBE_ASSERT(ret == OB_EAGAIN && failed_read.is_active());
+  META_PROBE_CALL(kv.get(failed_read, first, key, allocator, value));
+  META_PROBE_ASSERT(value == next);
+  int stopped_rows = 0;
+  META_PROBE_CALL(kv.scan(failed_read, first, range,
+      [&](const common::ObString &, const common::ObString &, bool &stop) {
+        ++stopped_rows;
+        stop = true;
+        return kv.rollback(failed_read) == OB_INVALID_ARGUMENT ? OB_SUCCESS : OB_ERR_UNEXPECTED;
+      }));
+  META_PROBE_ASSERT(stopped_rows == 1);
+  META_PROBE_CALL(kv.put(failed_read, first, key, next));
+  META_PROBE_CALL(kv.commit(failed_read));
+
+  // Both physical KV tablets use the same native row/transaction module.
+  // The participant survives the owner's release and is detached afterwards.
+  auto &layouts = share::server_service<storage::ObAccessService>()->storage_schema_store();
+  const auto shared_collection = static_cast<Collection>(10006);
+  for (bool committed : {false, true}) {
+    Tx left, right;
+    META_PROBE_CALL(kv.begin(left, deadline()));
+    META_PROBE_CALL(layouts.attach(right, left, deadline()));
+    META_PROBE_CALL(kv.put(left, shared_collection, key, next));
+    META_PROBE_CALL(layouts.put(right, shared_collection, key, next));
+    META_PROBE_ASSERT(layouts.commit(right) == OB_INVALID_ARGUMENT);
+    META_PROBE_CALL(committed ? kv.commit(left) : kv.rollback(left));
+    META_PROBE_CALL(layouts.detach(right));
+    for (auto *store : {&kv, &layouts}) {
+      Tx check;
+      META_PROBE_CALL(store->begin(check, deadline()));
+      ret = store->get(check, shared_collection, key, allocator, value);
+      META_PROBE_ASSERT(committed ? ret == OB_SUCCESS && value == next : ret == OB_ENTRY_NOT_EXIST);
+      if (committed) {
+        bool removed = false;
+        META_PROBE_CALL(store->erase(check, shared_collection, key, removed));
+        META_PROBE_ASSERT(removed);
+      }
+      META_PROBE_CALL(store->commit(check));
+    }
+  }
+  fprintf(stderr, "INSTANCE_NATIVE_INNER_TABLE_PASS failed_begin_cleanup=1 scan_cleanup=1 cross_table_commit_rollback=1\n");
   Tx visible_page_tx;
   META_PROBE_CALL(kv.begin(visible_page_tx, deadline()));
   rootserver::InstanceNamespaceMetadata visible_pages(kv, visible_page_tx);

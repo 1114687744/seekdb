@@ -40,7 +40,8 @@ if args.action == 'enable':
         '#include "share/tablet/ob_tablet_mapping_operator.h"\n'
         '#include "common/mysqlclient/ob_mysql_result.h"\n'
         '// LOCAL_INSTANCE_META_PROBE_END\n', 1)
-    hook = ('// LOCAL_INSTANCE_META_PROBE_BEGIN\n#include "' + str(probe) + '"\n'
+    hook = ('// LOCAL_INSTANCE_META_PROBE_BEGIN\n#include "' + str(probe.with_name('catalog_locked_root_probe.ipp')) + '"\n'
+        '#include "' + str(probe) + '"\n'
         '#include "' + str(record_probe) + '"\n'
         '#include "' + str(durable_probe) + '"\n'
         '#include "' + str(pin_probe) + '"\n'
@@ -51,6 +52,10 @@ if args.action == 'enable':
         '#include "' + str(view_probe) + '"\n'
         '// LOCAL_INSTANCE_META_PROBE_END\n' + entry_anchor +
         '  // LOCAL_INSTANCE_META_PROBE_BEGIN\n'
+        '  if (getenv("SEEKDB_INSTANCE_CATALOG_LOCK_RACE_PROBE") != nullptr) {\n'
+        '    const int lock_ret = run_catalog_locked_root_probe();\n'
+        '    if (lock_ret != OB_SUCCESS) { return lock_ret; }\n'
+        '  }\n'
         '  if (getenv("SEEKDB_INSTANCE_META_PROBE") != nullptr) {\n'
         '    const int binding_ret = run_tablet_binding_native_probe();\n'
         '    if (binding_ret != OB_SUCCESS) { return binding_ret; }\n'

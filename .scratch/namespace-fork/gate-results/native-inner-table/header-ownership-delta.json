@@ -1,0 +1,87 @@
+{
+  "base_commit": "194d1454097432539b8dade3d5ecbe89f82062bf",
+  "new_header_correctly_owned": true,
+  "existing_mismatches_unchanged": true,
+  "existing_mismatches": {
+    "STORAGE_PUBLIC_HEADER_ROOTS": {
+      "missing": [
+        "blocksstable/index_block/ob_index_block_builder.h",
+        "blocksstable/index_block/ob_sstable_sec_meta_iterator.h",
+        "blocksstable/ob_data_buffer.h",
+        "blocksstable/ob_datum_rowkey.h",
+        "blocksstable/ob_logic_macro_id.h",
+        "blocksstable/ob_macro_block_checker.h",
+        "blocksstable/ob_macro_block_meta_mgr.h",
+        "blocksstable/ob_macro_block_struct.h",
+        "blocksstable/ob_sstable.h",
+        "compaction/physical_merge_candidate.h",
+        "compaction/physical_merge_progress.h",
+        "ddl/ob_ddl_direct_load_utils.h",
+        "ddl/ob_ddl_insert_dag.h",
+        "ddl/ob_ddl_struct.h",
+        "ls/ob_ls_meta.h",
+        "ls/ob_ls_tablet_service.h",
+        "ob_storage_schema.h",
+        "ob_storage_schema_util.h",
+        "ob_tablet_local_status.h",
+        "physical_snapshot_retention.h",
+        "tablet/ob_tablet_common.h",
+        "tablet/ob_tablet_create_delete_helper.h",
+        "tablet/ob_tablet_create_sstable_param.h",
+        "tablet/ob_tablet_meta.h"
+      ],
+      "stale": []
+    },
+    "STORAGE_INTERFACE_CLOSURE_HEADERS": {
+      "missing": [
+        "ddl/ob_ddl_independent_dag.h",
+        "scheduler/ob_independent_dag.h",
+        "tablelock/ob_table_lock_live_detector.h"
+      ],
+      "stale": [
+        "blocksstable/index_block/ob_index_block_builder.h",
+        "blocksstable/index_block/ob_sstable_sec_meta_iterator.h",
+        "blocksstable/ob_data_buffer.h",
+        "blocksstable/ob_datum_rowkey.h",
+        "blocksstable/ob_logic_macro_id.h",
+        "blocksstable/ob_macro_block_checker.h",
+        "blocksstable/ob_macro_block_struct.h",
+        "blocksstable/ob_sstable.h",
+        "ddl/ob_ddl_struct.h",
+        "ls/ob_ls_meta.h",
+        "ls/ob_ls_tablet_service.h",
+        "ob_row_reshape.h",
+        "ob_storage_schema.h",
+        "ob_tablet_local_status.h",
+        "tablet/ob_tablet_common.h",
+        "tablet/ob_tablet_create_delete_helper.h",
+        "tablet/ob_tablet_create_sstable_param.h",
+        "tablet/ob_tablet_meta.h"
+      ]
+    },
+    "STORAGE_PRIVATE_HEADERS": {
+      "missing": [
+        "compaction/filter/storage_schema_history_filter.h",
+        "ob_row_reshape.h"
+      ],
+      "stale": [
+        "blocksstable/ob_macro_block_meta_mgr.h",
+        "compaction/physical_merge_candidate.h",
+        "ddl/ob_ddl_direct_load_utils.h",
+        "ddl/ob_ddl_independent_dag.h",
+        "ddl/ob_ddl_insert_dag.h",
+        "ob_storage_schema_util.h",
+        "scheduler/ob_independent_dag.h",
+        "tablelock/ob_table_lock_live_detector.h"
+      ]
+    },
+    "STORAGE_SEMANTIC_HEADERS": {
+      "missing": [],
+      "stale": []
+    }
+  },
+  "existing_direct_sql_includes": [
+    "ddl/ob_tablet_slice_writer.cpp -> sql/engine/ob_batch_rows.h"
+  ],
+  "scope": "Header graph delta verification; the full pre-existing checker remains failing."
+}

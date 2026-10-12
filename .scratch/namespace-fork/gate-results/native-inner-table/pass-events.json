@@ -1,0 +1,156 @@
+[
+  {
+    "log": "native/kv.log",
+    "event": "native_kv_verified",
+    "recovered": false,
+    "typed_records": true,
+    "physical_retention": true,
+    "durable_phase": "created"
+  },
+  {
+    "log": "native/kv.log",
+    "event": "native_kv_verified",
+    "recovered": true,
+    "typed_records": true,
+    "physical_retention": true,
+    "durable_phase": "marked"
+  },
+  {
+    "log": "native/kv.log",
+    "event": "native_kv_verified",
+    "recovered": true,
+    "typed_records": true,
+    "physical_retention": true,
+    "durable_phase": "finished"
+  },
+  {
+    "log": "native/kv.log",
+    "event": "native_kv_verified",
+    "recovered": true,
+    "typed_records": true,
+    "physical_retention": true,
+    "durable_phase": "verified"
+  },
+  {
+    "log": "native/kv.log",
+    "event": "PASS",
+    "case": "instance_meta_native",
+    "rollback": true,
+    "cross_collection": true,
+    "duplicate_key": true,
+    "own_writes": true,
+    "snapshot": true,
+    "locked_current_read": true,
+    "sequential_put_put_scan": true,
+    "scan_reentrant_write_rejected": true,
+    "native_inner_table_cleanup": true,
+    "cross_table_commit_rollback": true,
+    "binary_value_60000": true,
+    "key_512": true,
+    "value_65536": true,
+    "binary_bounds": true,
+    "scan": true,
+    "erase": true,
+    "snapshot_across_minor": true,
+    "writer_conflict": true,
+    "typed_records": true,
+    "catalog_tree": true,
+    "capped_roots": true,
+    "obsolete_lineage_removed": true,
+    "gc_watermark": true,
+    "physical_retention": true,
+    "crash_recovery": true,
+    "durable_fork_drop": true
+  },
+  {
+    "log": "native/shared-faults.log",
+    "event": "PASS",
+    "case": "shared_transaction",
+    "faults": true,
+    "atomic_lob_unit": true,
+    "rollback": true,
+    "crash_recovery": true,
+    "concurrent_creation": true
+  },
+  {
+    "log": "production/bootstrap.log",
+    "event": "PASS",
+    "elapsed_limit_s": 30
+  },
+  {
+    "log": "production/bootstrap.log",
+    "event": "PASS",
+    "case": "inprocess_bootstrap",
+    "one_process": true,
+    "child_login": true,
+    "inherited_read": true,
+    "empty_namespace": true,
+    "template_restart": true
+  },
+  {
+    "log": "production/sql.log",
+    "event": "PASS",
+    "case": "inprocess_sql",
+    "transactions": true,
+    "index": true,
+    "nested_fork": true,
+    "restart": true
+  },
+  {
+    "log": "production/direct.log",
+    "event": "PASS",
+    "case": "automatic_catalog_gc",
+    "old_view": true,
+    "parent_drop": true,
+    "crash_restart": true
+  },
+  {
+    "log": "production/direct.log",
+    "event": "PASS",
+    "case": "sql_read_view",
+    "rr": true,
+    "rc": true,
+    "px": true,
+    "own_writes": true,
+    "parent_truncate": true
+  },
+  {
+    "log": "production/direct.log",
+    "event": "PASS",
+    "case": "shared_transaction",
+    "faults": false,
+    "atomic_lob_unit": true,
+    "rollback": null,
+    "crash_recovery": true,
+    "concurrent_creation": true
+  },
+  {
+    "log": "production-rerun/direct-after-fixture.log",
+    "event": "PASS",
+    "case": "inprocess_direct",
+    "ddl": true,
+    "partition": true,
+    "index": true,
+    "lob": true,
+    "fulltext": true,
+    "ivf": true,
+    "ivf_pq": true,
+    "ivf_sq8": true,
+    "empty_hnsw": true,
+    "source_drop": true,
+    "ddl_redefinition": true,
+    "check_constraint": true,
+    "auto_increment": true,
+    "fork_table": true,
+    "cache_lifecycle": true,
+    "interrupted_heap_recovery": true,
+    "restart": true
+  },
+  {
+    "log": "production-tls/tls.log",
+    "event": "PASS",
+    "case": "inprocess_tls",
+    "protocol": "TLSv1.3",
+    "child_login": true
+  }
+]

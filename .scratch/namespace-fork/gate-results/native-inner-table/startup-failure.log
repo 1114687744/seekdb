@@ -1,0 +1,10 @@
+{"event": "setup", "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_kv_startup_30s_gz2u1h5_", "pid": 1078373, "port": 6247}
+{"event": "data_archived", "path": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_kv_startup_30s_gz2u1h5_/data.tar.gz", "bytes": 1175319}
+/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.
+  from cryptography.hazmat.backends import default_backend
+Traceback (most recent call last):
+  File ".scratch/namespace-fork/quick_startup_probe.py", line 107, in <module>
+    main()
+  File ".scratch/namespace-fork/quick_startup_probe.py", line 44, in main
+    raise RuntimeError(f'exited={experiment.proc.returncode}')
+RuntimeError: exited=1

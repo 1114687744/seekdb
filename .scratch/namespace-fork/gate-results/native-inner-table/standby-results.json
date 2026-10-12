@@ -1,0 +1,28 @@
+{
+  "production-standby/native-table-standby/results.json": [
+    {
+      "case": "basic",
+      "exit_code": 255,
+      "elapsed_s": 27.14
+    },
+    {
+      "case": "namespace_fork_local",
+      "exit_code": 0,
+      "elapsed_s": 115.6
+    }
+  ],
+  "standby-basic-final/results.json": [
+    {
+      "case": "basic",
+      "exit_code": 0,
+      "elapsed_s": 119.35
+    }
+  ],
+  "standby-catalog/native-table-standby-catalog/results.json": [
+    {
+      "case": "catalog_read_view",
+      "exit_code": 0,
+      "elapsed_s": 113.98
+    }
+  ]
+}

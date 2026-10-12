@@ -12,7 +12,22 @@
 
 --disable_all_result_log
 db_p=OBI(cluster=1,proxy_num=0,role=primary);
-db_p.reboot;
+# The generic reboot sequence sleeps a fixed five seconds before exec_init_sql.
+# Initial catalog/template creation can still be running. Use the startup
+# allowance from namespace_setup_template_local; built-in SQL polling requires
+# the admin account that exec_init_sql has yet to create.
+db_p.reset;
+db_p.clean_all_asvr;
+db_p.reboot_logservice;
+db_p.deploy;
+db_p.sleep 30;
+db_p.bootstrap;
+db_p.addserver;
+db_p.exec_init_sql;
+db_p.reboot_proxy;
+db_p.reboot_asvr;
+db_p.add_asvr;
+db_p.prepare_agent;
 
 db_s=OBI(cluster=1,proxy_num=0,primary=db_p);
 db_s.reboot;

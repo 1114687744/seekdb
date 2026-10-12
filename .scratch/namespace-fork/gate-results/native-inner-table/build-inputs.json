@@ -1,0 +1,45 @@
+{
+  "base_commit": "194d1454097432539b8dade3d5ecbe89f82062bf",
+  "source_sha256": {
+    "src/storage/access/native_inner_table.cpp": "3abf21e0098a1716f7c3dd648b3f73a504dc3db861ca7f4357f92ad99a3df4fd",
+    "src/storage/access/native_inner_table.h": "e798588484c48e8beaff40c9d666644106997bd7d3fd9cda66fb37b06b318494",
+    "src/storage/instance_meta/instance_meta_store.cpp": "5dc6be0a2ff1a13b08e716df7b938f3d87419abfe2d35ea8ff72a00e7ce359ed",
+    "src/storage/instance_meta/instance_meta_store.h": "47547ecc2ab7b22cf7f044573d406c9bea0e847961a529ba749610ceecf9409e",
+    "src/storage/storage_source_inventory.bzl": "017914e4989a53e3d74a32ea9bf801110780417e09145f4e2f86c09955369aa5",
+    "src/storage/storage_header_inventory.bzl": "8d1cee7a706464875a71520a1c871088b300d1b4b035fd0167092310abafe92e",
+    ".scratch/namespace-fork/instance_meta_native_probe.ipp": "1df7435a8351274e7518c47b8465c213bc439990b3d69226dd257d92e1aebaad",
+    ".scratch/namespace-fork/run_instance_meta_native_probe.py": "080e217535c441f2106c62fd4c1cb7f0f8954839814c9bdf6246cfe961edf771",
+    ".scratch/namespace-fork/run_four_gates.py": "9edbababe2a2e17cae2f7b8c8ea37ee7438b7cf0264c1fc6954576715b6bb754"
+  },
+  "production_binary": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-production",
+  "native_probe_binary": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-native",
+  "test_fixture_sha256": {
+    ".scratch/excluded-from-branch/tools/obtest/namespace_inprocess_ddl_regressions.py": "57ddaa8424e9b0693d524047596f1e4b7c5d6f7f2c33235b2b332eb2fa427a78",
+    ".scratch/namespace-fork/catalog_locked_root_probe.ipp": "35d81143f10fae75fa900b33ee7befb4718b1d55be6f6fd76f7222d34567036a",
+    ".scratch/namespace-fork/native_probe_injection.py": "743883d7354c14e99265bc051896e253705823af5137edae36adf84903134427",
+    "tools/obtest/t/stanby/basic.test": "fdd59d939604f99ad627a2cb8c35d9075a6a27d05bc93cf0c213fe93d8cb53a9"
+  },
+  "baseline_comparison": {
+    "description": "Same current tree and locked-root test hook, with only the two InstanceMetaStore implementation files restored from base_commit; NativeInnerTable is unused by that KV implementation.",
+    "kv_sources": {
+      "src/storage/instance_meta/instance_meta_store.cpp": "dab88361cf20fd3030620fa1ffca415c3e84356d15a05fa0f323a98d35934df3",
+      "src/storage/instance_meta/instance_meta_store.h": "e470a2823da494698331bb927c4b9a111356c5856a366d26433d57cb13f03434"
+    },
+    "baseline_binary": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-locked-root-baseline",
+    "refactored_binary": "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-locked-root-current"
+  },
+  "artifact_sha256": {
+    "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-production": {
+      "sha256": "1392a454c5a7c6b370f46e71101028b9e78fd6670c2367f7280f905ea5d0f381",
+      "native_probe_marker": false
+    },
+    "/data/1/nijia.nj/test/namespace_fork_build_artifacts/native-inner-table/seekdb-native": {
+      "sha256": "930c9ccfb03cf40c3b3d35eb5aaeb2c12132c5146ce0fa2eaf59851a93f8cfdd",
+      "native_probe_marker": true
+    },
+    "build_release/src/observer/seekdb": {
+      "sha256": "1392a454c5a7c6b370f46e71101028b9e78fd6670c2367f7280f905ea5d0f381",
+      "native_probe_marker": false
+    }
+  }
+}

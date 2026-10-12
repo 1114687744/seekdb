@@ -1,0 +1,200 @@
+{
+  "base_commit": "194d1454097432539b8dade3d5ecbe89f82062bf",
+  "scope": "NativeInnerTable extraction and all existing KV consumers; schema SQL migration excluded",
+  "profile": "native-inner-table",
+  "status": "selected profile cases passed after resumed runs; separately reproduced known baseline defect remains open",
+  "full_mysqltest_run": false,
+  "sysbench_run": false,
+  "full_historical_four_gate_profile_run": false,
+  "production_hooks_removed": true,
+  "core_source_hashes_match_tested_revision": true,
+  "cases": [
+    {
+      "case": "native_kv_four_recovery_phases",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/native/kv.log",
+        "sha256": "c9db87fc75727a789e4402053a142e4075417963d4fa9ec2dcf425308a9306b6"
+      }
+    },
+    {
+      "case": "shared_transaction_faults",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/native/shared-faults.log",
+        "sha256": "e55aadf9166e059d6879e4e38e4fad6f0080ab9298b8a2803726cceafdc10c73"
+      }
+    },
+    {
+      "case": "bootstrap_and_template_restart",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production/bootstrap.log",
+        "sha256": "bd2de0661cac8518598cc62894bcffc6f0a5b40bc1298e6f375c94957fc3d667"
+      }
+    },
+    {
+      "case": "sql",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production/sql.log",
+        "sha256": "fee318b458443898647e9b4eddb94b2c97196811240e53ab1380cf3be6aeaa3b"
+      }
+    },
+    {
+      "case": "automatic_catalog_gc_sql_read_view_shared_transaction",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production/direct.log",
+        "sha256": "40f60a51d5608b017067caec6c0a48f7421ccf0907457c43dba8f8788fd19224"
+      }
+    },
+    {
+      "case": "full_direct_after_fixture_fix",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production-rerun/direct-after-fixture.log",
+        "sha256": "01ec344c838938752240de7802a315c41fc9b2625fd469821221e03bb116abce"
+      }
+    },
+    {
+      "case": "tls",
+      "status": "pass",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production-tls/tls.log",
+        "sha256": "8c6daf86e514a4c1d8b8f080b4257f7fcba857c1deed536c54e1bcdeac698c71"
+      }
+    },
+    {
+      "case": "standby_namespace_fork",
+      "status": "pass",
+      "result": {
+        "case": "namespace_fork_local",
+        "exit_code": 0,
+        "elapsed_s": 115.6
+      },
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production-standby/native-table-standby/results.json",
+        "sha256": "10d517e581bbe3c4434ab7277bda275fd65ef6732cd17ac0394195ba1d84399d"
+      }
+    },
+    {
+      "case": "standby_basic",
+      "status": "pass",
+      "result": {
+        "case": "basic",
+        "exit_code": 0,
+        "elapsed_s": 119.35
+      },
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/standby-basic-final/results.json",
+        "sha256": "de4dd271b813e6242e921d2e382e7476bb520248777d14344940c3ef77a03700"
+      }
+    },
+    {
+      "case": "standby_catalog_read_view",
+      "status": "pass",
+      "result": {
+        "case": "catalog_read_view",
+        "exit_code": 0,
+        "elapsed_s": 113.98
+      },
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/standby-catalog/native-table-standby-catalog/results.json",
+        "sha256": "8b5db27b34dcc74a0777f531affdf428715d5b0ca57f2c40cd8f398c0069defa"
+      }
+    }
+  ],
+  "failures_and_limits": [
+    {
+      "case": "initial_bootstrap_type_validation",
+      "status": "fixed",
+      "cause": "is_varchar excludes VARBINARY; use is_varbinary",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/startup-failure.log",
+        "sha256": "7198a37431a2d20b29637cdbe8705dc609a187091014cae994e04166420f7d6f"
+      }
+    },
+    {
+      "case": "direct_checksum_fixture",
+      "status": "fixture_fixed",
+      "cause": "Missing NOT NULL namespace_id silently ignored; explicit namespace_id and rowcount assertion added",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/checksum-fixture-fix.json",
+        "sha256": "43527cead98d1deadfd5f96589a82ef02e1868f2db0c4c502c199b09b4183991"
+      }
+    },
+    {
+      "case": "direct_ddl_publication_4018",
+      "status": "known_defect_recorded",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production-rerun/direct.log",
+        "sha256": "9c71f1bec5904976017fa3792fc009cb34f9682933eced2c674cdacc56af47a1"
+      },
+      "diagnosis": "A deterministic locked-root/page-view mismatch exists in both baseline and refactored KV. Production DDL log does not pinpoint the individual failed read."
+    },
+    {
+      "case": "standby_basic_initial_login",
+      "status": "fixture_fixed",
+      "cause": "Fixed framework delay expired before SQL startup. Test now uses existing Namespace suite startup allowance",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/production-standby/native-table-standby/basic.log",
+        "sha256": "ef6485d8e3f785f66c76c52c5869e7e21fd73b8024b26890c1329cb7dcf16cfb"
+      }
+    },
+    {
+      "case": "standby_basic_readiness_attempt",
+      "status": "discarded_fixture_attempt",
+      "cause": "Framework poll uses admin before exec_init_sql creates it",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/standby-basic-rerun/basic.log",
+        "sha256": "c578e37a4e2d8825400ca3c7fa3906c11db4f4c55238360c7228445887ee9ed2"
+      }
+    },
+    {
+      "case": "locked_root_baseline",
+      "status": "expected_failure_unfixed",
+      "actual_error": -4018,
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/native/locked-root-baseline.log",
+        "sha256": "bd8ca7bf05c084156036c6f73b9d91258a50384c4fa6b45dd24f1a8da51f97bd"
+      }
+    },
+    {
+      "case": "locked_root_refactored",
+      "status": "expected_failure_unfixed",
+      "actual_error": -4018,
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/native/locked-root-current.log",
+        "sha256": "2e63702048149e83f83ea08cd61a77972046427af1a73bded32b8f627216c2b7"
+      }
+    },
+    {
+      "case": "full_storage_header_ownership",
+      "status": "baseline_failure_unchanged",
+      "evidence": {
+        "path": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/gate-results/native-inner-table/header-ownership-delta.json",
+        "sha256": "20205139b9741ea7a5ba0f035413c3eb00e29901aaed23d7364083253ce1f3e7"
+      }
+    }
+  ],
+  "builds": [
+    {
+      "status": "pass",
+      "log": "/tmp/seekdb-native-inner-table-production-build-final.log",
+      "sha256": "75414446c5d7e598362091f700555c8eb8acfa37990336ed01941ba0e65f5682"
+    },
+    {
+      "status": "pass",
+      "log": "/tmp/seekdb-native-inner-table-probe-restored-build.log",
+      "sha256": "1573dc4f452eeedac51595d567cc70252ffb0e1c5e7875a49a253456aade6629"
+    },
+    {
+      "status": "pass",
+      "log": "/tmp/seekdb-native-inner-table-restored-final-build.log",
+      "sha256": "b40d2d759412048bb43c6709515b825d116e89e4df548cecec0eaf88898ecef7"
+    }
+  ],
+  "review": "Reviewed extraction boundaries, transaction ownership, iterator/callback cleanup, snapshot retention, directory admission and build registration; no additional actionable introduced finding.",
+  "production_commit": "d89cb45be513c093a21fbd4f2626c5ac0fe6fbdd"
+}

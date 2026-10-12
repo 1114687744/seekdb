@@ -199,12 +199,16 @@ def checksum_error_before_restart(experiment, child):
 def inject_checksum_errors(experiment, table_ids):
     # The process-wide checksum table is SQLite metadata, not writable SQL.
     # Inject only while the disposable prototype instance is stopped.
+    # These are root-owned diagnostics; a child task must not be blocked by
+    # the process-wide legacy DDL diagnostic lookup. Supply the mandatory
+    # owner explicitly and fail on a stale fixture instead of silently IGNORE.
     with sqlite3.connect(experiment.base / "store/sstable/meta.db") as connection:
-        connection.executemany(
-            "INSERT OR IGNORE INTO __all_column_checksum_error_info "
-            "(frozen_scn,index_type,data_table_id,index_table_id,data_tablet_id,"
+        result = connection.executemany(
+            "INSERT INTO __all_column_checksum_error_info "
+            "(namespace_id,frozen_scn,index_type,data_table_id,index_table_id,data_tablet_id,"
             "index_tablet_id,column_id,data_column_checksum,index_column_checksum) "
-            "VALUES (1,1,?,1,1,1,1,1,1)", ((table_id,) for table_id in table_ids))
+            "VALUES (1,1,1,?,1,1,1,1,1,1)", ((table_id,) for table_id in table_ids))
+        assert result.rowcount == len(table_ids), (result.rowcount, table_ids)
 
 
 def checksum_error_after_restart(experiment, child, table_ids):
