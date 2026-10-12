@@ -72,6 +72,7 @@ gates = [
         [local / 'run_instance_meta_native_probe.py', '--binary', probe],
         [local / 'run_instance_meta_native_probe.py', '--binary', probe, '--locked-root-regression'],
         [local / 'cold_materialization_probe.py', '--binary', probe],
+        [local / 'native_schema_catalog_probe.py', '--binary', probe],
         [local / 'run_standby_suite.py', '--binary', probe, '--case', 'catalog_read_view',
          '--log-dir', args.log_dir / 'catalog-read-view-standby'],
         [local / 'tablet_preparation_probe.py', '--binary', probe, '--instrumented'],
