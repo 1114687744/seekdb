@@ -173,5 +173,5 @@ v6 剩余故障回归发现真实失败：`shared_transaction_probe.py --faults 
 ### 已知范围与后续事项
 
 - 当前对 Namespace 内表整类保留，范围比纯 schema 目录更宽；未引入逐表分类优化。
-- 先前记录的 minor Last 标记 `-4016` 问题仍按用户决定留待后续，本次未修改或声称解决。
+- 本任务当时未处理的 minor Last 标记 `-4016` 问题，已于 2026-10-14 在独立任务中完成 fork 快照行格式转换修复及单主库/主备验证；见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md)。
 - 不进行升级/旧格式兼容；不做 tablet 描述共享化或常驻全局正文缓存。

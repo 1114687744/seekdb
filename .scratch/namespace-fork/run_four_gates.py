@@ -82,6 +82,7 @@ gates = [
     ('direct', [
         [local / 'minor_last_flag_probe.py', '--binary', binary, '--pre-fork-wait', '10',
          '--skip-major', '--skip-seed', '--skip-indexes', '--seconds', '30'],
+        [local / 'fork_snapshot_row_probe.py', '--binary', binary],
         [local / 'owned_layout_probe.py', '--binary', binary],
         [local / 'native_dml_boundary_probe.py', '--binary', binary, '--minimal'],
         [local / 'native_dml_boundary_probe.py', '--binary', binary],
@@ -147,9 +148,10 @@ gates = [
 ]
 if args.profile == 'minor-chain':
     gates = [(name, [command for command in commands
-                     if command[0].name == 'minor_last_flag_probe.py'])
+                     if command[0].name in ('minor_last_flag_probe.py', 'fork_snapshot_row_probe.py',
+                                            'namespace_fork_table_prototype.py')])
              for name, commands in gates if name == 'direct']
-    print('PROFILE minor-chain (known failing fork snapshot row conversion; diagnosis only)', flush=True)
+    print('PROFILE minor-chain (fork snapshot rows, minor completion and ordinary FORK TABLE)', flush=True)
 elif args.profile == 'owned-layout':
     selected = {
         'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'namespace_checksum_probe.py',

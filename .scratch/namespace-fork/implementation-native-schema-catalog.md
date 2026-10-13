@@ -142,7 +142,9 @@
 - 仍需接入表/索引/约束/外键的名称查询、当前表版本查询、索引信息查询，以及既有清单中的完整 DDL 写入；本轮目标仍未完成。
 - 核心表定义还有独立读取：`get_core_table_priorities/get_core_table_columns` 使用 `ObCoreTableProxy::load`，后者仍对 `__all_core_table` 执行 SQL。正常装载不能漏掉这条路径；后续应复用固定内表定义和现有 core 行解码，避免通过虚拟表查询核心定义。初始化阶段与目录已经建立后的访问必须分清。
 
-#### 已定位、待修复：核心 tablet 的 minor 行版本结束标记
+#### 已修复：核心 tablet 的 minor 行版本结束标记
+
+2026-10-14 更新：已在 fork 快照行写出入口清除 shadow 标记和专用序号，保留版本/值/NOP 并统一 First/Last。原单主库复现、普通 FORK TABLE、多版本用户表跨微块重写及崩溃恢复、最初 schema_history 主备场景均通过；主备全程 Last 异常为 0。已加入四件套。详情见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md) 的生产修复章节，以下为历史定位记录。
 
 2026-10-13 更新：根因已定位，正式修复待做。已在无备库、无 major 的独立主库多次复现；fork 快照查询返回的 shadow 行被强制补 First/Last 后原样保存，形成孤立 shadow，minor 跳过它后提前进入下一行。单点转换实验使同一用例完成目标 minor 并通过父子数据断言；生产源码未提交修复。行级证据、代码历史与四件套入口见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md)。以下保留最初发现记录。
 
@@ -468,7 +470,7 @@
 ### 保留的后续范围与已知 TODO
 
 1. database、user、权限等非表 schema 类型的全面原生化；合并/checksum 的后续接入，以及 SSTable 持有完整物理描述的方案，仍按原定后续范围处理。
-2. `schema_history` 场景的核心 tablet minor 多版本行 Last 异常已在独立主库复现，根因为 fork 重写时持久化了孤立 shadow。单点转换实验通过，正式修复尚未合入；见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md) 及四件套 `minor-chain` 用例。
+2. [已修复] `schema_history` 场景的核心 tablet minor Last 异常：修正 fork 快照结果的持久化行格式转换，单主库、用户表多版本/重启和主备场景验证通过；见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md) 及四件套 `minor-chain` 用例。
 3. 未选择默认数据库时的缺失 FK 父表解析问题：保留上文 TODO；回归明确执行 USE，未宣称修复解析器。
 
-以上两项已知缺陷继续跟踪；本轮交付是完整表定义原生目录接入，不代表 Namespace/fork 的全部历史 TODO 均已清零。
+1210 继续作为低优先级 TODO 跟踪；minor Last 已闭环，不代表 Namespace/fork 的全部历史 TODO 均已清零。

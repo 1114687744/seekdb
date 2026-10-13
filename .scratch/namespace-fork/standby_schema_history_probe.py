@@ -190,6 +190,16 @@ with contextlib.ExitStack() as stack:
     verify(standby, False)
     with connect(42036, 'layout_replay_child') as promoted:
         verify(promoted, True, True)
+    # A later successful major must not hide an earlier broken minor chain.
+    for node in ('db_p.z1.obs0', 'db_s.z1.obs0'):
+        failures = set()
+        for path in (work / node / 'log').glob('seekdb.log*'):
+            with path.open('rb') as stream:
+                for line in stream:
+                    if b'meet another rowkey but not meet Last flag' in line:
+                        failures.add(line.decode(errors='replace').strip())
+        assert not failures, ('minor missing Last', node, sorted(failures)[:1])
+        record('minor_chain_checked', node=node, missing_last=0)
 record('PASS', case='standby_schema_history', before=frozen, after=next_frozen,
        physical_tablets=len(expected_tablets), independent_ddl=True,
        standby_major=True, crash_recovery=True, promoted_ddl=True,

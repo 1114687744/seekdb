@@ -1,0 +1,151 @@
+{
+  "source_base": "b2ca9c0a7",
+  "date": "2026-10-14",
+  "build_log": "/tmp/ns-minor-fix-build.log",
+  "cases": [
+    {
+      "log": "/tmp/ns-minor-fix-gates/direct.log",
+      "events": [
+        {
+          "event": "MINOR_COMPLETED",
+          "case": "minor_last_flag",
+          "namespace": 3,
+          "tablet": 4611686430744248321,
+          "failures": [],
+          "target_minor_completed": 1,
+          "options": {
+            "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+            "seconds": 30,
+            "skip_seed": true,
+            "skip_major": true,
+            "pre_fork_wait": 10,
+            "skip_indexes": true,
+            "hold_failure": 0,
+            "core_only": false
+          }
+        },
+        {
+          "event": "PASS",
+          "case": "minor_last_flag",
+          "namespace": 3,
+          "tablet": 4611686430744248321,
+          "failures": [],
+          "target_minor_completed": 1,
+          "options": {
+            "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+            "seconds": 30,
+            "skip_seed": true,
+            "skip_major": true,
+            "pre_fork_wait": 10,
+            "skip_indexes": true,
+            "hold_failure": 0,
+            "core_only": false
+          }
+        }
+      ]
+    },
+    {
+      "log": "/tmp/ns-minor-fix-gates-resume/direct.log",
+      "events": [
+        {
+          "event": "snapshot_rows_verified",
+          "target": 4611686430744448321,
+          "versions": 96,
+          "rewrites": 1
+        },
+        {
+          "event": "PASS",
+          "case": "fork_snapshot_rows",
+          "target_minor": true,
+          "partial_update": true,
+          "delete": true,
+          "null": true,
+          "snapshot_cut": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "inprocess_fork_table",
+          "inherited": true,
+          "restart": true
+        }
+      ]
+    },
+    {
+      "log": "/tmp/ns-minor-fix-snapshot-rows-final.log",
+      "events": [
+        {
+          "event": "snapshot_rows_verified",
+          "target": 4611686430744448321,
+          "versions": 96,
+          "source_blocks": [
+            [
+              5,
+              1
+            ],
+            [
+              106,
+              6
+            ]
+          ],
+          "rewrites": 1
+        },
+        {
+          "event": "PASS",
+          "case": "fork_snapshot_rows",
+          "target_minor": true,
+          "partial_update": true,
+          "delete": true,
+          "null": true,
+          "snapshot_cut": true,
+          "crash_recovery": true
+        }
+      ]
+    },
+    {
+      "log": "/tmp/ns-minor-fix-standby/schema_history.log",
+      "events": [
+        {
+          "event": "minor_chain_checked",
+          "node": "db_p.z1.obs0",
+          "missing_last": 0
+        },
+        {
+          "event": "minor_chain_checked",
+          "node": "db_s.z1.obs0",
+          "missing_last": 0
+        },
+        {
+          "event": "PASS",
+          "case": "standby_schema_history",
+          "before": 1791907625441601060,
+          "after": 1791907749075600037,
+          "physical_tablets": 12,
+          "independent_ddl": true,
+          "standby_major": true,
+          "crash_recovery": true,
+          "promoted_ddl": true,
+          "promoted_major": true,
+          "historical_checksums": [
+            1,
+            4
+          ]
+        }
+      ]
+    }
+  ],
+  "standby": [
+    {
+      "case": "schema_history",
+      "exit_code": 0,
+      "elapsed_s": 384.93
+    }
+  ],
+  "harness_failures": [
+    {
+      "log": "/tmp/ns-minor-fix-gates/direct.log",
+      "reason": "Incorrect wait comparing dumped log end SCN to a later read snapshot; replaced by target minor completion and data/rewrite assertions."
+    }
+  ],
+  "production_sha256": "d9c6e7afb35eceb642995f6632c4c6766d9c10816648767ca11364704705e847"
+}

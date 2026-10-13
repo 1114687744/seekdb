@@ -282,15 +282,20 @@ int ObForkSnapshotRowScan::get_next_row(const ObDatumRow *&tmp_row)
           }
         }
         if (!need_skip) {
-          if (!row->is_first_multi_version_row() || !row->is_last_multi_version_row()) {
-            LOG_WARN("fork scan: unexpected multi-version row", KPC(row));
-            ObDatumRow *mutable_row = const_cast<ObDatumRow *>(row);
-            mutable_row->mvcc_row_flag_.set_first_multi_version_row(true);
-            mutable_row->mvcc_row_flag_.set_last_multi_version_row(true);
-            tmp_row = mutable_row;
-          } else {
-            tmp_row = row;
+          // The query scanner folds each SSTable's visible versions into one
+          // snapshot row. Persist it as a regular version: a shadow record
+          // requires following version rows, which this scan does not emit.
+          // Preserve NOPs and the compacted flag for fusion with older files.
+          ObDatumRow *snapshot_row = const_cast<ObDatumRow *>(row);
+          if (snapshot_row->is_shadow_row()) {
+            const int64_t sql_sequence_idx = ObMultiVersionRowkeyHelpper::get_sql_sequence_col_store_index(
+                read_info->get_schema_rowkey_count(), true/*is_multi_version*/);
+            snapshot_row->mvcc_row_flag_.set_shadow_row(false);
+            snapshot_row->storage_datums_[sql_sequence_idx].set_int(0);
           }
+          snapshot_row->mvcc_row_flag_.set_first_multi_version_row(true);
+          snapshot_row->mvcc_row_flag_.set_last_multi_version_row(true);
+          tmp_row = snapshot_row;
           break;
         }
       }

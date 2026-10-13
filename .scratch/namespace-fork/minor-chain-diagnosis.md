@@ -2,7 +2,9 @@
 
 日期：2026-10-13。定位基线：`d48bbccd0444c888c77daaeb373b4e3a374b3829`。
 
-本轮用户要求：1210 降为低优先级 TODO，暂不处理；重点定位 minor 异常。本轮提交诊断、复现和四件套入口，**不包含生产修复**。临时诊断日志及实验修改均从生产源码撤除。
+2026-10-13 用户要求：1210 降为低优先级 TODO，暂不处理；重点定位 minor 异常。诊断提交 `b2ca9c0a7` 只包含诊断、复现和四件套入口，临时修改从生产源码撤除。
+
+**2026-10-14 更新：用户授权修复后，已完成生产入口修复和定向验证。** 这是快照行到持久化行的格式转换缺陷，不要求重新设计 Namespace/fork 架构。生产实现与最终结果见本文末章；以下保留诊断过程。
 
 ## 结论
 
@@ -98,10 +100,34 @@ if (row->is_shadow_row()) {
 
 正式修复方向：在 fork 重写的边界统一定义“快照结果行 → 可持久化版本行”的转换，保留版本和值，正确处理 shadow/隐藏 sequence/First/Last，并验证 NOP、删除行、跨微块行链以及普通用户表 fork。不要改 minor 来接受孤立 shadow，也不要引入 ns_id 特判。
 
-## 四件套与状态
+## 2026-10-13 四件套诊断结果
 
 `minor_last_flag_probe.py` 已进入 `run_four_gates.py` 的 full/direct，并提供 `--profile minor-chain --gate direct` 定向入口。生产基线预期为红；正式修复后须把它跑绿。实验版通过不等于生产问题已修复。
 
 四件套实际验证：`/tmp/ns-minor-four-gates-ab/direct.log` 通过，目标 minor 完成 1 次；撤除临时修改、重新编译后的生产版本在 `/tmp/ns-minor-four-gates-production/direct.log` 再次因同一 Last 异常失败。清理后编译日志 `/tmp/ns-minor-diagnosis-clean-build.log` 通过，`git diff -- src` 为空；没有把实验补丁留在生产源码中。
 
 1210：用户指定基线已得到相同的“两次无默认库失败、两次 USE 后成功”，按用户要求保留为低优先级 TODO，不在本轮处理。
+
+## 2026-10-14 生产修复与验证
+
+`ObForkSnapshotRowScan::get_next_row()` 统一将可见快照结果转成单条正式版本行：
+
+- 若结果带 shadow，清除 shadow 标记，用既有多版本行键 helper 定位隐藏 SQL sequence 并置为 0。
+- 设置 First/Last；去掉把正常查询折叠结果报告为异常的告警。
+- 保留提交版本、DML 类型、NULL/NOP、compacted 标记和所有用户列值，以便继续与较早文件融合。
+- 不增加 Namespace 分支、缓存或持久状态，不修改 minor 或 writer 的校验。
+
+生产编译 `/tmp/ns-minor-fix-build.log` 通过；没有诊断插桩。验证记录见 [fix-results.json](minor-chain-diagnosis/fix-results.json)。
+
+| 验证 | 结果与证据 |
+| --- | --- |
+| 原单主库 Last 复现 | 通过；目标 core tablet minor 完成、无 Last 异常，父子数据正确。`/tmp/ns-minor-fix-gates/direct.log` 中 `minor_last_flag` PASS |
+| 普通 FORK TABLE | 子空间自有表、继承来源、自动编号及重启读取通过。`/tmp/ns-minor-fix-gates-resume/direct.log` |
+| 多版本用户表重写 | 96 次更新，同一行版本链所在输入 SSTable 含 106 条物理记录、6 个微块；实际执行目标用户 SSTable rewrite 与 minor。部分列更新、NULL、删除、fork 后提交不可见及崩溃重启的数据断言均通过。`/tmp/ns-minor-fix-snapshot-rows-final.log` |
+| 最初 schema_history 主备场景 | 384.93 秒通过；主库/备库 major、12 个用户/索引 tablet、备库崩溃恢复、提升后 DDL/major、历史索引 checksum 通过。新增全程 Last 日志断言，主备均为 0。`/tmp/ns-minor-fix-standby/results.json` |
+
+新增 `fork_snapshot_row_probe.py` 和原 Last 定向测试、普通 FORK TABLE 测试均纳入四件套 `minor-chain` profile；原 `schema_history` 场景现检查 Last 异常，不能再用最终 major 成功掩盖中间 minor 失败。
+
+测试过程保留：新增用户表用例首轮在“文件 end_log_scn 必须达到后来取得的 current_scn()”这一错误等待条件上超时，实际 minor 已完成。改为检查目标 minor 成功记录、目标 SSTable rewrite 和最终数据；移除恒为 0 的虚拟 `ref_tablet_id` 等待条件。首轮日志 `/tmp/ns-minor-fix-gates/direct.log` 保留，修正后分段通过和最终长版本链通过分别在上述日志中。不是单次 full 四件套全绿；未跑全量 mysqltest/sysbench。
+
+1210 继续保留为低优先级 TODO，未修改。
