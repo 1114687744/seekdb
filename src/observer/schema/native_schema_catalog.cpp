@@ -971,6 +971,32 @@ int NativeSchemaCatalog::get_storage_schema(uint64_t table_id,
   return ret;
 }
 
+int NativeSchemaCatalog::get_table_ids(ObIArray<uint64_t> &out)
+{
+  out.reuse();
+  std::set<uint64_t> ids{OB_ALL_CORE_TABLE_TID};
+  ObArray<ObTableSchema> core;
+  int ret = read_core_tables(*this, INT64_MAX, core, false);
+  for (int64_t i = 0; OB_SUCC(ret) && i < core.count(); ++i) {
+    ids.insert(core.at(i).get_table_id());
+  }
+  CatalogRows rows;
+  if (OB_SUCC(ret)) {
+    ret = rows.open(*this, OB_ALL_TABLE_TID, ObRowkey(), INT64_MAX,
+        false, 0, false, {}, false);
+  }
+  while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+    uint64_t id = OB_INVALID_ID;
+    if (OB_SUCC(ret = rows.get_uint("table_id", id))) { ids.insert(id); }
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  for (uint64_t id : ids) {
+    if (OB_FAIL(ret)) { break; }
+    ret = out.push_back(id);
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::read_table(uint64_t table_id, int64_t version,
     ObIAllocator &allocator, ObTableSchema *&out, TableSource source, bool storage_only)
 {

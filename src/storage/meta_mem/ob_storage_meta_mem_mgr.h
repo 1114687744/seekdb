@@ -201,13 +201,6 @@ public:
       share::SCN &min_end_scn_from_latest,
       share::SCN &min_end_scn_from_old);
   int scan_all_version_tablets(const ObTabletMapKey &key, const ObFunction<int(ObTablet &)> &op);
-  // Visits current, retained old and external tablet descriptions. The visitor
-  // may load their immutable schema/SSTable metadata, but must not acquire or
-  // mutate tablets. Concurrent publications are revisited; duplicate visits
-  // are possible. The caller must discard all partial results on any error.
-  int scan_tablet_references(const std::function<int(const ObTablet &)> &visit,
-      int64_t deadline);
-
   // garbage collector for sstable and memtable.
   int push_table_into_gc_queue(ObITable *table, const ObITable::TableType table_type);
   int gc_tables_in_queue(bool &all_table_cleaned);
@@ -449,23 +442,6 @@ private:
   typedef common::hash::ObHashSet<ObTabletMapKey, hash::NoPthreadDefendMode> PinnedTabletSet;
 
 private:
-  struct TabletReferenceCapture
-  {
-    common::ObArray<ObTabletMapKey> changed_keys_;
-    TabletReferenceCapture *next_ = nullptr;
-    int error_ = OB_SUCCESS;
-  };
-  class TabletReferenceChange final
-  {
-  public:
-    TabletReferenceChange(ObStorageMetaMemMgr &owner, const ObTabletMapKey &key);
-    ~TabletReferenceChange();
-  private:
-    ObStorageMetaMemMgr &owner_;
-    const ObTabletMapKey key_;
-    DISALLOW_COPY_AND_ASSIGN(TabletReferenceChange);
-  };
-  int scan_retired_tablets(const ObFunction<int(ObTablet &)> &visit);
   int acquire_tablet(const ObTabletPoolType type, ObTabletHandle &tablet_handle);
   int acquire_tablet(ObIStorageMetaObjPool *pool, ObTablet *&tablet);
   int acquire_tablet_ddl_kv_mgr(ObDDLKvMgrHandle &handle);
@@ -514,11 +490,6 @@ private:
   ObTabletPointerMap tablet_map_;
   ObFlyingTabletPointerMap flying_tablet_map_;
   ObExternalTabletCntMap external_tablet_cnt_map_;
-  // Captures exist only on a scan's stack. This lock counts publishers and
-  // records changed keys, never loading/visiting tablet metadata while held.
-  common::ObSpinLock tablet_reference_lock_;
-  TabletReferenceCapture *tablet_reference_captures_;
-  int64_t tablet_reference_writers_;
   common::ObTimer gc_timer_;
   TableGCTask table_gc_task_;
   RefreshConfigTask refresh_config_task_;

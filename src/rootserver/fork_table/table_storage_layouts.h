@@ -11,9 +11,9 @@ namespace storage { class ObCreateTabletSchema; }
 namespace rootserver {
 
 // Upper-layer ownership of physical layouts. Bindings are immutable, local to
-// an owner/table pair, and are never inherited by fork. The first CREATE or DDL
-// seeds the owner's layout from its own complete definition. Storage consumers
-// see only the resulting G, never the SQL identity used to select it here.
+// an owner/table pair, and are never inherited by fork. This stores identity
+// only: definitions and their versions belong to the native schema catalog.
+// Storage consumers see G, never the SQL identity used to select it here.
 class TableStorageLayouts final
 {
 public:
@@ -22,11 +22,10 @@ public:
     uint64_t namespace_id = 0;
     uint64_t table_id = 0;
     uint64_t layout_id = 0;
-    int64_t schema_version = -1;
-    TO_STRING_KV(K(namespace_id), K(table_id), K(layout_id), K(schema_version));
+    TO_STRING_KV(K(namespace_id), K(table_id), K(layout_id));
   };
-  // Enumerate complete expected SQL objects independently of arrived reports.
-  // Each V is selected from its own G in the same retained snapshot F.
+  // Read physical identity bindings at retained snapshot F. Expected objects
+  // and their versions must be independently enumerated from the catalog.
   static int read_at(storage::InstanceMetaStore &store, const share::SCN &target,
       int64_t deadline, common::ObIArray<Definition> &definitions);
   TableStorageLayouts(storage::InstanceMetaStore &store,
@@ -35,10 +34,10 @@ public:
   // The SQL owner retains the borrowed KV participant through commit/rollback.
   static int attach(common::ObMySQLTransaction &owner, transaction::ObTxDesc &native,
       storage::InstanceMetaStore &store, std::shared_ptr<storage::InstanceMetaStore::Transaction> &tx);
-  // Reusing a binding does not publish the seed again or lock its layout row.
+  // Reusing a binding does not publish another definition or lock its row.
   int prepare_create(storage::ObCreateTabletSchema &schema);
-  // Called under existing same-object DDL publication coordination. Even a
-  // definition-only version change publishes the complete layout and its V.
+  // Called under existing same-object DDL publication coordination. Allocates
+  // a binding only if this owner has never materialized the table.
   int publish(storage::ObCreateTabletSchema &schema);
   // Retire logical ownership in the same transaction as catalog deletion.
   // Physical layouts remain available to old files and inherited sources.

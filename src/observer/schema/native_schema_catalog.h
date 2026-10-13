@@ -81,6 +81,9 @@ public:
   // Read table/column definitions only. Partition arrays, constraints and
   // triggers do not contribute to a physical row layout.
   int get_storage_schema(uint64_t table_id, common::ObIAllocator &, storage::ObStorageSchema &);
+  // Enumerate catalog identities in this same MVCC view, independently of
+  // physical reports or the presence of a layout binding.
+  int get_table_ids(common::ObIArray<uint64_t> &);
   // Upper-layer adapter for physical merge preparation. The supplied tablet
   // identity is interpreted here; storage does not decode Namespace IDs.
   // With choose_current, requested is a lower bound and selected is a new

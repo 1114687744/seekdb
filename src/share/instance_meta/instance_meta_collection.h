@@ -15,11 +15,10 @@ namespace share
 namespace instance_meta
 {
 
-// Remaining physical-layout KV collections; instance directory records use
+// Physical layout identity bindings; instance directory records use
 // the independent tables declared in instance_meta_schema.h.
 enum class MetaCollection : uint64_t
 {
-  STORAGE_LAYOUTS = 8,
   TABLE_STORAGE_LAYOUTS = 9,
 };
 

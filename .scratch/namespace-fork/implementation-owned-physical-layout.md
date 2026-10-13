@@ -76,3 +76,15 @@
 - `NativeSchemaCatalog::begin_read_at` 集中执行登记读者、检查持久保留边界、检查本地可读 SCN。checksum 和合并准备使用相同入口。
 - 布局投影只读取表/列记录；不为一个分区构造整张表的分区、约束和触发器列表。
 - 当前仅代码已接入，生产编译及动态验证中；预期对象枚举、旧历史发布/回收和旧 tablet 描述仍未移除。
+
+补充证据：`seekdb-native-merge-v4`（SHA256 `d36e3786962d271976c4019ee1e658c8148350654027499c44457837670a0df3`）已通过 `namespace_checksum_probe.py --fts`，日志 `/tmp/owned-layout-native-checksum-fts4.log`，F=`1791886203588881018`。分区 major 的输出描述由原生目录读取，三类索引完成校验。提交 `910955e24` 已推送当前分支，是实施检查点，不代表三项完成。
+
+### 删除派生历史正文（进行中）
+
+- checksum 预期集合由原生目录枚举，布局绑定只提供 G；缺失应有绑定会阻止校验，不会悄悄遗漏对象。版本来自同一 F 的表定义，不再读取布局历史头。
+- 已删除生产 `StorageSchemaHistory`、`StorageSchemaHistoryFilter` 和对应构建项；删除为其服务的 `scan_tablet_references`、发布计数和变化对象补扫。布局绑定的创建/DDL 不再发布正文。
+- `owned-layout-remove-history-build2` 生产编译通过；`seekdb-no-history-v5` SHA256 为 `d42c0226ce0e1297468f0ac663d52fcffd818945e771e4f95d5b0f11367bde3a`。`owned_layout_probe.py` 全部通过（`/tmp/owned-layout-probe5.log`，实例 `namespace_fork_PROTOTYPE_owned_layout_yund3h8l`）。该版 checksum 与三个备库用例仍在跑。
+- 四件套正在迁移旧断言：mini 应保有完整描述；meta 读取本地/文件描述；SSTable 审计读取文件正文。`gate_probe_injection.py --profile owned-layout` 排除已删除历史模块的专用 hook。旧全量 profile 中依赖旧历史 API 的测试仍需改写或按新协议替代，不能宣称全量入口已通过。
+- 剩余工作仍包括：旧 `storage_schema_addr_` 的独立正文收敛、恢复/备库/DDL 兼容性覆盖、目录物理对象回收保护的完整审计、旧保留测试替代及四件套/8000 分区成本验收。
+
+补充证据：去历史版的 `/tmp/owned-layout-native-checksum-fts5.log` 已通过，F=`1791886686902667070`；不再有历史正文发布或读取的情况下，本地/全局/全文索引全部完成 checksum。备库 `basic` 通过（116.45 秒），其余两项继续执行。测试版 `seekdb-no-history-probe-v6` SHA256=`9be6dc184a3841ef37c6d1c1c145fd430060ed7a4bfe870459be7a74c0b1dc1c` 已编译，四件套 `bootstrap-native-kv` 正在运行；mini 与普通 fork 的完整描述检查已通过。测试 hook 已全部从生产源码撤除。测试版首轮编译发现审计脚本调用 restore 构造函数的参数顺序未更新，已修正后编译通过。

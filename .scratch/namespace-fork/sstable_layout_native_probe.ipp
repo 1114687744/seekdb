@@ -1,7 +1,6 @@
 // Native persisted SSTable provenance audit, only in disposable test builds.
 static int audit_sstable_layouts()
 {
-  auto &store = share::server_service<ObAccessService>()->storage_schema_store();
   ObLS *ls = nullptr;
   int ret = share::server_service<ObLSService>()->get_ls(ls);
   ObLSTabletIterator iter(ObMDSGetTabletMode::READ_WITHOUT_CHECK);
@@ -28,21 +27,12 @@ static int audit_sstable_layouts()
       const auto &basic = meta.get_sstable_meta().get_basic_meta();
       ObArenaAllocator allocator(ObMemAttr("SstLayoutAudit"));
       ObStorageSchema body;
-      InstanceMetaStore::Transaction tx;
-      ret = store.begin(tx, ObTimeUtility::current_time() + 30000000, true);
-      if (ret == OB_SUCCESS) {
-        ret = StorageSchemaHistory(store, tx).read_published(
-            basic.storage_layout_id_, basic.schema_version_, allocator, body);
-      }
+      ret = meta.get_sstable_meta().get_storage_schema(allocator, body);
       int64_t columns = 0;
       if (ret == OB_SUCCESS) { ret = body.get_stored_column_count_in_sstable(columns); }
       if (ret == OB_SUCCESS && (columns < basic.column_cnt_
           || basic.storage_layout_id_ == 0 || body.is_column_info_simplified())) {
         ret = OB_STATE_NOT_MATCH;
-      }
-      if (tx.is_active()) {
-        const int end = store.commit(tx);
-        if (ret == OB_SUCCESS) { ret = end; }
       }
       // The physical restore constructor and native codec must carry origin G.
       std::string encoded(basic.get_serialize_size(), '\0');
@@ -58,7 +48,8 @@ static int audit_sstable_layouts()
         ret = checksums.push_back(meta.get_sstable_meta().get_col_checksum()[i]);
       }
       if (ret == OB_SUCCESS) {
-        ret = copy.init_for_physical_restore(table->get_key(), restored, checksums);
+        ret = copy.init_for_physical_restore(table->get_key(), restored,
+            meta.get_sstable_meta().get_storage_schema_image(), checksums);
       }
       if (ret == OB_SUCCESS && (copy.storage_layout_id_ != basic.storage_layout_id_
           || copy.schema_version_ != basic.schema_version_)) { ret = OB_STATE_NOT_MATCH; }

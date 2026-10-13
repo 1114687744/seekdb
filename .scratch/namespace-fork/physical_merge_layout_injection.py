@@ -28,7 +28,7 @@ changes = (
   }
 '''),
     ('src/storage/compaction/ob_medium_compaction_func.cpp',
-     '  medium_info.storage_schema_.reset();\n  if (access == nullptr) {',
+     '  medium_info.storage_schema_.reset();\n  if (schemas == nullptr) {',
      '''  if (getenv("SEEKDB_MEDIUM_FORCE_OLD_TARGET") != nullptr) {
     medium_info.medium_snapshot_ = 1;
   }

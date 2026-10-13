@@ -161,6 +161,9 @@ if args.profile == 'owned-layout':
     selected = {
         'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'namespace_checksum_probe.py',
                                'checksum_group_recovery_probe.py', 'cold_materialization_probe.py',
+                               'local_schema_install_probe.py', 'meta_layout_probe.py',
+                               'sstable_layout_probe.py', 'row_layout_replay_probe.py',
+                               'physical_merge_layout_probe.py', 'medium_layout_target_probe.py',
                                'shared_transaction_probe.py'},
         'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
         'sql': {'namespace_sql_worker_prototype.py'},

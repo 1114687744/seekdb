@@ -68,9 +68,9 @@ def run(binary, case):
                 exp.sql('ALTER SYSTEM MINOR FREEZE')
                 rows = wait_for(lambda: [row for row in trace.read('LOCAL_SCHEMA_MINI ', physical_id(1, logical))
                                         if row['observed'] == version], 'mini did not observe new definition')
-                assert any(row['before'] < row['observed'] and row['before_columns'] == row['observed_columns']
+                assert any(row['before'] == row['observed'] and row['before_columns'] == row['observed_columns']
                            for row in rows), rows
-                assert all(row['result'] == version and row['simplified'] == 1 for row in rows), rows
+                assert all(row['result'] == version and row['simplified'] == 0 for row in rows), rows
                 assert exp.sql('SELECT * FROM local_schema.t ORDER BY id') == ((1, 10), (2, 9), (3, 12))
             else:
                 exp.sql('FORK NAMESPACE local_schema_child FROM ns1')

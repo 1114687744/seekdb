@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 OceanBase. Licensed under the Apache License, Version 2.0. */
 #include "rootserver/fork_table/table_storage_layouts.h"
-#include "storage/instance_meta/storage_schema_history.h"
+#include "storage/compaction/ob_freeze_info_mgr.h"
+#include "storage/tx/ob_trans_service.h"
 #include "storage/ob_storage_schema.h"
 #include "storage/ob_common_id_utils.h"
 #include "common/mysqlclient/ob_mysql_transaction.h"
@@ -16,7 +17,18 @@ int TableStorageLayouts::read_at(InstanceMetaStore &store, const share::SCN &tar
 {
   definitions.reuse();
   InstanceMetaStore::Transaction tx;
-  int ret = StorageSchemaHistory::begin_read_at(store, tx, target, deadline);
+  auto *freezes = share::server_service<ObFreezeInfoMgr>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (freezes == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  int ret = store.begin_read(tx, deadline, [&](share::SCN &snapshot) {
+    share::SCN retained, readable;
+    int rc = freezes->get_schema_history_retention(retained);
+    if (rc == OB_SUCCESS && target < retained) { rc = OB_SNAPSHOT_DISCARDED; }
+    if (rc == OB_SUCCESS) { rc = transactions->get_weak_read_snapshot_version(-1, readable); }
+    if (rc == OB_SUCCESS && target > readable) { rc = OB_EAGAIN; }
+    if (rc == OB_SUCCESS) { snapshot = target; }
+    return rc;
+  });
   if (ret == OB_SUCCESS) {
     ret = store.scan(tx, MetaCollection::TABLE_STORAGE_LAYOUTS, {},
         [&](const ObString &key, const ObString &value, bool &) {
@@ -34,12 +46,6 @@ int TableStorageLayouts::read_at(InstanceMetaStore &store, const share::SCN &tar
       if (rc == OB_SUCCESS) { rc = definitions.push_back(item); }
       return rc;
     });
-  }
-  // A scan visitor cannot reenter its transaction. Read heads after closing
-  // the scan, while the very same native snapshot is still retained.
-  StorageSchemaHistory history(store, tx);
-  for (int64_t i = 0; ret == OB_SUCCESS && i < definitions.count(); ++i) {
-    ret = history.read_version(definitions.at(i).layout_id, definitions.at(i).schema_version);
   }
   if (tx.is_active()) {
     const int end = store.commit(tx);
@@ -91,7 +97,6 @@ int TableStorageLayouts::bind(ObCreateTabletSchema &schema)
               key, ObString(sizeof(encoded), encoded));
         }
         if (ret == OB_ERR_PRIMARY_KEY_DUPLICATE) { ret = OB_TRY_LOCK_ROW_CONFLICT; }
-        if (ret == OB_SUCCESS) { ret = StorageSchemaHistory(store_, tx_).create(layout_id, schema); }
       }
     } else if (ret == OB_SUCCESS) {
       pos = 0;
@@ -110,17 +115,7 @@ int TableStorageLayouts::prepare_create(ObCreateTabletSchema &schema)
 
 int TableStorageLayouts::publish(ObCreateTabletSchema &schema)
 {
-  int ret = bind(schema);
-  StorageSchemaHistory history(store_, tx_);
-  int64_t version = OB_INVALID_VERSION;
-  if (ret == OB_SUCCESS) { ret = history.read_version(schema.get_storage_layout_id(), version); }
-  // CREATE may have seeded this exact definition earlier in this transaction.
-  // A table version identifies an immutable definition, not a content hash.
-  if (ret == OB_SUCCESS && version > schema.get_schema_version()) { ret = OB_STATE_NOT_MATCH; }
-  if (ret == OB_SUCCESS && version < schema.get_schema_version()) {
-    ret = history.publish(schema.get_storage_layout_id(), schema);
-  }
-  return ret;
+  return bind(schema);
 }
 
 int TableStorageLayouts::retire(uint64_t table_id)

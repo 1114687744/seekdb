@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real meta merge must load exact G/V after mini, despite a newer DDL head."""
+"""Meta uses its complete local/file layout despite a newer catalog definition."""
 import argparse
 import os
 from pathlib import Path
@@ -104,7 +104,7 @@ def run(binary, owner, cold_parent=False):
             exp.sql('ALTER SYSTEM MINOR FREEZE')
             rows = wait_for(lambda: [row for row in mini.read('LOCAL_SCHEMA_MINI ', tablet)
                                     if row['observed'] == version], 'mini did not capture new definition')
-            assert all(row['simplified'] == 1 and row['result'] == version for row in rows), rows
+            assert all(row['simplified'] == 0 and row['result'] == version for row in rows), rows
             wait_for(lambda: exp.sql("SELECT tablet_id FROM oceanbase.V$OB_SSTABLES "
                 f"WHERE tablet_id={tablet} AND table_type IN ('MINI','MINOR')", log=False),
                 'post-DDL mini not installed')
@@ -119,7 +119,7 @@ def run(binary, owner, cold_parent=False):
             trigger.write_text(str(tablet) + '\n')
             selected = wait_for(lambda: trace.read(tablet), 'meta did not select a layout', 180)[0]
             assert selected['ret'] == 0 and selected['local'] == version, selected
-            assert selected['selected'] == version and selected['head'] == head and selected['full'] == 1, selected
+            assert selected['selected'] == version and selected['full'] == 1, selected
             wait_for(lambda: exp.sql("SELECT tablet_id FROM oceanbase.V$OB_SSTABLES "
                 f"WHERE tablet_id={tablet} AND table_type='META' "
                 f"AND end_log_scn={selected['snapshot']}", log=False), 'selected meta result not installed')

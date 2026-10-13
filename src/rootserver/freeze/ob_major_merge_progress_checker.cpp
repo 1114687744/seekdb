@@ -94,12 +94,6 @@ int ObMajorMergeProgressChecker::check_progress()
     bool waiting = false;
     for (const auto &owner : owners) {
       if (ret != OB_SUCCESS || stop_) { break; }
-      bool participates = false;
-      for (int64_t i = 0; !participates && i < definitions.count(); ++i) {
-        participates = definitions.at(i).namespace_id == owner.id;
-      }
-      // No bindings at F: this owner was created later or owns no SQL objects.
-      if (!participates) { continue; }
       ObMergeProgress owner_progress;
       const auto completed = completed_.find(owner.id);
       if (completed != completed_.end()) {

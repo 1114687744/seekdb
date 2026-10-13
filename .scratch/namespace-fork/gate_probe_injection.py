@@ -12,6 +12,7 @@ import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('action', choices=('enable', 'disable'))
+parser.add_argument('--profile', choices=('full', 'owned-layout'), default='full')
 args = parser.parse_args()
 local = Path(__file__).resolve().parent
 scripts = ('native_probe_injection.py', 'storage_schema_history_probe_injection.py', 'layout_retention_probe_injection.py', 'table_storage_layout_probe_injection.py', 'shared_transaction_fault_injection.py',
@@ -25,6 +26,12 @@ scripts = ('native_probe_injection.py', 'storage_schema_history_probe_injection.
            'local_schema_install_injection.py', 'runtime_shrink_injection.py', 'meta_layout_injection.py',
            'sstable_layout_injection.py', 'physical_report_injection.py', 'layout_reference_gc_injection.py',
            'native_schema_catalog_injection.py')
+if args.profile == 'owned-layout':
+    # Historical layout-table unit hooks target the removed module. These
+    # hooks exercise the replacement catalog/MDS/file paths and real failures.
+    retired = {'storage_schema_history_probe_injection.py', 'layout_retention_probe_injection.py',
+               'table_storage_layout_probe_injection.py', 'layout_reference_gc_injection.py'}
+    scripts = tuple(script for script in scripts if script not in retired)
 try:
     for script in scripts:
         subprocess.run([sys.executable, str(local / script), args.action], check=True)

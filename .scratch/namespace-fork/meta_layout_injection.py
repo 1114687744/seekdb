@@ -39,17 +39,13 @@ changes = (
     ('src/storage/compaction/ob_basic_tablet_merge_ctx.cpp',
      '    FLOG_INFO("get storage schema to meta merge", "param", get_dag_param(), KPC_(static_param_.schema));\n',
      '''    if (getenv("SEEKDB_META_LAYOUT_TARGET")) {
-      storage::InstanceMetaStore::Transaction tx;
-      auto &store = access->storage_schema_store();
-      int64_t head = -1;
-      int probe_ret = store.begin_weak_read(tx, ObTimeUtility::current_time() + 30000000);
-      if (probe_ret == OB_SUCCESS) {
-        probe_ret = storage::StorageSchemaHistory(store, tx).read_version(layout_id, head);
-      }
-      if (tx.is_active()) { store.commit(tx); }
-      fprintf(stderr, "META_LAYOUT_SELECTED tablet=%lu G=%lu local=%ld selected=%ld head=%ld snapshot=%ld full=%d ret=%d\\n",
-          get_tablet_id().id(), layout_id, schema_version, storage_schema->get_schema_version(), head,
-          static_param_.version_range_.snapshot_version_, !storage_schema->is_column_info_simplified(), probe_ret);
+      storage::ObStorageSchema *local = nullptr;
+      int probe_ret = tablet->load_write_layout(mem_ctx_.get_allocator(), local);
+      fprintf(stderr, "META_LAYOUT_SELECTED tablet=%lu G=%lu local=%ld selected=%ld snapshot=%ld full=%d ret=%d\\n",
+          get_tablet_id().id(), tablet->get_tablet_meta().storage_layout_id_,
+          local == nullptr ? -1 : local->get_schema_version(), static_param_.schema_->get_schema_version(),
+          static_param_.version_range_.snapshot_version_, !static_param_.schema_->is_column_info_simplified(), probe_ret);
+      if (local != nullptr) { ObStorageSchemaUtil::free_storage_schema(mem_ctx_.get_allocator(), local); }
       fflush(stderr);
     }
 '''),

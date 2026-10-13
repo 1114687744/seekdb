@@ -46,7 +46,8 @@ struct MergeTable
   explicit MergeTable(const TableStorageLayouts::Definition &input)
     : definition(input), allocator(ObMemAttr("MergeDefinition")) {}
   ~MergeTable() { if (owned_schema != nullptr) { owned_schema->~ObTableSchema(); } }
-  const TableStorageLayouts::Definition &definition;
+  TableStorageLayouts::Definition definition;
+  int64_t schema_version = -1;
   ObArenaAllocator allocator;
   ObTableSchema *owned_schema = nullptr;
   const ObTableSchema *schema = nullptr;
@@ -76,15 +77,16 @@ int load_definition(MergeTable &table, NativeSchemaCatalog &catalog)
       table.allocator, table.owned_schema);
   table.schema = table.owned_schema;
   if (ret == OB_SUCCESS && (table.schema == nullptr
-      || table.schema->get_table_id() != ref.table_id
-      || table.schema->get_schema_version() != ref.schema_version)) {
+      || table.schema->get_table_id() != ref.table_id)) {
     ret = OB_SCHEMA_EAGAIN;
   }
   if (ret == OB_SUCCESS) {
+    table.schema_version = table.schema->get_schema_version();
     table.excluded = !table.schema->has_tablet()
         || (table.schema->is_index_table() ? !table.schema->can_read_index()
                                           : !table.schema->should_check_major_merge_progress());
-    if (!table.excluded) { ret = physical_tablets(ref.namespace_id, *table.schema, table.tablets); }
+    if (!table.excluded && ref.layout_id == 0) { ret = OB_SCHEMA_EAGAIN; }
+    else if (!table.excluded) { ret = physical_tablets(ref.namespace_id, *table.schema, table.tablets); }
   }
   if (ret != OB_SUCCESS) { LOG_WARN("cannot read merge object's exact definition", K(ret), K(ref)); }
   return ret;
@@ -110,9 +112,9 @@ int check_retirement(MergeTable &table, NativeSchemaCatalog &current)
     version = latest_versions.at(0).get_schema_version();
     deleted = latest_versions.at(0).is_deleted();
   }
-  if (ret == OB_SUCCESS && deleted != 0 && version > ref.schema_version) {
+  if (ret == OB_SUCCESS && deleted != 0 && version > table.schema_version) {
     table.retired = true;
-  } else if (ret == OB_SUCCESS && version > ref.schema_version) {
+  } else if (ret == OB_SUCCESS && version > table.schema_version) {
     ObArenaAllocator allocator(ObMemAttr("MergeRetirement"));
     ObTableSchema *latest = nullptr;
     ObArray<ObTabletID> ids;
@@ -187,7 +189,7 @@ int build_checksum(MergeTable &table, const ObFreezeInfo &freeze, ObLS &ls,
     } else if (OB_FAIL(candidate.load(*handle.get_obj()))) {
     } else if (!candidate.participates(freeze.frozen_scn_.get_val_for_tx())
         || !candidate.matches(*item) || item->storage_layout_id_ != table.definition.layout_id
-        || item->schema_version_ != table.definition.schema_version
+        || item->schema_version_ != table.schema_version
         || item->compaction_scn_ != freeze.frozen_scn_) {
       ret = OB_EAGAIN;
       LOG_INFO("merge checksum identity or definition pending", K(table.definition), KPC(item), K(freeze.frozen_scn_));
@@ -326,10 +328,26 @@ int ObChecksumValidator::check_namespace(uint64_t namespace_id,
   NativeSchemaCatalog current(namespace_id, *access, *transactions);
   std::map<uint64_t, MergeTables> groups;
   int ret = historical.begin_read_at(deadline, freeze.frozen_scn_);
-  // Fix the expected graph from definitions before examining any reports.
-  for (int64_t i = 0; ret == OB_SUCCESS && !stop && i < definitions.count(); ++i) {
-    const auto &definition = definitions.at(i);
-    if (definition.namespace_id != namespace_id) { continue; }
+  // A currently live Namespace may have been created after F. Absence of its
+  // Namespace row in this protected view is the participation test.
+  if (ret == OB_ENTRY_NOT_EXIST) { return OB_SUCCESS; }
+  std::map<uint64_t, uint64_t> bindings;
+  for (int64_t i = 0; ret == OB_SUCCESS && i < definitions.count(); ++i) {
+    const auto &entry = definitions.at(i);
+    if (entry.namespace_id == namespace_id && !bindings.emplace(entry.table_id, entry.layout_id).second) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+  }
+  ObArray<uint64_t> ids;
+  if (ret == OB_SUCCESS) { ret = historical.get_table_ids(ids); }
+  // Enumerate from the catalog, not from bindings or arrived reports. A
+  // missing binding for an expected physical table must fail validation.
+  for (int64_t i = 0; ret == OB_SUCCESS && !stop && i < ids.count(); ++i) {
+    TableStorageLayouts::Definition definition;
+    definition.namespace_id = namespace_id;
+    definition.table_id = ids.at(i);
+    const auto binding = bindings.find(definition.table_id);
+    if (binding != bindings.end()) { definition.layout_id = binding->second; }
     std::unique_ptr<MergeTable> table(new (std::nothrow) MergeTable(definition));
     if (!table) { ret = OB_ALLOCATE_MEMORY_FAILED; }
     else if (OB_FAIL(load_definition(*table, historical))) {
