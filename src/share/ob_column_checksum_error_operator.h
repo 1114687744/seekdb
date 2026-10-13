@@ -18,7 +18,6 @@
 #define OCEANBASE_SHARE_OB_COLUMN_CHECKSUM_ERROR_OPERATOR_H_
 
 #include "lib/container/ob_iarray.h"
-#include "common/mysqlclient/ob_isql_client.h"
 #include "common/ob_tablet_id.h"
 #include "share/scn.h"
 #include "share/storage/ob_column_checksum_error_info_table_storage.h"
@@ -61,15 +60,12 @@ public:
   // Initialize SQLite storage (called once at startup)
   static int init(ObSQLiteConnectionPool &meta_db_pool);
   static int insert_column_checksum_err_info(
-      common::ObISQLClient &sql_client,
       const ObColumnChecksumErrorInfo &info);
   // delete records whose 'frozen_scn' < min_frozen_scn
   static int delete_column_checksum_err_info(
-      common::ObISQLClient &sql_client,
       const SCN &min_frozen_scn);
   // delete records whose 'frozen_scn' = compaction_scn
   static int delete_column_checksum_err_info_by_scn(
-      common::ObISQLClient &sql_client,
       const int64_t compaction_scn);
   static int check_exist_ckm_error_table(const int64_t compaction_scn,
                                           bool &exist);

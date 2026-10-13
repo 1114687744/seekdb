@@ -34,6 +34,8 @@ ObTabletCreateSSTableParam::ObTabletCreateSSTableParam()
     sstable_logic_seq_(-1),
     schema_version_(-1),
     storage_layout_id_(0),
+    storage_schema_(nullptr),
+    storage_schema_image_(),
     create_snapshot_version_(-1),
     progressive_merge_round_(-1),
     progressive_merge_step_(-1),
@@ -195,10 +197,12 @@ void ObTabletCreateSSTableParam::inner_init_for_physical_restore(
 int ObTabletCreateSSTableParam::init_for_physical_restore(
     const ObITable::TableKey &table_key,
     const blocksstable::ObSSTableBasicMeta &basic_meta,
+    const common::ObString &storage_schema_image,
     const common::ObIArray<int64_t> &column_checksums)
 {
   int ret = OB_SUCCESS;
   inner_init_for_physical_restore(table_key, basic_meta);
+  storage_schema_image_ = storage_schema_image;
   root_block_addr_.set_none_addr();
   data_block_macro_meta_addr_.set_none_addr();
   data_index_tree_height_ = basic_meta.data_index_tree_height_;
@@ -231,11 +235,13 @@ int ObTabletCreateSSTableParam::init_for_physical_restore(
 int ObTabletCreateSSTableParam::init_for_physical_restore(
     const ObITable::TableKey &table_key,
     const blocksstable::ObSSTableBasicMeta &basic_meta,
+    const common::ObString &storage_schema_image,
     const common::ObIArray<int64_t> &column_checksums,
     const blocksstable::ObSSTableMergeRes &res)
 {
   int ret = OB_SUCCESS;
   inner_init_for_physical_restore(table_key, basic_meta);
+  storage_schema_image_ = storage_schema_image;
   column_cnt_ = res.data_column_cnt_;
   max_merged_trans_version_ = res.max_merged_trans_version_;
   if (OB_FAIL(inner_init_with_merge_res(res))) {
@@ -274,6 +280,7 @@ int ObTabletCreateSSTableParam::init_for_empty_major_sstable(const ObTabletID &t
     max_merged_trans_version_ = snapshot_version;
 
     schema_version_ = storage_schema.get_schema_version();
+    storage_schema_ = &storage_schema;
     storage_layout_id_ = storage_layout_id;
     create_snapshot_version_ = 0;
     progressive_merge_round_ = storage_schema.get_progressive_merge_round();
@@ -318,9 +325,11 @@ int ObTabletCreateSSTableParam::init_for_empty_major_sstable(const ObTabletID &t
 int ObTabletCreateSSTableParam::init_for_empty_minor_sstable(const ObTabletID &tablet_id,
                                                              const share::SCN &start_scn,
                                                              const share::SCN &end_scn,
-                                                             const blocksstable::ObSSTableBasicMeta &basic_meta)
+                                                             const blocksstable::ObSSTableMeta &sstable_meta)
 {
   int ret = OB_SUCCESS;
+  const auto &basic_meta = sstable_meta.get_basic_meta();
+  storage_schema_image_ = sstable_meta.get_storage_schema_image();
   table_key_.table_type_ = ObITable::TableType::MINOR_SSTABLE;
   table_key_.tablet_id_ = tablet_id;
   table_key_.scn_range_.start_scn_ = start_scn;
@@ -377,6 +386,7 @@ int ObTabletCreateSSTableParam::init_for_small_sstable(
 {
   int ret = OB_SUCCESS;
   const blocksstable::ObSSTableBasicMeta &basic_meta = sstable_meta.get_basic_meta();
+  storage_schema_image_ = sstable_meta.get_storage_schema_image();
   filled_tx_scn_ = basic_meta.filled_tx_scn_;
   tx_data_recycle_scn_ = basic_meta.tx_data_recycle_scn_;
   ddl_scn_ = basic_meta.ddl_scn_;
@@ -442,6 +452,7 @@ int ObTabletCreateSSTableParam::init_for_merge(const compaction::ObBasicTabletMe
                    ? static_param.version_range_.base_version_
                    : 0;
   schema_version_ = ctx.get_schema()->get_schema_version();
+  storage_schema_ = ctx.get_schema();
   storage_layout_id_ = ctx.get_tablet()->get_tablet_meta().storage_layout_id_;
   create_snapshot_version_ = static_param.create_snapshot_version_;
   progressive_merge_round_ = ctx.get_progressive_merge_round();
@@ -515,7 +526,8 @@ int ObTabletCreateSSTableParam::init_for_ddl(blocksstable::ObSSTableIndexBuilder
       table_mode_ = table_mode;
       index_type_ = index_type;
       rowkey_column_cnt_ = rowkey_column_cnt;
-      schema_version_ = create_schema_version_on_tablet;
+      schema_version_ = storage_schema.get_schema_version();
+      storage_schema_ = &storage_schema;
       storage_layout_id_ = storage_layout_id;
       latest_row_store_type_ = row_store_type;
       create_snapshot_version_ = ddl_param.snapshot_version_;
@@ -583,6 +595,7 @@ int ObTabletCreateSSTableParam::init_for_ddl_mem(const ObITable::TableKey &table
     table_mode_ = storage_schema.get_table_mode_struct();
     index_type_ = storage_schema.get_index_type();
     schema_version_ = storage_schema.get_schema_version();
+    storage_schema_ = &storage_schema;
     storage_layout_id_ = storage_layout_id;
     latest_row_store_type_ = storage_schema.get_row_store_type();
     create_snapshot_version_ = table_key.get_snapshot_version();
@@ -636,10 +649,12 @@ int ObTabletCreateSSTableParam::init_for_ddl_mem(const ObITable::TableKey &table
 int ObTabletCreateSSTableParam::init_for_fork(const ObTabletID &dst_tablet_id,
                                                const ObITable::TableKey &src_table_key,
                                                const blocksstable::ObSSTableBasicMeta &basic_meta,
+                                               const ObStorageSchema &storage_schema,
                                                const blocksstable::ObSSTableMergeRes &res,
                                                const share::SCN &max_end_scn)
 {
   int ret = OB_SUCCESS;
+  storage_schema_ = &storage_schema;
   table_key_ = src_table_key;
   table_key_.tablet_id_ = dst_tablet_id;
   // For fork rewrite: limit end_scn to max_end_scn (e.g., fork_snapshot_version)
@@ -684,6 +699,7 @@ int ObTabletCreateSSTableParam::init_for_fork(
     const share::SCN &max_end_scn)
 {
   int ret = OB_SUCCESS;
+  storage_schema_image_ = sstable_meta.get_storage_schema_image();
   
   table_key_ = src_table_key;
   table_key_.tablet_id_ = dst_tablet_id;
@@ -825,6 +841,7 @@ int ObTabletCreateSSTableParam::init_for_mds(
   latest_row_store_type_ = mds_schema.get_row_store_type();
   recycle_version_ = 0;
   schema_version_ = mds_schema.get_schema_version();
+  storage_schema_ = &mds_schema;
   create_snapshot_version_ = static_param.create_snapshot_version_;
   progressive_merge_round_ = 0;
   progressive_merge_step_ = 0;

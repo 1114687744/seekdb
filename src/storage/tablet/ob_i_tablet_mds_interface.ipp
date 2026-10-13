@@ -847,9 +847,10 @@ template <class T, typename std::enable_if<!OB_TRAIT_IS_SAME_CLASS(T, ObTabletCr
 int ObITabletMdsInterface::check_mds_data_complete_(bool &is_complete) const 
 {
   int ret = OB_SUCCESS;
-  // Multi-source data (excluding tablet_status) is readable only after the
-  // local tablet has finished materializing it.
-  is_complete = get_tablet_meta_().local_status_.is_data_status_complete();
+  // The write layout is installed by local CREATE, including before inherited
+  // files have been taken over. Other metadata may still depend on that copy.
+  is_complete = OB_TRAIT_IS_SAME_CLASS(T, TabletWriteLayout)
+      || get_tablet_meta_().local_status_.is_data_status_complete();
   return ret;
 }
 

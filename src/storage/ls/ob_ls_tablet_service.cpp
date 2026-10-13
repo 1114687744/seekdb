@@ -1753,6 +1753,39 @@ int ObLSTabletService::set_tablet_status(
   return ret;
 }
 
+int ObLSTabletService::set_write_layout(const common::ObTabletID &tablet_id,
+    const TabletWriteLayout &layout, mds::MdsCtx &ctx)
+{
+  int ret = OB_SUCCESS;
+  if (!is_inited_ || !tablet_id.is_valid() || !layout.is_valid()) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    // Check and set under the existing tablet publication lock. A competing
+    // installer either sees our committed version or retries the MDS writer;
+    // an older request cannot replace a newer installed description.
+    ObBucketHashWLockGuard guard(bucket_lock_, tablet_id.hash());
+    ObTabletHandle handle;
+    int64_t version = -1;
+    mds::MdsWriter writer;
+    mds::TwoPhaseCommitState state;
+    SCN committed;
+    if (OB_FAIL(direct_get_tablet(tablet_id, handle))) {
+    } else if (handle.get_obj()->get_tablet_meta().storage_layout_id_ != layout.layout_id_) {
+      ret = OB_STATE_NOT_MATCH;
+    } else if (OB_FAIL(handle.get_obj()->get_latest<TabletWriteLayout>(
+        [&](const TabletWriteLayout &current) {
+          version = current.schema_.get_schema_version();
+          return OB_SUCCESS;
+        }, writer, state, committed))) {
+    } else if (state != mds::TwoPhaseCommitState::ON_COMMIT) {
+      ret = OB_EAGAIN;
+    } else if (version < layout.schema_.get_schema_version()) {
+      ret = handle.get_obj()->set(layout, ctx);
+    }
+  }
+  return ret;
+}
+
 int ObLSTabletService::replay_set_tablet_status(
     const common::ObTabletID &tablet_id,
     const share::SCN &scn,

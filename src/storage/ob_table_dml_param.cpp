@@ -678,6 +678,7 @@ ObTableDMLParam::ObTableDMLParam(common::ObIAllocator &allocator)
   : allocator_(allocator),
     runtime_schema_version_(OB_INVALID_VERSION),
     data_table_(allocator),
+    storage_schema_(),
     col_descs_(allocator),
     col_map_(allocator)
 {
@@ -692,6 +693,7 @@ void ObTableDMLParam::reset()
 {
   runtime_schema_version_ = OB_INVALID_VERSION;
   data_table_.reset();
+  storage_schema_.reset();
 }
 
 int ObTableDMLParam::convert(const ObTableSchema *table_schema,
@@ -704,6 +706,7 @@ int ObTableDMLParam::convert(const ObTableSchema *table_schema,
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), K(runtime_schema_version), KP(table_schema));
   } else if (OB_FAIL(data_table_.convert(table_schema))) {
+  } else if (OB_FAIL(storage_schema_.init(allocator_, *table_schema))) {
   } else if (OB_FAIL(prepare_storage_param(column_ids))) {
   } else {
     runtime_schema_version_ = runtime_schema_version;
@@ -740,6 +743,11 @@ OB_DEF_SERIALIZE(ObTableDMLParam)
     }
   }
   OB_UNIS_ENCODE(col_descs_);
+  // Some operators carry an unused, empty DML parameter. Only a built table
+  // parameter owns a write layout; its table identity is already serialized.
+  if (OB_SUCC(ret) && data_table_.is_valid()) {
+    ret = storage_schema_.serialize(buf, buf_len, pos);
+  }
   return ret;
 }
 
@@ -758,6 +766,9 @@ OB_DEF_DESERIALIZE(ObTableDMLParam)
     }
   }
   OB_UNIS_DECODE(col_descs_);
+  if (OB_SUCC(ret) && data_table_.is_valid()) {
+    ret = storage_schema_.deserialize(allocator_, buf, data_len, pos);
+  }
   if (OB_SUCC(ret) && !col_descs_.empty()) {
     if (OB_FAIL(col_map_.init(col_descs_))) {
     }
@@ -773,6 +784,7 @@ OB_DEF_SERIALIZE_SIZE(ObTableDMLParam)
   LST_DO_CODE(OB_UNIS_ADD_LEN, runtime_schema_version_);
   len += data_table_.get_serialize_size();
   OB_UNIS_ADD_LEN(col_descs_);
+  if (data_table_.is_valid()) { len += storage_schema_.get_serialize_size(); }
   return len;
 }
 

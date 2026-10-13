@@ -290,7 +290,7 @@ int ObMajorMergeScheduler::do_before_major_merge(const bool start_merge)
   } else if (OB_FAIL(progress_checker_->set_basic_info(freeze_info))) {
   } else if (start_merge) {
     if (OB_FAIL(ObColumnChecksumErrorOperator::delete_column_checksum_err_info(
-        *sql_proxy_, global_broadcast_scn))) {
+        global_broadcast_scn))) {
     }
   }
   return ret;

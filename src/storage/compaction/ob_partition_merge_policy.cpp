@@ -1005,14 +1005,15 @@ int ObPartitionMergePolicy::get_multi_version_start(
     auto &store = tablet_id.is_ls_storage_schema_tablet()
         ? access.storage_schema_store() : access.instance_meta_store();
     share::SCN durable = share::SCN::max_scn();
-    if (tablet_id.is_ls_storage_schema_tablet()) {
-      ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_history_retention, durable);
-      if (ret == OB_NOT_INIT) {
-        // Startup can dump metadata before the durable freeze view is ready,
-        // but must keep its existing MVCC boundary until restoration finishes.
-        durable = share::SCN::base_scn();
-        ret = OB_SUCCESS;
-      }
+    // Namespace roots and directory pages are also read at the unfinished
+    // freeze's SCN. Logical page deletion may proceed; its MVCC version must
+    // survive until the historical catalog readers have finished.
+    ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_history_retention, durable);
+    if (ret == OB_NOT_INIT) {
+      // Startup can dump metadata before the durable freeze view is ready,
+      // but must keep its existing MVCC boundary until restoration finishes.
+      durable = share::SCN::base_scn();
+      ret = OB_SUCCESS;
     }
     // Readers register BEFORE checking the durable boundary. Sample that
     // boundary before the readers, so concurrent completion cannot leave a
@@ -1043,6 +1044,30 @@ int ObPartitionMergePolicy::get_multi_version_start(
     } else {
       LOG_WARN("failed to get kept multi_version_start", K(ret),
           "tablet_id", tablet.get_tablet_meta().tablet_id_);
+    }
+  }
+  if (OB_SUCC(ret) && !tablet.is_ls_inner_tablet()
+      && is_inner_table(tablet.get_tablet_meta().create_table_id_)) {
+    // Catalog cells and ordinary current/history rows share this metadata
+    // retention rule. Physical storage uses the creation object's table kind;
+    // it neither decodes a Namespace nor activates its schema service.
+    share::SCN durable;
+    ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_history_retention, durable);
+    if (ret == OB_NOT_INIT) {
+      durable = share::SCN::base_scn();
+      ret = OB_SUCCESS;
+    }
+    share::SCN readers;
+    if (OB_SUCC(ret) && OB_FAIL(share::server_service<ObAccessService>()->instance_meta_store()
+        .min_retained_snapshot(readers))) {
+    } else if (OB_SUCC(ret) && readers < durable) {
+      // Native catalog views retain their directory snapshot in this store
+      // before validating F. The same lease protects their schema row reads.
+      durable = readers;
+    }
+    if (OB_SUCC(ret)) {
+      snapshot_info.update_by_smaller_snapshot(share::SNAPSHOT_FOR_MULTI_VERSION,
+          durable.get_val_for_tx());
     }
   }
   if (OB_SUCC(ret) && !tablet.is_ls_inner_tablet()) {

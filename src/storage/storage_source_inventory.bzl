@@ -812,6 +812,7 @@ STORAGE_UNITY_GROUPS = [
             "src/storage/tablet/ob_tablet_macro_info_iterator.cpp",
             "src/storage/tablet/ob_tablet_ddl_complete_mds_helper.cpp",
             "src/storage/tablet/ob_tablet_ddl_complete_mds_data.cpp",
+            "src/storage/tablet/tablet_write_layout.cpp",
         ],
         generated_srcs = [],
         external_srcs = [],

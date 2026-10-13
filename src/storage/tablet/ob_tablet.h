@@ -261,6 +261,7 @@ public:
   int load_storage_schema(
       common::ObIAllocator &allocator,
       ObStorageSchema *&storage_schema) const;
+  int load_write_layout(common::ObIAllocator &allocator, ObStorageSchema *&schema) const;
   int read_medium_info_list(
       common::ObArenaAllocator &allocator,
       const compaction::ObMediumCompactionInfoList *&medium_info_list) const;

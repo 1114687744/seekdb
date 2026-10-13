@@ -35,6 +35,7 @@ class SCN;
 namespace blocksstable
 {
 class ObSSTableBasicMeta;
+class ObSSTableMeta;
 class ObSSTable;
 }
 namespace storage
@@ -108,15 +109,6 @@ public:
     return ret;
   }
 
-  static int get_clipped_storage_schema_on_demand(
-      common::ObIAllocator &allocator,
-      common::hash::ObHashMap<ObITable::TableKey, ObStorageSchema*> &clipped_schemas_map,
-      const common::ObTabletID &tablet_id,
-      const blocksstable::ObSSTable &sstable,
-      const ObStorageSchema &latest_schema,
-      const bool try_create,
-      const ObStorageSchema *&storage_schema);
-
   static int check_need_fill_empty_sstable(
       ObLS *ls,
       const bool is_minor_sstable,
@@ -126,7 +118,7 @@ public:
       share::SCN &end_scn);
 
   static int build_create_empty_sstable_param(
-      const blocksstable::ObSSTableBasicMeta &meta,
+      const blocksstable::ObSSTableMeta &meta,
       const ObITable::TableKey &table_key,
       const common::ObTabletID &dst_tablet_id,
       const share::SCN &end_scn,

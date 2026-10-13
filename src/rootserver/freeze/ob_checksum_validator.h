@@ -23,8 +23,6 @@
 
 namespace oceanbase {
 namespace storage { class ObLS; }
-namespace common { class ObMySQLProxy; }
-namespace share { namespace schema { class ObMultiVersionSchemaService; } }
 namespace rootserver {
 
 // One owner and one freeze per invocation. Definitions and checksums are
@@ -35,7 +33,6 @@ public:
   static int check_namespace(uint64_t namespace_id,
       const common::ObIArray<TableStorageLayouts::Definition> &definitions,
       const share::ObFreezeInfo &freeze, storage::ObLS &ls,
-      common::ObMySQLProxy &sql, share::schema::ObMultiVersionSchemaService &schemas,
       volatile bool &stop, compaction::ObMergeProgress &progress,
       compaction::ObUncompactInfo &pending);
 };

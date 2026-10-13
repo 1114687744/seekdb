@@ -252,6 +252,8 @@ public:
       const common::ObTabletID &tablet_id,
       const ObTabletCreateDeleteMdsUserData &tablet_status,
       mds::MdsCtx &ctx);
+  int set_write_layout(const common::ObTabletID &tablet_id,
+      const TabletWriteLayout &layout, mds::MdsCtx &ctx);
   int replay_set_tablet_status(
       const common::ObTabletID &tablet_id,
       const share::SCN &scn,

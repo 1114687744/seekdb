@@ -36,6 +36,7 @@
   #include "src/storage/truncate_info/ob_truncate_info_mds_helper.h"
   #include "src/storage/tablet/ob_tablet_ddl_complete_mds_helper.h"
   #include "src/storage/tablet/ob_tablet_ddl_complete_mds_data.h"
+  #include "src/storage/tablet/tablet_write_layout.h"
 #endif
 /**************************************************************************************************/
 
@@ -93,6 +94,10 @@ _GENERATE_MDS_FRAME_CODE_FOR_TRANSACTION_(HELPER_CLASS, BUFFER_CTX_TYPE, ID, ENU
                                           ::oceanbase::storage::mds::MdsCtx,\
                                           42,\
                                           TABLET_FORK)
+  GENERATE_MDS_FRAME_CODE_FOR_TRANSACTION(::oceanbase::storage::TabletWriteLayoutHelper,\
+                                          ::oceanbase::storage::mds::MdsCtx,\
+                                          43,\
+                                          TABLET_WRITE_LAYOUT)
 #undef GENERATE_MDS_FRAME_CODE_FOR_TRANSACTION
 #endif
 /**************************************************************************************************/
@@ -149,6 +154,9 @@ _GENERATE_MDS_UNIT_(KEY_TYPE, VALUE_TYPE, NEED_MULTI_VERSION)
                     false)
   GENERATE_MDS_UNIT(::oceanbase::storage::mds::DummyKey,\
                     ::oceanbase::storage::ObTabletDDLCompleteMdsUserData,\
+                    false)
+  GENERATE_MDS_UNIT(::oceanbase::storage::mds::DummyKey,\
+                    ::oceanbase::storage::TabletWriteLayout,\
                     false)
 #endif
 

@@ -16,17 +16,18 @@
 
 #define USING_LOG_PREFIX RS_COMPACTION
 #include "rootserver/freeze/ob_checksum_validator.h"
+#include "observer/schema/native_schema_catalog.h"
 #include "rootserver/fork_table/namespace_fork_kernel_prototype.h"
+#include "storage/compaction/ob_freeze_info_mgr.h"
 #include "storage/compaction/ob_table_ckm_items.h"
 #include "storage/compaction/physical_merge_candidate.h"
 #include "storage/ls/ob_ls.h"
 #include "storage/ls/ob_ls_tablet_service.h"
 #include "storage/tablet/ob_tablet.h"
-#include "share/schema/ob_multi_version_schema_service.h"
-#include "share/schema/ob_schema_getter_guard.h"
-#include "share/schema/ob_schema_service.h"
-#include "common/mysqlclient/ob_mysql_proxy.h"
-#include "common/mysqlclient/ob_mysql_result.h"
+#include "storage/tx/ob_trans_service.h"
+#include "storage/tx_storage/ob_access_service.h"
+#include "share/rc/ob_server_runtime.h"
+#include "lib/worker.h"
 #include <map>
 #include <memory>
 
@@ -37,6 +38,7 @@ using namespace share;
 using namespace share::schema;
 using namespace storage;
 using namespace compaction;
+using observer::NativeSchemaCatalog;
 namespace {
 
 struct MergeTable
@@ -67,21 +69,12 @@ int physical_tablets(uint64_t owner, const ObTableSchema &schema, ObIArray<ObTab
   return ret;
 }
 
-int load_definition(MergeTable &table, ObSchemaGetterGuard &current,
-    ObSchemaService &backend, ObMySQLProxy &sql)
+int load_definition(MergeTable &table, NativeSchemaCatalog &catalog)
 {
   const auto &ref = table.definition;
-  const ObTableSchema *cached = nullptr;
-  int ret = current.get_table_schema(ref.table_id, cached);
-  if (ret == OB_TABLE_NOT_EXIST) { ret = OB_SUCCESS; }
-  if (ret == OB_SUCCESS && cached != nullptr && cached->get_schema_version() == ref.schema_version) {
-    table.schema = cached;
-  } else if (ret == OB_SUCCESS) {
-    ObRefreshSchemaStatus status;
-    ret = backend.get_table_schema(status, ref.table_id, ref.schema_version,
-        sql, table.allocator, table.owned_schema);
-    table.schema = table.owned_schema;
-  }
+  int ret = catalog.get_table(ref.table_id, INT64_MAX,
+      table.allocator, table.owned_schema);
+  table.schema = table.owned_schema;
   if (ret == OB_SUCCESS && (table.schema == nullptr
       || table.schema->get_table_id() != ref.table_id
       || table.schema->get_schema_version() != ref.schema_version)) {
@@ -100,34 +93,30 @@ int load_definition(MergeTable &table, ObSchemaGetterGuard &current,
 // Called only when native inputs have disappeared or changed identity. A
 // missing report is never a reason to retire a table. Read committed catalog
 // evidence, then compare actual bindings, including same-count replacements.
-int check_retirement(MergeTable &table, ObSchemaService &backend, ObMySQLProxy &sql)
+int check_retirement(MergeTable &table, NativeSchemaCatalog &current)
 {
   int ret = OB_SUCCESS;
-  ObSqlString query;
-  ObISQLClient::ReadResult result;
+  ObSEArray<uint64_t, 1> ids;
+  ObSEArray<ObTableLatestSchemaVersion, 1> latest_versions;
   int64_t version = -1, deleted = 0;
   const auto &ref = table.definition;
-  if (OB_FAIL(query.append_fmt("SELECT schema_version,is_deleted FROM oceanbase.__all_table_history "
-      "WHERE table_id=%lu ORDER BY schema_version DESC LIMIT 1", ref.table_id))) {
-  } else if (OB_FAIL(sql.read(result, query.ptr()))) {
-  } else if (OB_FAIL(result.get_result()->next())) {
-    // Missing history is not a committed DROP. The core catalog may not have
-    // this ordinary history row; native inputs must remain available for it.
-    if (ret == OB_ITER_END) { ret = OB_SCHEMA_EAGAIN; }
-  } else if (OB_FAIL(result.get_result()->get_int("schema_version", version))) {
-  } else if (OB_FAIL(result.get_result()->get_int("is_deleted", deleted))) {
+  if (OB_FAIL(ids.push_back(ref.table_id))) {
+  } else if (OB_FAIL(current.get_table_latest_schema_versions(ids, latest_versions))) {
+  } else if (latest_versions.count() != 1) {
+    // Missing history does not prove a committed DROP, including core tables
+    // with a separate fixed/cell representation.
+    ret = OB_SCHEMA_EAGAIN;
+  } else {
+    version = latest_versions.at(0).get_schema_version();
+    deleted = latest_versions.at(0).is_deleted();
   }
-  const int closed = result.close();
-  result.reset();
-  if (ret == OB_SUCCESS) { ret = closed; }
   if (ret == OB_SUCCESS && deleted != 0 && version > ref.schema_version) {
     table.retired = true;
   } else if (ret == OB_SUCCESS && version > ref.schema_version) {
     ObArenaAllocator allocator(ObMemAttr("MergeRetirement"));
     ObTableSchema *latest = nullptr;
-    ObRefreshSchemaStatus status;
     ObArray<ObTabletID> ids;
-    if (OB_FAIL(backend.get_table_schema(status, ref.table_id, version, sql, allocator, latest))) {
+    if (OB_FAIL(current.get_table(ref.table_id, version, allocator, latest))) {
     } else if (latest == nullptr) {
       ret = OB_SCHEMA_EAGAIN;
     } else if (OB_FAIL(physical_tablets(ref.namespace_id, *latest, ids))) {
@@ -146,7 +135,7 @@ int check_retirement(MergeTable &table, ObSchemaService &backend, ObMySQLProxy &
 }
 
 int inspect_table(MergeTable &table, const ObFreezeInfo &freeze, ObLS &ls,
-    ObSchemaService &backend, ObMySQLProxy &sql, ObUncompactInfo &pending)
+    NativeSchemaCatalog &current, ObUncompactInfo &pending)
 {
   int ret = OB_SUCCESS;
   const auto &ref = table.definition;
@@ -165,7 +154,7 @@ int inspect_table(MergeTable &table, const ObFreezeInfo &freeze, ObLS &ls,
                                       || candidate.layout_id != ref.layout_id));
       }
     }
-    if (ret == OB_SUCCESS && changed) { ret = check_retirement(table, backend, sql); }
+    if (ret == OB_SUCCESS && changed) { ret = check_retirement(table, current); }
     if (ret == OB_SUCCESS && !table.retired
         && (changed || !candidate.participates(freeze.frozen_scn_.get_val_for_tx())
             || !handle.get_obj()->is_data_complete())) {
@@ -215,7 +204,7 @@ int build_checksum(MergeTable &table, const ObFreezeInfo &freeze, ObLS &ls,
 }
 
 int compare_pair(MergeTable &data, MergeTable &index, bool fts,
-    const ObFreezeInfo &freeze, ObMySQLProxy &sql)
+    const ObFreezeInfo &freeze)
 {
   int ret = OB_SUCCESS;
   if (!data.retired && !index.retired && !data.excluded && !index.excluded) {
@@ -231,7 +220,7 @@ int compare_pair(MergeTable &data, MergeTable &index, bool fts,
       ret = ObTableCkmItems::validate_ckm_func[fts ? 0 : index.schema->is_global_index_table()](
           freeze, data_items, index_items, error);
       if (ret == OB_CHECKSUM_ERROR) {
-        const int report = ObColumnChecksumErrorOperator::insert_column_checksum_err_info(sql, error);
+        const int report = ObColumnChecksumErrorOperator::insert_column_checksum_err_info(error);
         LOG_ERROR("historical index checksum mismatch", K(error), K(report),
             "data", data.definition, "index", index.definition);
       }
@@ -245,7 +234,7 @@ int compare_pair(MergeTable &data, MergeTable &index, bool fts,
 }
 
 int verify_indexes(MergeTables &tables, const ObFreezeInfo &freeze,
-    ObMySQLProxy &sql, volatile bool &stop)
+    volatile bool &stop)
 {
   int ret = OB_SUCCESS;
   for (const auto &entry : tables) {
@@ -257,9 +246,9 @@ int verify_indexes(MergeTables &tables, const ObFreezeInfo &freeze,
       // A readable index at F must have a definition for its data table too.
       ret = OB_SCHEMA_EAGAIN;
     } else if (!index.schema->should_not_validate_data_index_ckm()) {
-      ret = compare_pair(*found->second, index, false, freeze, sql);
+      ret = compare_pair(*found->second, index, false, freeze);
     } else if (is_rowkey_doc_aux(index.schema->get_index_type())) {
-      ret = compare_pair(*found->second, index, true, freeze, sql);
+      ret = compare_pair(*found->second, index, true, freeze);
     } else if (is_doc_rowkey_aux(index.schema->get_index_type())
         || is_fts_index_aux(index.schema->get_index_type())) {
       MergeTable *paired = nullptr;
@@ -282,15 +271,15 @@ int verify_indexes(MergeTables &tables, const ObFreezeInfo &freeze,
       }
       if (ret == OB_SUCCESS && paired == nullptr) { ret = OB_SCHEMA_EAGAIN; }
       if (ret == OB_SUCCESS) {
-        ret = doc_rowkey ? compare_pair(*paired, index, true, freeze, sql)
-                        : compare_pair(index, *paired, true, freeze, sql);
+        ret = doc_rowkey ? compare_pair(*paired, index, true, freeze)
+                        : compare_pair(index, *paired, true, freeze);
       }
     }
   }
   return stop ? OB_CANCELED : ret;
 }
 int check_group(MergeTables &tables, const ObFreezeInfo &freeze, ObLS &ls,
-    ObSchemaService &backend, ObMySQLProxy &sql, volatile bool &stop,
+    NativeSchemaCatalog &current, volatile bool &stop,
     ObUncompactInfo &pending)
 {
   int ret = OB_SUCCESS;
@@ -305,7 +294,7 @@ int check_group(MergeTables &tables, const ObFreezeInfo &freeze, ObLS &ls,
         const auto data = tables.find(table.schema->get_data_table_id());
         if (data != tables.end() && data->second->retired) { table.retired = true; }
       }
-      if (!table.retired) { ret = inspect_table(table, freeze, ls, backend, sql, pending); }
+      if (!table.retired) { ret = inspect_table(table, freeze, ls, current, pending); }
     }
   }
   for (auto &entry : tables) {
@@ -317,28 +306,33 @@ int check_group(MergeTables &tables, const ObFreezeInfo &freeze, ObLS &ls,
       else { ret = build_checksum(table, freeze, ls, *table.checksum, pending); }
     }
   }
-  if (ret == OB_SUCCESS && !stop) { ret = verify_indexes(tables, freeze, sql, stop); }
+  if (ret == OB_SUCCESS && !stop) { ret = verify_indexes(tables, freeze, stop); }
   return stop ? OB_CANCELED : ret;
 }
 } // namespace
 
 int ObChecksumValidator::check_namespace(uint64_t namespace_id,
     const ObIArray<TableStorageLayouts::Definition> &definitions,
-    const ObFreezeInfo &freeze, ObLS &ls, ObMySQLProxy &sql,
-    ObMultiVersionSchemaService &schemas, volatile bool &stop,
+    const ObFreezeInfo &freeze, ObLS &ls, volatile bool &stop,
     ObMergeProgress &progress, ObUncompactInfo &pending)
 {
-  ObSchemaGetterGuard current;
+  auto *access = share::server_service<ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  auto *freezes = share::server_service<ObFreezeInfoMgr>();
+  if (access == nullptr || transactions == nullptr || freezes == nullptr) { return OB_NOT_INIT; }
+  const int64_t deadline = MIN(THIS_WORKER.get_timeout_ts(),
+      ObTimeUtility::current_time() + 120L * 1000 * 1000);
+  NativeSchemaCatalog historical(namespace_id, *access, *transactions);
+  NativeSchemaCatalog current(namespace_id, *access, *transactions);
   std::map<uint64_t, MergeTables> groups;
-  auto *backend = schemas.get_schema_service();
-  int ret = backend == nullptr ? OB_NOT_INIT : schemas.get_runtime_schema_guard(current);
+  int ret = historical.begin_read_at(deadline, freeze.frozen_scn_);
   // Fix the expected graph from definitions before examining any reports.
   for (int64_t i = 0; ret == OB_SUCCESS && !stop && i < definitions.count(); ++i) {
     const auto &definition = definitions.at(i);
     if (definition.namespace_id != namespace_id) { continue; }
     std::unique_ptr<MergeTable> table(new (std::nothrow) MergeTable(definition));
     if (!table) { ret = OB_ALLOCATE_MEMORY_FAILED; }
-    else if (OB_FAIL(load_definition(*table, current, *backend, sql))) {
+    else if (OB_FAIL(load_definition(*table, historical))) {
     } else {
       const uint64_t data_table_id = table->schema->is_index_table()
           ? table->schema->get_data_table_id() : definition.table_id;
@@ -347,10 +341,15 @@ int ObChecksumValidator::check_namespace(uint64_t namespace_id,
       }
     }
   }
+  const int closed = historical.close();
+  if (ret == OB_SUCCESS) { ret = closed; }
+  // A fresh committed view is used only to prove retirement after F. It
+  // never replaces a definition selected in the historical graph above.
+  if (ret == OB_SUCCESS) { ret = current.begin_read(deadline); }
   bool waiting = false;
   for (auto &group : groups) {
     if (ret != OB_SUCCESS || stop) { break; }
-    ret = check_group(group.second, freeze, ls, *backend, sql, stop, pending);
+    ret = check_group(group.second, freeze, ls, current, stop, pending);
     const bool group_waiting = ret == OB_EAGAIN || ret == OB_SCHEMA_EAGAIN;
     waiting |= group_waiting;
     if (ret == OB_SUCCESS || group_waiting) {
@@ -376,6 +375,8 @@ int ObChecksumValidator::check_namespace(uint64_t namespace_id,
   }
   if (stop) { ret = OB_CANCELED; }
   else if (ret == OB_SUCCESS && waiting) { ret = OB_EAGAIN; }
+  const int cleanup = current.close();
+  if (ret == OB_SUCCESS) { ret = cleanup; }
   if (ret == OB_SUCCESS) {
     LOG_INFO("Namespace historical checksum complete", K(namespace_id), K(freeze.frozen_scn_),
         "group_count", groups.size());

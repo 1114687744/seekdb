@@ -295,11 +295,16 @@ public:
       int64_t &pos,
       ObSSTableMeta *&dest) const;
   int get_column_checksums(common::ObIArray<int64_t> &column_checksums) const;
+  // The image belongs to this file's metadata/cache allocation. Decode only
+  // when a consumer needs a mutable schema in its own task allocator.
+  const common::ObString &get_storage_schema_image() const { return storage_schema_image_; }
+  int get_storage_schema(common::ObIAllocator &allocator, storage::ObStorageSchema &schema) const;
   TO_STRING_KV(K_(basic_meta), K_(column_ckm_struct), K_(data_root_info), K_(macro_info), K_(tx_ctx), K_(is_inited));
 private:
   int fsync_block(const ObTabletCreateSSTableParam &param);
   bool check_meta() const;
   int init_base_meta(const ObTabletCreateSSTableParam &param, common::ObArenaAllocator &allocator);
+  int init_storage_schema(const ObTabletCreateSSTableParam &param, common::ObArenaAllocator &allocator);
   int init_data_index_tree_info(
       const storage::ObTabletCreateSSTableParam &param,
       common::ObArenaAllocator &allocator);
@@ -321,6 +326,7 @@ private:
   ObSSTableMacroInfo macro_info_;
   ObColumnCkmStruct column_ckm_struct_;
   ObTxContext tx_ctx_;  // abandon meta !!!
+  common::ObString storage_schema_image_;
   // The following fields don't to persist
   bool is_inited_;
   DISALLOW_COPY_AND_ASSIGN(ObSSTableMeta);

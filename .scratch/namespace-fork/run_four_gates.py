@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', required=True, help='production binary without local test hooks')
 parser.add_argument('--native-probe-binary', required=True, help='same source revision, built with gate_probe_injection.py enable (native, shared transaction, preparation, identity, DDL commit and cold materialization hooks)')
 parser.add_argument('--log-dir', type=Path, default=local / 'gate-results' / datetime.now().strftime('%Y%m%d-%H%M%S'))
-parser.add_argument('--profile', choices=('full', 'native-inner-table', 'fork-boundaries'), default='full',
+parser.add_argument('--profile', choices=('full', 'native-inner-table', 'fork-boundaries', 'owned-layout'), default='full',
                     help='explicitly scoped regression set; full remains the default')
 parser.add_argument('--gate', action='append', choices=('bootstrap-native-kv', 'bootstrap', 'sql', 'direct', 'tls'), help='rerun selected failed/pending steps; default runs all')
 parser.add_argument('--start-at-script', help='resume one gate at the first command with this script filename; keep prior logs as evidence')
@@ -94,6 +94,7 @@ gates = [
     ]),
     ('sql', [[tools / 'namespace_sql_worker_prototype.py', '--binary', binary, '--case', 'full']]),
     ('direct', [
+        [local / 'owned_layout_probe.py', '--binary', binary],
         [local / 'native_dml_boundary_probe.py', '--binary', binary, '--minimal'],
         [local / 'native_dml_boundary_probe.py', '--binary', binary],
         [local / 'native_schema_catalog_ddl_probe.py', '--binary', binary],
@@ -156,7 +157,27 @@ gates = [
     ]),
     ('tls', [[tools / 'namespace_worker_direct_prototype.py', '--binary', binary, '--case', 'tls']]),
 ]
-if args.profile == 'fork-boundaries':
+if args.profile == 'owned-layout':
+    selected = {
+        'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'namespace_checksum_probe.py',
+                               'checksum_group_recovery_probe.py', 'cold_materialization_probe.py',
+                               'shared_transaction_probe.py'},
+        'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
+        'sql': {'namespace_sql_worker_prototype.py'},
+        'direct': {'owned_layout_probe.py', 'native_schema_catalog_ddl_probe.py',
+                   'fork_detached_restart_probe.py', 'retired_baseline_restart_probe.py',
+                   'fork_service_latency_probe.py', 'namespace_worker_direct_prototype.py'},
+        'tls': {'namespace_worker_direct_prototype.py'},
+    }
+    gates = [(name, [command for command in commands if command[0].name in selected[name]])
+             for name, commands in gates]
+    gates[3][1].append([local / 'namespace_checksum_probe.py', '--binary', binary, '--fts'])
+    gates[3][1].append([local / 'run_standby_suite.py', '--binary', binary,
+                       '--case', 'basic', '--case', 'namespace_fork_local',
+                       '--case', 'standby_sstable_replay',
+                       '--log-dir', args.log_dir / 'owned-layout-standby'])
+    print('PROFILE owned-layout (native catalog and locally owned physical descriptions)', flush=True)
+elif args.profile == 'fork-boundaries':
     selected = {
         'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'cold_materialization_probe.py',
                                'shared_transaction_probe.py', 'physical_gc_plan_probe.py',

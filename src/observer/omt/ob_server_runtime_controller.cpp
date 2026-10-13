@@ -36,6 +36,7 @@
 #include "ob_server_runtime.h"
 #include "rpc/obmysql/ob_sql_nio_server.h"
 #include "share/schema/ob_schema_runtime_service.h"
+#include "observer/schema/native_schema_catalog.h"
 #include "observer/mysql/obsm_conn_callback.h"
 #include "sql/dtl/ob_dtl_fc_server.h"
 #include "storage/allocator/ob_shared_memory_allocator_mgr.h"   // ObSharedMemAllocMgr
@@ -1509,6 +1510,7 @@ int ObServer::obs_init_modules()
   if (OB_SUCC(ret)) {
     mods_schema_runtime_service_->set_tablet_schema_resolver(
         namespace_worker_prototype::resolve_inprocess_tablet_schema);
+    mods_schema_runtime_service_->set_merge_schema_loader(NativeSchemaCatalog::load_merge_schema);
   }
   if (OB_SUCC(ret) && OB_FAIL(ObMemstoreFreezer::server_module_init(mods_memstore_freezer_))) { SERVER_LOG(WARN, "mods_memstore_freezer_ fail", KR(ret)); }
   if (OB_SUCC(ret) && OB_FAIL(ObCheckPointService::server_module_init(

@@ -22,8 +22,11 @@
 
 namespace oceanbase
 {
+namespace common { class ObIAllocator; }
+namespace storage { class ObTablet; class ObStorageSchema; }
 namespace share
 {
+class SCN;
 namespace schema
 {
 class ObMultiVersionSchemaService;
@@ -31,10 +34,12 @@ class ObSchemaRuntimeService
 {
 public:
   using TabletSchemaResolver = int (*)(uint64_t, ObMultiVersionSchemaService *&, uint64_t &);
+  using MergeSchemaLoader = int (*)(const storage::ObTablet &, const SCN &, bool,
+      common::ObIAllocator &, SCN &, storage::ObStorageSchema &);
   static int server_module_init(ObSchemaRuntimeService *&schema_runtime_service);
 
   ObSchemaRuntimeService()
-    : tablet_schema_resolver_(nullptr)
+    : tablet_schema_resolver_(nullptr), merge_schema_loader_(nullptr)
   {
   }
   ~ObSchemaRuntimeService() {}
@@ -42,6 +47,12 @@ public:
   void destroy();
   void set_tablet_schema_resolver(TabletSchemaResolver resolver)
   { tablet_schema_resolver_.store(resolver, std::memory_order_release); }
+  void set_merge_schema_loader(MergeSchemaLoader loader)
+  { merge_schema_loader_.store(loader, std::memory_order_release); }
+  // Returns a complete output layout from a protected catalog snapshot;
+  // this operation never activates a Namespace runtime or schema cache.
+  int load_merge_schema(const storage::ObTablet &, const SCN &requested, bool choose_current,
+      common::ObIAllocator &, SCN &selected, storage::ObStorageSchema &);
   int resolve_tablet_schema(uint64_t tablet_id,
                             ObMultiVersionSchemaService *&schema_service,
                             uint64_t &schema_tablet_id);
@@ -54,6 +65,7 @@ public:
 
 private:
   std::atomic<TabletSchemaResolver> tablet_schema_resolver_;
+  std::atomic<MergeSchemaLoader> merge_schema_loader_;
 };
 
 }

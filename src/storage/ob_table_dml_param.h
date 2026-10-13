@@ -21,6 +21,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "storage/access/ob_table_param.h"
 #include "storage/access/ob_table_read_info.h"
+#include "storage/ob_storage_schema.h"
 
 namespace oceanbase
 {
@@ -192,6 +193,7 @@ public:
   OB_INLINE ObTableSchemaParam& get_data_table_ref() { return data_table_; }
   OB_INLINE const ObColDescArray & get_col_descs() const { return col_descs_; }
   OB_INLINE const ColumnMap &get_col_map() const { return col_map_; }
+  const storage::ObStorageSchema &get_storage_schema() const { return storage_schema_; }
   DECLARE_TO_STRING;
 
 private:
@@ -202,6 +204,7 @@ private:
   common::ObIAllocator &allocator_;
   int64_t runtime_schema_version_;
   ObTableSchemaParam data_table_;
+  storage::ObStorageSchema storage_schema_;
 
   //generated storage param from columns_ids_ in ObTableModify, for performance improvement
   ObColDescArray col_descs_;

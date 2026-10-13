@@ -533,6 +533,7 @@ ObSSTableMeta::ObSSTableMeta()
     macro_info_(),
     column_ckm_struct_(),
     tx_ctx_(),
+    storage_schema_image_(),
     is_inited_(false)
 {
 }
@@ -562,6 +563,7 @@ void ObSSTableMeta::reset()
   basic_meta_.reset();
   column_ckm_struct_.reset();
   tx_ctx_.reset();
+  storage_schema_image_.reset();
   is_inited_ = false;
 }
 
@@ -630,6 +632,67 @@ int ObSSTableMeta::init_data_index_tree_info(
   return ret;
 }
 
+int ObSSTableMeta::init_storage_schema(
+    const ObTabletCreateSSTableParam &param, common::ObArenaAllocator &allocator)
+{
+  int ret = OB_SUCCESS;
+  if (param.storage_schema_ != nullptr) {
+    const auto &schema = *param.storage_schema_;
+    int64_t columns = 0;
+    char *buf = nullptr;
+    const int64_t len = schema.get_serialize_size();
+    int64_t pos = 0;
+    if (!param.storage_schema_image_.empty() || !schema.is_valid()
+        || schema.is_column_info_simplified()
+        || schema.get_schema_version() != basic_meta_.schema_version_) {
+      ret = OB_STATE_NOT_MATCH;
+      LOG_WARN("SSTable requires its complete output schema", K(ret), K(basic_meta_), K(schema));
+    } else if (OB_FAIL(schema.get_stored_column_count_in_sstable(columns))) {
+    } else if (columns < basic_meta_.column_cnt_) {
+      ret = OB_STATE_NOT_MATCH;
+    } else if (OB_ISNULL(buf = static_cast<char *>(allocator.alloc(len)))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (OB_FAIL(schema.serialize(buf, len, pos))) {
+    } else if (pos != len) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      storage_schema_image_.assign_ptr(buf, len);
+    }
+  } else if (param.storage_schema_image_.empty()) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("SSTable creation has no output schema", K(ret), K(param));
+  } else if (OB_FAIL(ob_write_string(allocator, param.storage_schema_image_, storage_schema_image_))) {
+  } else {
+    ObStorageSchema schema;
+    ret = get_storage_schema(allocator, schema);
+  }
+  return ret;
+}
+
+int ObSSTableMeta::get_storage_schema(common::ObIAllocator &allocator, ObStorageSchema &schema) const
+{
+  int ret = OB_SUCCESS;
+  int64_t pos = 0;
+  int64_t columns = 0;
+  if (storage_schema_image_.empty()) {
+    ret = OB_INVALID_DATA;
+  } else if (OB_FAIL(schema.deserialize(allocator, storage_schema_image_.ptr(),
+      storage_schema_image_.length(), pos))) {
+  } else if (pos != storage_schema_image_.length() || !schema.is_valid()
+      || schema.is_column_info_simplified()
+      || schema.get_schema_version() != basic_meta_.schema_version_) {
+    ret = OB_INVALID_DATA;
+  } else if (OB_FAIL(schema.get_stored_column_count_in_sstable(columns))) {
+  } else if (columns < basic_meta_.column_cnt_) {
+    ret = OB_INVALID_DATA;
+  }
+  if (OB_FAIL(ret)) {
+    schema.reset();
+    LOG_WARN("invalid SSTable physical description", K(ret), K(basic_meta_));
+  }
+  return ret;
+}
+
 bool ObSSTableMeta::check_meta() const
 {
   return basic_meta_.is_valid()
@@ -661,6 +724,7 @@ int ObSSTableMeta::init(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid arguments", K(ret), K(param));
   } else if (OB_FAIL(init_base_meta(param, allocator))) {
+  } else if (OB_FAIL(init_storage_schema(param, allocator))) {
   } else if (OB_FAIL(init_data_index_tree_info(param, allocator))) {
   } else if (OB_UNLIKELY(SSTABLE_WRITE_BUILDING != basic_meta_.status_)) {
     ret = OB_STATE_NOT_MATCH;
@@ -697,7 +761,7 @@ int ObSSTableMeta::serialize(char *buf, const int64_t buf_len, int64_t &pos) con
     OB_UNIS_ENCODE(SSTABLE_META_VERSION);
     OB_UNIS_ENCODE(len);
     if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(serialize_(buf + pos, buf_len, tmp_pos))) {
+    } else if (OB_FAIL(serialize_(buf + pos, buf_len - pos, tmp_pos))) {
     } else if (OB_UNLIKELY(len != tmp_pos)) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected error, serialize may have bug", K(ret), K(len), K(tmp_pos), KPC(this));
@@ -716,6 +780,7 @@ int ObSSTableMeta::serialize_(char *buf, const int64_t buf_len, int64_t &pos) co
   } else if (OB_FAIL(data_root_info_.serialize(buf, buf_len, pos))) {
   } else if (OB_FAIL(macro_info_.serialize(buf, buf_len, pos))) {
   } else if (OB_FAIL(tx_ctx_.serialize(buf, buf_len, pos))) {
+  } else if (OB_FAIL(storage_schema_image_.serialize(buf, buf_len, pos))) {
   }
   return ret;
 }
@@ -743,6 +808,8 @@ int ObSSTableMeta::deserialize(
     } else if (OB_UNLIKELY(version != SSTABLE_META_VERSION)) {
       ret = OB_NOT_SUPPORTED;
       LOG_WARN("object version mismatch", K(ret), K(version));
+    } else if (len <= 0 || pos > data_len || len > data_len - pos) {
+      ret = OB_INVALID_DATA;
     } else if (OB_FAIL(deserialize_(allocator, buf + pos, len, tmp_pos))) {
     } else if (OB_UNLIKELY(len != tmp_pos)) {
       ret = OB_ERR_UNEXPECTED;
@@ -765,6 +832,7 @@ int ObSSTableMeta::deserialize_(
     int64_t &pos)
 {
   int ret = OB_SUCCESS;
+  ObString schema_image;
   if (OB_FAIL(basic_meta_.deserialize(buf, data_len, pos))) {
   } else if (OB_FAIL(column_ckm_struct_.deserialize(allocator, buf, data_len, pos))) {
   } else {
@@ -773,6 +841,10 @@ int ObSSTableMeta::deserialize_(
     if (OB_FAIL(data_root_info_.deserialize(allocator, des_meta, buf, data_len, pos))) {
     } else if (OB_FAIL(macro_info_.deserialize(allocator, des_meta, buf, data_len, pos))) {
     } else if (OB_FAIL(tx_ctx_.deserialize(allocator, buf, data_len, pos))) {
+    } else if (OB_FAIL(schema_image.deserialize(buf, data_len, pos))) {
+    } else if (schema_image.empty()) {
+      ret = OB_INVALID_DATA;
+    } else if (OB_FAIL(ob_write_string(allocator, schema_image, storage_schema_image_))) {
     }
   }
   return ret;
@@ -796,6 +868,7 @@ int64_t ObSSTableMeta::get_serialize_size_() const
   len += data_root_info_.get_serialize_size();
   len += macro_info_.get_serialize_size();
   len += tx_ctx_.get_serialize_size();
+  len += storage_schema_image_.get_serialize_size();
   return len;
 }
 
@@ -804,7 +877,8 @@ int64_t ObSSTableMeta::get_variable_size() const
   return column_ckm_struct_.get_deep_copy_size()
        + data_root_info_.get_variable_size()
        + macro_info_.get_variable_size()
-       + tx_ctx_.get_variable_size();
+       + tx_ctx_.get_variable_size()
+       + storage_schema_image_.length();
 }
 
 int ObSSTableMeta::deep_copy(
@@ -829,6 +903,9 @@ int ObSSTableMeta::deep_copy(
     } else if (OB_FAIL(macro_info_.deep_copy(buf, buf_len, pos, dest->macro_info_))) {
     } else if (OB_FAIL(tx_ctx_.deep_copy(buf, buf_len, pos, dest->tx_ctx_))) {
     } else {
+      MEMCPY(buf + pos, storage_schema_image_.ptr(), storage_schema_image_.length());
+      dest->storage_schema_image_.assign_ptr(buf + pos, storage_schema_image_.length());
+      pos += storage_schema_image_.length();
       dest->is_inited_ = is_inited_;
     }
   }
@@ -883,6 +960,9 @@ int ObSSTableMetaChecker::check_sstable_meta_strict_equality(
   } else if (OB_UNLIKELY(!old_basic_meta.check_basic_meta_equality(new_basic_meta))) {
     ret = OB_INVALID_DATA;
     LOG_WARN("new sstable basic meta differs after defragmentation", K(ret));
+  } else if (old_sstable_meta.get_storage_schema_image() != new_sstable_meta.get_storage_schema_image()) {
+    ret = OB_INVALID_DATA;
+    LOG_WARN("SSTable physical description differs after defragmentation", K(ret));
   } else if (OB_UNLIKELY(old_sstable_meta.get_col_checksum_cnt()
       != new_sstable_meta.get_col_checksum_cnt())) {
     ret = OB_INVALID_DATA;
@@ -907,6 +987,8 @@ int ObSSTableMetaChecker::check_sstable_meta(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("old sstable meta or new sstable meta is invalid", K(ret), K(old_sstable_meta), K(new_sstable_meta));
   } else if (OB_FAIL(check_sstable_basic_meta(old_sstable_meta.get_basic_meta(), new_sstable_meta.get_basic_meta()))) {
+  } else if (old_sstable_meta.get_storage_schema_image() != new_sstable_meta.get_storage_schema_image()) {
+    ret = OB_INVALID_DATA;
   } else if (OB_FAIL(check_sstable_column_checksum_(old_sstable_meta.get_col_checksum(), old_sstable_meta.get_col_checksum_cnt(),
       new_sstable_meta.get_col_checksum(), new_sstable_meta.get_col_checksum_cnt()))) {
   }

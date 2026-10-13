@@ -41,6 +41,16 @@ int ObSchemaRuntimeService::server_module_init(
 void ObSchemaRuntimeService::destroy()
 {
   tablet_schema_resolver_.store(nullptr, std::memory_order_release);
+  merge_schema_loader_.store(nullptr, std::memory_order_release);
+}
+
+int ObSchemaRuntimeService::load_merge_schema(const storage::ObTablet &tablet,
+    const SCN &requested, bool choose_current, common::ObIAllocator &allocator,
+    SCN &selected, storage::ObStorageSchema &schema)
+{
+  const auto loader = merge_schema_loader_.load(std::memory_order_acquire);
+  return loader == nullptr ? OB_NOT_INIT
+      : loader(tablet, requested, choose_current, allocator, selected, schema);
 }
 
 int ObSchemaRuntimeService::resolve_tablet_schema(

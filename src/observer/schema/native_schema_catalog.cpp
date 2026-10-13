@@ -16,6 +16,8 @@
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tx/ob_trans_service.h"
 #include "storage/tx_storage/ob_access_service.h"
+#include "storage/compaction/ob_freeze_info_mgr.h"
+#include "namespace/namespace.h"
 
 namespace oceanbase {
 namespace observer {
@@ -118,19 +120,70 @@ NativeSchemaCatalog::~NativeSchemaCatalog() { close(); }
 
 int NativeSchemaCatalog::begin_read(int64_t deadline, bool weak)
 {
+  return begin_read_with_snapshot(deadline, [&](share::SCN &snapshot) {
+    return weak ? state_->transactions.get_weak_read_snapshot_version(-1, snapshot)
+                : state_->transactions.get_read_snapshot_version(deadline, snapshot);
+  });
+}
+
+int NativeSchemaCatalog::begin_read_with_snapshot(int64_t deadline,
+    const std::function<int(share::SCN &)> &acquire)
+{
   auto &s = *state_;
   if (s.transaction.is_active() || s.view) { return OB_INIT_TWICE; }
+  if (!acquire) { return OB_INVALID_ARGUMENT; }
   int ret = s.native.begin_read(s.transaction, deadline, [&](share::SCN &snapshot) {
     return NamespaceForkKernelPrototype::acquire_read_view(s.namespace_id,
         [&](share::SCN &selected) {
-      const int rc = weak ? s.transactions.get_weak_read_snapshot_version(-1, selected)
-                         : s.transactions.get_read_snapshot_version(deadline, selected);
+      const int rc = acquire(selected);
       if (rc == OB_SUCCESS) { snapshot = selected; }
       return rc;
     }, s.view);
   });
   if (ret != OB_SUCCESS) { s.view.reset(); }
   return ret;
+}
+
+int NativeSchemaCatalog::begin_read_at(int64_t deadline, const share::SCN &target)
+{
+  if (!target.is_valid() || target.is_min() || target.is_max()) { return OB_INVALID_ARGUMENT; }
+  auto *freezes = share::server_service<storage::ObFreezeInfoMgr>();
+  if (freezes == nullptr) { return OB_NOT_INIT; }
+  return begin_read_with_snapshot(deadline, [&](share::SCN &snapshot) {
+    // Register the reader first, then validate the durable requirement. The
+    // retention sampler observes these in the reverse order.
+    share::SCN retained, readable;
+    int rc = freezes->get_schema_history_retention(retained);
+    if (rc == OB_SUCCESS && target < retained) { rc = OB_SNAPSHOT_DISCARDED; }
+    if (rc == OB_SUCCESS) { rc = state_->transactions.get_weak_read_snapshot_version(-1, readable); }
+    if (rc == OB_SUCCESS && target > readable) { rc = OB_EAGAIN; }
+    if (rc == OB_SUCCESS) { snapshot = target; }
+    return rc;
+  });
+}
+
+int NativeSchemaCatalog::load_merge_schema(const storage::ObTablet &tablet,
+    const share::SCN &requested, bool choose_current, ObIAllocator &allocator,
+    share::SCN &selected, storage::ObStorageSchema &out)
+{
+  selected.reset();
+  auto *access = share::server_service<storage::ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  const auto &meta = tablet.get_tablet_meta();
+  if (!requested.is_valid() || requested.is_min() || requested.is_max()
+      || !ns::NamespaceObjectKey::is_encoded(meta.tablet_id_.id())) { return OB_INVALID_ARGUMENT; }
+  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  const uint64_t owner = ns::NamespaceObjectKey::encoded_namespace(meta.tablet_id_.id());
+  NativeSchemaCatalog catalog(owner, *access, *transactions);
+  const int64_t deadline = ObTimeUtility::current_time() + 10L * 1000 * 1000;
+  int ret = choose_current ? catalog.begin_read(deadline, true) : catalog.begin_read_at(deadline, requested);
+  if (ret == OB_SUCCESS && catalog.view()->entry().snapshot < requested.get_val_for_tx()) {
+    ret = OB_EAGAIN;
+  }
+  if (ret == OB_SUCCESS) { ret = catalog.get_storage_schema(meta.create_table_id_, allocator, out); }
+  if (ret == OB_SUCCESS) { ret = selected.convert_for_tx(catalog.view()->entry().snapshot); }
+  const int closed = catalog.close();
+  return ret == OB_SUCCESS ? closed : ret;
 }
 
 int NativeSchemaCatalog::begin_read(int64_t deadline,
@@ -904,6 +957,23 @@ int read_partitions(NativeSchemaCatalog &catalog, int64_t version, bool history,
 int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     ObIAllocator &allocator, ObTableSchema *&out, TableSource source)
 {
+  return read_table(table_id, version, allocator, out, source, false);
+}
+
+int NativeSchemaCatalog::get_storage_schema(uint64_t table_id,
+    ObIAllocator &allocator, storage::ObStorageSchema &out)
+{
+  ObArenaAllocator temporary(ObMemAttr("CatalogLayout"));
+  ObTableSchema *table = nullptr;
+  int ret = read_table(table_id, INT64_MAX, temporary, table, TableSource::HISTORY, true);
+  if (ret == OB_SUCCESS) { ret = out.init(allocator, *table); }
+  if (table != nullptr) { table->~ObTableSchema(); }
+  return ret;
+}
+
+int NativeSchemaCatalog::read_table(uint64_t table_id, int64_t version,
+    ObIAllocator &allocator, ObTableSchema *&out, TableSource source, bool storage_only)
+{
   out = nullptr;
   const bool history = source == TableSource::HISTORY;
   if (version <= 0 || table_id == OB_INVALID_ID || (!history && version != INT64_MAX)) {
@@ -953,6 +1023,11 @@ int NativeSchemaCatalog::get_table(uint64_t table_id, int64_t version,
     if (OB_FAIL(ret)) {
     } else if (OB_FAIL(open(rows, OB_ALL_COLUMN_TID, OB_ALL_COLUMN_HISTORY_TID, prefix))) {
     } else { ret = ObSchemaRetrieveUtils::retrieve_column_schema(history, rows, table); }
+  }
+  if (storage_only) {
+    if (OB_SUCC(ret)) { out = table; }
+    else if (table != nullptr) { table->~ObTableSchema(); }
+    return ret;
   }
   if (OB_SUCC(ret)) { ret = read_partitions(*this, version, history, *table); }
   {

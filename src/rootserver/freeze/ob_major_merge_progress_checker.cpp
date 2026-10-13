@@ -19,8 +19,6 @@
 #include "rootserver/freeze/ob_checksum_validator.h"
 #include "rootserver/fork_table/instance_namespace_metadata.h"
 #include "rootserver/fork_table/table_storage_layouts.h"
-#include "observer/namespace_worker_protocol_prototype.h"
-#include "namespace/namespace.h"
 #include "storage/tx_storage/ob_access_service.h"
 #include "storage/tx_storage/ob_ls_service.h"
 #include "storage/ls/ob_ls.h"
@@ -104,20 +102,11 @@ int ObMajorMergeProgressChecker::check_progress()
       if (!participates) { continue; }
       ObMergeProgress owner_progress;
       const auto completed = completed_.find(owner.id);
-      ns::NamespaceRuntime *runtime = nullptr;
       if (completed != completed_.end()) {
         owner_progress = completed->second;
-      } else if (!ns::namespace_registry().get(owner.id, runtime) || runtime == nullptr) {
-        ret = OB_EAGAIN;
-      } else if (OB_FAIL(observer::namespace_worker_prototype::prepare_namespace_login(*runtime))) {
       } else {
-        auto *sql = observer::namespace_worker_prototype::namespace_sql_proxy(owner.id);
-        auto *schemas = observer::namespace_worker_prototype::namespace_schema_service(owner.id);
-        if (sql == nullptr || schemas == nullptr) { ret = OB_NOT_INIT; }
-        else {
-          ret = ObChecksumValidator::check_namespace(owner.id, definitions, freeze_, *ls,
-              *sql, *schemas, stop_, owner_progress, pending_);
-        }
+        ret = ObChecksumValidator::check_namespace(owner.id, definitions, freeze_, *ls,
+            stop_, owner_progress, pending_);
       }
       if (ret == OB_SUCCESS && completed == completed_.end()) {
         completed_.emplace(owner.id, owner_progress);

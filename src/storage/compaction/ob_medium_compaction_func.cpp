@@ -21,7 +21,7 @@
 #include "storage/ob_partition_range_spliter.h"
 #include "storage/truncate_info/ob_mds_info_distinct_mgr.h"
 #include "storage/compaction/physical_merge_candidate.h"
-#include "storage/instance_meta/storage_schema_history.h"
+#include "share/schema/ob_schema_runtime_service.h"
 #include "storage/tx_storage/ob_access_service.h"
 
 namespace oceanbase
@@ -123,10 +123,10 @@ int ObMediumCompactionScheduleFunc::read_layout_for_merge(
 {
   int ret = OB_SUCCESS;
   PhysicalMergeCandidate candidate;
-  auto *access = share::server_service<storage::ObAccessService>();
+  auto *schemas = share::server_service<share::schema::ObSchemaRuntimeService>();
   if (!target.is_valid() || target.is_min() || target.is_max()) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (access == nullptr) {
+  } else if (schemas == nullptr) {
     ret = OB_NOT_INIT;
   } else if (OB_FAIL(candidate.load(tablet))) {
   } else if (candidate.state == PhysicalMergeCandidate::State::RETIRED) {
@@ -134,9 +134,8 @@ int ObMediumCompactionScheduleFunc::read_layout_for_merge(
   } else if (!candidate.participates(target.get_val_for_tx())) {
     ret = OB_NO_NEED_MERGE;
   } else {
-    const int64_t deadline = ObTimeUtility::current_time() + 10 * 1000 * 1000;
-    ret = StorageSchemaHistory::read_at(access->storage_schema_store(), candidate.layout_id,
-        target, deadline, allocator, storage_schema);
+    SCN selected;
+    ret = schemas->load_merge_schema(tablet, target, false, allocator, selected, storage_schema);
   }
   return ret;
 }
@@ -784,9 +783,9 @@ int ObMediumCompactionScheduleFunc::prepare_medium_layout(
   ObTablet &tablet = *tablet_handle_.get_obj();
   PhysicalMergeCandidate candidate;
   SCN target;
-  auto *access = share::server_service<storage::ObAccessService>();
+  auto *schemas = share::server_service<share::schema::ObSchemaRuntimeService>();
   medium_info.storage_schema_.reset();
-  if (access == nullptr) {
+  if (schemas == nullptr) {
     ret = OB_NOT_INIT;
   } else if (OB_FAIL(candidate.load(tablet))) {
   } else if (!candidate.is_live()) {
@@ -802,10 +801,9 @@ int ObMediumCompactionScheduleFunc::prepare_medium_layout(
         : OB_SNAPSHOT_DISCARDED;
     if (ret == OB_SNAPSHOT_DISCARDED) {
       SCN minimum;
-      const int64_t deadline = ObTimeUtility::current_time() + 10 * 1000 * 1000;
       if (OB_FAIL(minimum.convert_for_tx(MAX(candidate.create_version, medium_info.medium_snapshot_)))) {
-      } else if (OB_FAIL(StorageSchemaHistory::read_current(access->storage_schema_store(),
-          candidate.layout_id, minimum, deadline, allocator_, target, medium_info.storage_schema_))) {
+      } else if (OB_FAIL(schemas->load_merge_schema(tablet, minimum, true,
+          allocator_, target, medium_info.storage_schema_))) {
       } else {
         medium_info.medium_snapshot_ = target.get_val_for_tx();
         result.reset();

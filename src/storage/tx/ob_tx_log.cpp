@@ -39,7 +39,8 @@ ObTxLogTypeChecker::need_replay_barrier(const ObTxLogType log_type,
         || data_source_type == ObTxDataSourceType::UNBIND_TABLET_NEW_MDS
         || data_source_type == ObTxDataSourceType::TABLET_BINDING
         || data_source_type == ObTxDataSourceType::UNBIND_LOB_TABLET
-        || data_source_type == ObTxDataSourceType::DDL_COMPLETE_MDS) {
+        || data_source_type == ObTxDataSourceType::DDL_COMPLETE_MDS
+        || data_source_type == ObTxDataSourceType::TABLET_WRITE_LAYOUT) {
       barrier_flag = logservice::ObReplayBarrierType::PRE_BARRIER;
     }
   }

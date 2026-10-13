@@ -91,6 +91,9 @@ int ObDMLRunningCtx::init(
 
   if (OB_FAIL(ret)) {
     // do nothing
+  } else if (OB_FAIL(TabletWriteLayoutHelper::ensure_installed(*tablet_handle.get_obj(),
+      dml_param_.table_param_->get_storage_schema(), dml_param_.timeout_))) {
+    LOG_WARN("failed to install the write layout before DML", K(ret), K(tablet_handle));
   } else if (OB_FAIL(prepare_relative_table(
       dml_param_.table_param_->get_data_table(),
       tablet_handle,

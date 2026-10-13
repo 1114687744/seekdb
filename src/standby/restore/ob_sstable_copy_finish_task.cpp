@@ -126,6 +126,7 @@ int ObCopiedSSTableCreatorImpl::init_create_sstable_param_(ObTabletCreateSSTable
   if (OB_FAIL(param.init_for_physical_restore(
       src_sstable_param_->table_key_,
       src_sstable_param_->basic_meta_,
+      src_sstable_param_->storage_schema_image_,
       src_sstable_param_->column_checksums_))) {
     LOG_WARN("fail to init create sstable param", K(ret), KPC(src_sstable_param_));
   }
@@ -140,6 +141,7 @@ int ObCopiedSSTableCreatorImpl::init_create_sstable_param_(
   if (OB_FAIL(param.init_for_physical_restore(
       src_sstable_param_->table_key_,
       src_sstable_param_->basic_meta_,
+      src_sstable_param_->storage_schema_image_,
       src_sstable_param_->column_checksums_,
       res))) {
     LOG_WARN("fail to init create sstable param", K(ret), KPC(src_sstable_param_));

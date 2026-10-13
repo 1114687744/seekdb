@@ -696,6 +696,23 @@ int ObTablet::fetch_table_store(ObTabletMemberWrapper<ObTabletTableStore> &wrapp
   return ret;
 }
 
+int ObTablet::load_write_layout(common::ObIAllocator &allocator, ObStorageSchema *&schema) const
+{
+  int ret = OB_SUCCESS;
+  schema = nullptr;
+  if (is_ls_inner_tablet()) {
+    ret = load_storage_schema(allocator, schema);
+  } else if (OB_FAIL(ObTabletObjLoadHelper::alloc_and_new(allocator, schema))) {
+  } else if (OB_FAIL(get_latest_committed<TabletWriteLayout>([&](const TabletWriteLayout &value) {
+      return value.layout_id_ != tablet_meta_.storage_layout_id_
+          ? OB_STATE_NOT_MATCH : schema->init(allocator, value.schema_);
+    }))) {
+    ObTabletObjLoadHelper::free(allocator, schema);
+    schema = nullptr;
+  }
+  return ret;
+}
+
 int ObTablet::load_storage_schema(common::ObIAllocator &allocator, ObStorageSchema *&storage_schema) const
 {
   int ret = OB_SUCCESS;

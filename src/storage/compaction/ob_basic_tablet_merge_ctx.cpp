@@ -24,7 +24,6 @@
 #include "storage/ob_gc_upper_trans_helper.h"
 #include "ob_medium_list_checker.h"
 #include "data_plane/report/ob_tablet_report.h"
-#include "storage/instance_meta/storage_schema_history.h"
 #include "storage/tx_storage/ob_access_service.h"
 #include "storage/tablet/ob_mds_schema_helper.h"
 #include "storage/tablet/ob_mds_scan_param_helper.h"
@@ -64,7 +63,7 @@ int ObTabletStorageSchemaGuard::init(
   } else if (OB_UNLIKELY(!tablet_handle.is_valid())) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), K(tablet_handle));
-  } else if (OB_FAIL(tablet_handle.get_obj()->load_storage_schema(mem_ctx.get_allocator(), schema_on_tablet))) {
+  } else if (OB_FAIL(tablet_handle.get_obj()->load_write_layout(mem_ctx.get_allocator(), schema_on_tablet))) {
   } else {
     schema_ = schema_on_tablet;
     is_inited_ = true;
@@ -642,9 +641,30 @@ int ObBasicTabletMergeCtx::get_storage_schema()
 {
   int ret  = OB_SUCCESS;
   ObStorageSchema *schema_on_tablet = nullptr;
-  if (OB_FAIL(get_tablet()->load_storage_schema(mem_ctx_.get_allocator(), schema_on_tablet))) {
-  } else {
+  if (OB_FAIL(get_tablet()->load_write_layout(mem_ctx_.get_allocator(), schema_on_tablet))) {
+  }
+  // A major prepared after DDL may already have produced a newer layout even
+  // though this tablet has never written that version. Rewriting files uses
+  // those files' descriptions without advancing the installed write layout.
+  for (int64_t i = 0; OB_SUCC(ret) && i < get_tables_handle().get_count(); ++i) {
+    const ObITable *table = get_tables_handle().get_table(i);
+    if (table == nullptr) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (table->is_sstable() && !table->is_mds_sstable()) {
+      ObSSTableMetaHandle meta;
+      if (OB_FAIL(static_cast<const ObSSTable *>(table)->get_meta(meta))) {
+      } else if (meta.get_sstable_meta().get_basic_meta().storage_layout_id_
+                     == get_tablet()->get_tablet_meta().storage_layout_id_
+          && meta.get_sstable_meta().get_schema_version() > schema_on_tablet->get_schema_version()) {
+        schema_on_tablet->reset();
+        ret = meta.get_sstable_meta().get_storage_schema(mem_ctx_.get_allocator(), *schema_on_tablet);
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
     static_param_.schema_ = schema_on_tablet;
+  } else if (schema_on_tablet != nullptr) {
+    ObStorageSchemaUtil::free_storage_schema(mem_ctx_.get_allocator(), schema_on_tablet);
   }
   return ret;
 }
@@ -1058,7 +1078,6 @@ int ObBasicTabletMergeCtx::get_schema_info_from_tables(
   return ret;
 }
 
-// TODO(@lixia.yq): input schema_on_tablet is from tablet, if generate new schema from memtable_info, the old one could be freed
 int ObBasicTabletMergeCtx::update_storage_schema_by_memtable(
   const ObStorageSchema &schema_on_tablet,
   const ObTablesHandleArray &merge_tables_handle)
@@ -1067,31 +1086,17 @@ int ObBasicTabletMergeCtx::update_storage_schema_by_memtable(
   int64_t max_column_cnt_in_memtable = 0;
   int64_t max_schema_version_in_memtable = 0;
   int64_t column_cnt_in_schema = 0;
-  bool column_info_simplified = false;
   if (!is_mini_merge(get_merge_type()) || get_tablet_id().is_ls_inner_tablet()) {
     // do nothing
   } else if (OB_FAIL(schema_on_tablet.get_store_column_count(column_cnt_in_schema, true/*full_col*/))) {
   } else if (OB_FAIL(get_schema_info_from_tables(merge_tables_handle, column_cnt_in_schema,
       max_column_cnt_in_memtable, max_schema_version_in_memtable))) {
-  } else if (FALSE_IT(column_info_simplified = max_column_cnt_in_memtable > column_cnt_in_schema
-      || max_schema_version_in_memtable > schema_on_tablet.get_schema_version())) {
-    // Memtables carry a version and column extent, not the complete definition.
-    // A same-width DDL can also change types, defaults or storage settings.
-  } else if (column_info_simplified) {
-    // need alloc new storage schema & set column cnt
-    ObStorageSchema *storage_schema = nullptr;
-    if (OB_FAIL(ObStorageSchemaUtil::alloc_storage_schema(mem_ctx_.get_allocator(), storage_schema))) {
-    } else if (OB_FAIL(storage_schema->init(mem_ctx_.get_allocator(), schema_on_tablet, column_info_simplified))) {
-      LOG_WARN("failed to init storage schema", K(ret), K(schema_on_tablet));
-      ObStorageSchemaUtil::free_storage_schema(mem_ctx_.get_allocator(), storage_schema);
-      storage_schema = nullptr;
-    } else {
-      // Record the observed extent/version without claiming complete columns.
-      storage_schema->column_cnt_ = MAX(storage_schema->column_cnt_, max_column_cnt_in_memtable);
-      storage_schema->store_column_cnt_ = MAX(column_cnt_in_schema, max_column_cnt_in_memtable);
-      storage_schema->schema_version_ = MAX(max_schema_version_in_memtable, schema_on_tablet.get_schema_version());
-      static_param_.schema_ = storage_schema;
-    }
+  } else if (schema_on_tablet.is_column_info_simplified()
+      || max_column_cnt_in_memtable > column_cnt_in_schema
+      || max_schema_version_in_memtable > schema_on_tablet.get_schema_version()) {
+    // Row replay can get ahead of the committed layout. Retry after its MDS
+    // record is available; column counts cannot reconstruct a description.
+    ret = OB_EAGAIN;
   }
   if (OB_SUCC(ret)) {
     // ATTENTION! Critical diagnostic log, DO NOT CHANGE!!!
@@ -1245,37 +1250,19 @@ int ObBasicTabletMergeCtx::get_meta_compaction_info()
   int ret = OB_SUCCESS;
   ObTablet *tablet = get_tablet();
   int64_t full_stored_col_cnt = 0;
-  int64_t schema_version = 0;
-  ObStorageSchema *storage_schema = nullptr;
-  auto *access = share::server_service<storage::ObAccessService>();
-  const uint64_t layout_id = tablet->get_tablet_meta().storage_layout_id_;
   const uint64_t data_version = DATA_CURRENT_VERSION;
 
   if (OB_UNLIKELY(!is_meta_major_merge(get_merge_type())
                || nullptr != static_param_.schema_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("get unexpected static param", K(ret), K(static_param_), KPC(static_param_.schema_));
-  } else if (OB_ISNULL(access)) {
-    ret = OB_NOT_INIT;
-  } else if (OB_FAIL(ObStorageSchemaUtil::alloc_storage_schema(mem_ctx_.get_allocator(), storage_schema))) {
-  } else if (OB_FAIL(tablet->get_schema_version_from_storage_schema(schema_version))) {
-  } else if (OB_FAIL(storage::StorageSchemaHistory::read_published(
-      access->storage_schema_store(), layout_id, schema_version,
-      ObTimeUtility::current_time() + 30L * 1000 * 1000,
-      mem_ctx_.get_allocator(), *storage_schema))) {
-    // The held tablet owns this definition reference. Mini may have retained
-    // only a simplified body; recover the exact complete definition without
-    // replacing its version with a newer catalog or publication head.
-    LOG_WARN("failed to read physical definition for meta merge", KR(ret),
-        K(layout_id), K(schema_version), KPC(this));
-  } else if (OB_FAIL(storage_schema->get_stored_column_count_in_sstable(full_stored_col_cnt))) {
+  } else if (OB_FAIL(get_storage_schema())) {
+  } else if (OB_FAIL(static_param_.schema_->get_stored_column_count_in_sstable(full_stored_col_cnt))) {
   } else if (OB_UNLIKELY(tablet->get_last_major_column_count() > full_stored_col_cnt)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_ERROR("stored col cnt in curr schema is less than old major sstable", K(ret),
               "col_cnt_in_sstable", tablet->get_last_major_column_count(),
               "col_cnt_in_schema", full_stored_col_cnt, KPC(this));
-  } else {
-    static_param_.schema_ = storage_schema;
   }
 
   if (OB_SUCC(ret)) {
@@ -1284,8 +1271,9 @@ int ObBasicTabletMergeCtx::get_meta_compaction_info()
     static_param_.merge_reason_ = ObAdaptiveMergePolicy::TOMBSTONE_SCENE;
     FLOG_INFO("get storage schema to meta merge", "param", get_dag_param(), KPC_(static_param_.schema));
   }
-  if (OB_FAIL(ret) && OB_NOT_NULL(storage_schema)) {
-    ObStorageSchemaUtil::free_storage_schema(mem_ctx_.get_allocator(), storage_schema);
+  if (OB_FAIL(ret) && OB_NOT_NULL(static_param_.schema_)) {
+    ObStorageSchema *schema = const_cast<ObStorageSchema *>(static_param_.schema_);
+    ObStorageSchemaUtil::free_storage_schema(mem_ctx_.get_allocator(), schema);
     static_param_.schema_ = nullptr;
   }
   return ret;

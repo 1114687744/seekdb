@@ -54,7 +54,6 @@ bool ObColumnChecksumErrorInfo::is_valid() const
 ///////////////////////////////////////////////////////////////////////////////
 
 int ObColumnChecksumErrorOperator::insert_column_checksum_err_info(
-    ObISQLClient &sql_client,
     const ObColumnChecksumErrorInfo &info)
 {
   int ret = OB_SUCCESS;
@@ -70,7 +69,6 @@ int ObColumnChecksumErrorOperator::insert_column_checksum_err_info(
 }
 
 int ObColumnChecksumErrorOperator::delete_column_checksum_err_info(
-    ObISQLClient &sql_client,
     const SCN &min_frozen_scn)
 {
   int ret = OB_SUCCESS;
@@ -89,7 +87,6 @@ int ObColumnChecksumErrorOperator::delete_column_checksum_err_info(
 }
 
 int ObColumnChecksumErrorOperator::delete_column_checksum_err_info_by_scn(
-    common::ObISQLClient &sql_client,
     const int64_t compaction_scn)
 {
   int ret = OB_SUCCESS;

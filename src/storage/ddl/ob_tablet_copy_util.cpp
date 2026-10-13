@@ -29,74 +29,6 @@ namespace oceanbase
 namespace storage
 {
 
-int ObTabletCopyUtil::get_clipped_storage_schema_on_demand(
-    common::ObIAllocator &allocator,
-    common::hash::ObHashMap<ObITable::TableKey, ObStorageSchema*> &clipped_schemas_map,
-    const common::ObTabletID &tablet_id,
-    const blocksstable::ObSSTable &sstable,
-    const ObStorageSchema &latest_schema,
-    const bool try_create,
-    const ObStorageSchema *&storage_schema)
-{
-  int ret = OB_SUCCESS;
-  storage_schema = nullptr;
-  ObSSTableMetaHandle meta_handle;
-  if (OB_UNLIKELY(!latest_schema.is_valid())) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid arg", K(ret), K(latest_schema));
-  } else if (!sstable.is_major_sstable()) {
-    storage_schema = &latest_schema;
-  } else if (!clipped_schemas_map.created() && OB_FAIL(clipped_schemas_map.create(8/*bucket_num*/, "ClippedSchema"))) {
-    LOG_WARN("create clipped schema map failed", K(ret));
-  } else if (OB_FAIL(sstable.get_meta(meta_handle))) {
-  } else {
-    int64_t schema_stored_cols_cnt = 0;
-    ObStorageSchema *target_storage_schema = nullptr;
-    schema_stored_cols_cnt = meta_handle.get_sstable_meta().get_schema_column_count();
-    const ObITable::TableKey &table_key = sstable.get_key();
-    if (OB_FAIL(clipped_schemas_map.get_refactored(table_key, target_storage_schema))) {
-      void *buf = nullptr;
-      target_storage_schema = nullptr;
-      if (OB_HASH_NOT_EXIST != ret) {
-        LOG_WARN("get storage schema failed", K(ret), K(table_key));
-      } else if (OB_UNLIKELY(!try_create)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("clipped storage schema not found", K(ret), K(schema_stored_cols_cnt), K(sstable));
-      } else if (OB_ISNULL(buf = allocator.alloc(sizeof(ObStorageSchema)))) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-        LOG_WARN("alloc mem failed", K(ret));
-      } else if (OB_FALSE_IT(target_storage_schema = new(buf) ObStorageSchema())) {
-      } else if (OB_FAIL(target_storage_schema->init(allocator,
-          latest_schema/*old_schema*/,
-          false/*skip_column_info*/,
-          schema_stored_cols_cnt))) {
-      } else if (OB_FAIL(clipped_schemas_map.set_refactored(table_key, target_storage_schema))) {
-      } else {
-        target_storage_schema->schema_version_ = meta_handle.get_sstable_meta().get_schema_version();
-        target_storage_schema->progressive_merge_round_ = meta_handle.get_sstable_meta().get_progressive_merge_round();
-        storage_schema = target_storage_schema;
-      }
-
-      if (OB_FAIL(ret) && nullptr != buf) {
-        if (nullptr != target_storage_schema) {
-          target_storage_schema->~ObStorageSchema();
-          target_storage_schema = nullptr;
-        }
-        allocator.free(buf);
-        buf = nullptr;
-      }
-    } else {
-      storage_schema = target_storage_schema;
-    }
-  }
-
-  if (OB_SUCC(ret) && OB_UNLIKELY(nullptr == storage_schema || !storage_schema->is_valid())) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("unexpected storage schema", K(ret), K(sstable), KPC(storage_schema));
-  }
-  return ret;
-}
-
 int ObTabletCopyUtil::check_need_fill_empty_sstable(
     ObLS *ls,
     const bool is_minor_sstable,
@@ -130,7 +62,7 @@ int ObTabletCopyUtil::check_need_fill_empty_sstable(
 }
 
 int ObTabletCopyUtil::build_create_empty_sstable_param(
-    const blocksstable::ObSSTableBasicMeta &meta,
+    const blocksstable::ObSSTableMeta &meta,
     const ObITable::TableKey &table_key,
     const common::ObTabletID &dst_tablet_id,
     const share::SCN &end_scn,

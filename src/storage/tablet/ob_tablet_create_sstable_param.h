@@ -98,6 +98,7 @@ public:
   int init_for_fork(const ObTabletID &dst_tablet_id,
                      const ObITable::TableKey &src_table_key,
                      const blocksstable::ObSSTableBasicMeta &basic_meta,
+                     const ObStorageSchema &storage_schema,
                      const blocksstable::ObSSTableMergeRes &res,
                      const share::SCN &max_end_scn);
 
@@ -105,7 +106,7 @@ public:
   int init_for_empty_minor_sstable(const ObTabletID &tablet_id,
                                    const share::SCN &start_scn,
                                    const share::SCN &end_scn,
-                                   const blocksstable::ObSSTableBasicMeta &basic_meta);
+                                   const blocksstable::ObSSTableMeta &sstable_meta);
 
   // Without checking the validity of the input parameters, necessary to ensure the correctness of the method call.
   int init_for_lob_split(const ObTabletID &new_tablet_id,
@@ -131,10 +132,12 @@ public:
   int init_for_physical_restore(
       const ObITable::TableKey &table_key,
       const blocksstable::ObSSTableBasicMeta &basic_meta,
+      const common::ObString &storage_schema_image,
       const common::ObIArray<int64_t> &column_checksums);
   int init_for_physical_restore(
       const ObITable::TableKey &table_key,
       const blocksstable::ObSSTableBasicMeta &basic_meta,
+      const common::ObString &storage_schema_image,
       const common::ObIArray<int64_t> &column_checksums,
       const blocksstable::ObSSTableMergeRes &res);
   
@@ -207,6 +210,10 @@ public:
   int16_t sstable_logic_seq_;
   int64_t schema_version_;
   uint64_t storage_layout_id_;
+  // Borrow exactly one source until synchronous SSTable construction copies
+  // it: a task's output schema, or the image of a file being copied unchanged.
+  const ObStorageSchema *storage_schema_;
+  common::ObString storage_schema_image_;
   int64_t create_snapshot_version_;
   int64_t progressive_merge_round_;
   int64_t progressive_merge_step_;

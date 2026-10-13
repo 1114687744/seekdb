@@ -9,6 +9,7 @@
 #include "namespace/catalog.h"
 #include "share/schema/ob_schema_struct.h"
 #include "share/schema/ob_schema_service.h"
+#include "share/scn.h"
 
 namespace oceanbase {
 namespace share { namespace schema {
@@ -25,7 +26,7 @@ class ObDependencyInfo;
 class ObSimpleTriggerSchema;
 struct VersionHisVal;
 } }
-namespace storage { class ObAccessService; }
+namespace storage { class ObAccessService; class ObTablet; class ObStorageSchema; }
 namespace transaction { class ObTransService; class ObTxDesc; }
 namespace observer {
 
@@ -56,6 +57,12 @@ public:
                       transaction::ObTransService &);
   ~NativeSchemaCatalog();
   int begin_read(int64_t deadline, bool weak = false);
+  // Register read protection before the owner selects its snapshot. The owner
+  // must validate any historical SCN against its durable retention contract.
+  int begin_read_with_snapshot(int64_t deadline,
+      const std::function<int(share::SCN &)> &acquire);
+  // An unfinished merge round must still retain this historical snapshot.
+  int begin_read_at(int64_t deadline, const share::SCN &target);
   // An old snapshot must already be protected by this view's owner.
   int begin_read(int64_t deadline, const ns::NamespaceCatalogViews::Handle &view);
   // Borrow the DDL's native RC owner so catalog reads observe its own writes.
@@ -71,6 +78,15 @@ public:
   enum class TableSource { HISTORY, CURRENT };
   int get_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
                 share::schema::ObTableSchema *&, TableSource = TableSource::HISTORY);
+  // Read table/column definitions only. Partition arrays, constraints and
+  // triggers do not contribute to a physical row layout.
+  int get_storage_schema(uint64_t table_id, common::ObIAllocator &, storage::ObStorageSchema &);
+  // Upper-layer adapter for physical merge preparation. The supplied tablet
+  // identity is interpreted here; storage does not decode Namespace IDs.
+  // With choose_current, requested is a lower bound and selected is a new
+  // readable snapshot. Otherwise selected must equal requested exactly.
+  static int load_merge_schema(const storage::ObTablet &, const share::SCN &requested,
+      bool choose_current, common::ObIAllocator &, share::SCN &selected, storage::ObStorageSchema &);
   int get_aux_tables(uint64_t table_id, int64_t schema_version,
       common::ObIArray<share::schema::ObAuxTableMetaInfo> &, TableSource = TableSource::HISTORY);
   // Core definitions are cell records in __all_core_table. Its own definition
@@ -197,6 +213,8 @@ public:
 private:
   struct State;
   struct TableState;
+  int read_table(uint64_t table_id, int64_t schema_version, common::ObIAllocator &,
+      share::schema::ObTableSchema *&, TableSource, bool storage_only);
   int prepare_write(uint64_t inner_table_id, TableState *&);
   enum class Mutation { INSERT, UPDATE, ERASE };
   int mutate(uint64_t inner_table_id, const common::ObNewRow &, Mutation, bool &existed,

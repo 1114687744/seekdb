@@ -45,7 +45,6 @@
 #include "storage/compaction/ob_schedule_dag_func.h" // For ObScheduleDagFunc
 #include "storage/ddl/ob_tablet_copy_util.h"
 #include "storage/compaction/physical_merge_candidate.h"
-#include "storage/instance_meta/storage_schema_history.h"
 #include "storage/tx_storage/ob_access_service.h"
 
 namespace oceanbase
@@ -66,19 +65,14 @@ int load_fork_input_schema(const ObSSTable &sstable, ObArenaAllocator &allocator
   int ret = OB_SUCCESS;
   schema = nullptr;
   ObSSTableMetaHandle meta;
-  auto *access = share::server_service<ObAccessService>();
   int64_t columns = 0;
-  if (access == nullptr) {
-    ret = OB_NOT_INIT;
-  } else if (OB_FAIL(sstable.get_meta(meta))) {
+  if (OB_FAIL(sstable.get_meta(meta))) {
   } else if (OB_FAIL(ObTabletObjLoadHelper::alloc_and_new(allocator, schema))) {
   } else {
     // A source tablet can contain SSTables inherited from a different physical
     // branch. Its current local schema is not the origin of those definitions.
     const auto &definition = meta.get_sstable_meta().get_basic_meta();
-    if (OB_FAIL(StorageSchemaHistory::read_published(access->storage_schema_store(),
-        definition.storage_layout_id_, definition.schema_version_,
-        ObTimeUtility::current_time() + 30L * 1000L * 1000L, allocator, *schema))) {
+    if (OB_FAIL(meta.get_sstable_meta().get_storage_schema(allocator, *schema))) {
     } else if (OB_FAIL(schema->get_stored_column_count_in_sstable(columns))) {
     } else if (columns < definition.column_cnt_) {
       ret = OB_STATE_NOT_MATCH;
@@ -916,7 +910,7 @@ int ObTabletForkRewriteTask::process()
         share::SCN max_end_scn;
         if (OB_FAIL(max_end_scn.convert_for_tx(param_->fork_snapshot_version_))) {
         } else if (OB_FAIL(create_param.init_for_fork(param_->dest_tablet_id_, src_table_key, basic_meta,
-            merge_res, max_end_scn))) {
+            *clipped_storage_schema, merge_res, max_end_scn))) {
         } else if (OB_FAIL(context_->create_sstable(create_param, table_handle))) {
         }
         if (OB_SUCC(ret)) {
@@ -1211,7 +1205,7 @@ int ObTabletForkMergeTask::create_sstables()
           LOG_WARN("sstable is null", K(ret));
         } else if (OB_FAIL(sstable->get_meta(meta_handle))) {
         } else if (OB_FAIL(ObTabletCopyUtil::build_create_empty_sstable_param(
-                meta_handle.get_sstable_meta().get_basic_meta(),
+                meta_handle.get_sstable_meta(),
                 max_end_scn_minor_sstable->get_key(),
                 param_->dest_tablet_id_,
                 end_scn,
@@ -1257,8 +1251,6 @@ int ObTabletForkMergeTask::update_table_store_with_batch_tables(
   ObArenaAllocator schema_allocator("ForkDstSchema");
   ObStorageSchema target_storage_schema;
   PhysicalMergeCandidate candidate;
-  SCN created, layout_snapshot;
-  auto *access = share::server_service<ObAccessService>();
 
   if (OB_FAIL(ret)) {
   } else if (OB_UNLIKELY(OB_ISNULL(ls)
@@ -1268,23 +1260,21 @@ int ObTabletForkMergeTask::update_table_store_with_batch_tables(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid arg", K(ret), KP(ls),
       K(dst_tablet_handle), K(dst_tablet_id), K(merge_type));
-  } else if (OB_ISNULL(access)) {
-    ret = OB_NOT_INIT;
   } else if (OB_FAIL(tables_handle.get_tables(batch_tables))) {
   } else if (OB_FAIL(param.tables_handle_.assign(tables_handle))) {
   } else if (OB_FAIL(candidate.load(*dst_tablet_handle.get_obj()))) {
   } else if (!candidate.is_live()) {
     ret = OB_STATE_NOT_MATCH;
-  } else if (OB_FAIL(created.convert_for_tx(candidate.create_version))) {
-  } else if (OB_FAIL(StorageSchemaHistory::read_current(access->storage_schema_store(),
-      candidate.layout_id, created, ObTimeUtility::current_time() + 30L * 1000L * 1000L,
-      schema_allocator, layout_snapshot, target_storage_schema))) {
+  } else if (OB_FAIL(dst_tablet_handle.get_obj()->get_latest_committed<TabletWriteLayout>(
+      [&](const TabletWriteLayout &layout) {
+        return layout.layout_id_ != candidate.layout_id ? OB_STATE_NOT_MATCH
+            : target_storage_schema.init(schema_allocator, layout.schema_);
+      }))) {
     LOG_WARN("failed to read destination layout for fork installation", K(ret), K(dst_tablet_id));
   } else {
-    // S caps source data. It predates physical creation C for a late child and
-    // is not a valid layout-read timestamp for the destination G. Install a
-    // committed destination descriptor; concurrent local updates are ordered
-    // only within this same G by init_for_sstable_replace.
+    // The destination owns a committed layout from CREATE or a subsequent
+    // write. Source files carry their own descriptions; no external history
+    // needs to survive the source snapshot for this physical installation.
     param.storage_layout_id_ = candidate.layout_id;
     param.target_storage_schema_ = &target_storage_schema;
   }

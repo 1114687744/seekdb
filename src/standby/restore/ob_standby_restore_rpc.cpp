@@ -24,7 +24,7 @@ namespace oceanbase
 namespace blocksstable
 {
 ObMigrationSSTableParam::ObMigrationSSTableParam()
-  : allocator_("StbySSTMeta"), basic_meta_(), column_checksums_(), table_key_(), is_small_sstable_(false)
+  : allocator_("StbySSTMeta"), basic_meta_(), storage_schema_image_(), column_checksums_(), table_key_(), is_small_sstable_(false)
 {
   column_checksums_.set_attr(common::ObMemAttr("StbySSTMeta"));
 }
@@ -33,7 +33,7 @@ ObMigrationSSTableParam::~ObMigrationSSTableParam() { reset(); }
 
 bool ObMigrationSSTableParam::is_valid() const
 {
-  return basic_meta_.is_valid() && table_key_.is_valid();
+  return basic_meta_.is_valid() && table_key_.is_valid() && !storage_schema_image_.empty();
 }
 
 bool ObMigrationSSTableParam::is_empty_sstable() const
@@ -44,6 +44,7 @@ bool ObMigrationSSTableParam::is_empty_sstable() const
 void ObMigrationSSTableParam::reset()
 {
   basic_meta_.reset();
+  storage_schema_image_.reset();
   column_checksums_.reset();
   table_key_.reset();
   is_small_sstable_ = false;
@@ -58,6 +59,7 @@ int ObMigrationSSTableParam::assign(const ObMigrationSSTableParam &other)
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(column_checksums_.assign(other.column_checksums_))) {
     LOG_WARN("failed to assign standby sstable checksums", K(ret));
+  } else if (OB_FAIL(ob_write_string(allocator_, other.storage_schema_image_, storage_schema_image_))) {
   } else {
     basic_meta_ = other.basic_meta_;
     table_key_ = other.table_key_;
@@ -77,6 +79,8 @@ int ObMigrationSSTableParam::build_from_sstable(const ObSSTable &sstable)
     LOG_WARN("failed to get source sstable meta", K(ret), K(sstable));
   } else if (OB_FAIL(meta_handle.get_sstable_meta().get_column_checksums(column_checksums_))) {
     LOG_WARN("failed to get source sstable checksums", K(ret), K(sstable));
+  } else if (OB_FAIL(ob_write_string(allocator_, meta_handle.get_sstable_meta().get_storage_schema_image(),
+      storage_schema_image_))) {
   } else {
     basic_meta_ = meta_handle.get_sstable_meta().get_basic_meta();
     table_key_ = sstable.get_key();
@@ -94,6 +98,9 @@ int ObMigrationSSTableParam::check_sstable_meta(const ObSSTableMeta &sstable_met
   } else if (OB_FAIL(ObSSTableMetaChecker::check_sstable_basic_meta(
       basic_meta_, sstable_meta.get_basic_meta()))) {
     LOG_WARN("standby sstable basic meta does not match", K(ret), K(*this), K(sstable_meta));
+  } else if (storage_schema_image_ != sstable_meta.get_storage_schema_image()) {
+    ret = OB_INVALID_DATA;
+    LOG_WARN("standby SSTable physical description does not match", K(ret));
   } else if (column_checksums_.count() != sstable_meta.get_col_checksum_cnt()) {
     ret = OB_INVALID_DATA;
     LOG_WARN("standby sstable column checksum count does not match", K(ret),
@@ -141,6 +148,7 @@ int ObMigrationSSTableParam::serialize(char *buf, const int64_t len, int64_t &po
   } else if (OB_FAIL(column_checksums_.serialize(buf, len, pos))) {
   } else if (OB_FAIL(table_key_.serialize(buf, len, pos))) {
   } else if (OB_FAIL(serialization::encode_bool(buf, len, pos, is_small_sstable_))) {
+  } else if (OB_FAIL(storage_schema_image_.serialize(buf, len, pos))) {
   }
   return ret;
 }
@@ -148,11 +156,16 @@ int ObMigrationSSTableParam::serialize(char *buf, const int64_t len, int64_t &po
 int ObMigrationSSTableParam::deserialize(const char *buf, const int64_t len, int64_t &pos)
 {
   int ret = OB_SUCCESS;
+  ObString schema_image;
   reset();
   if (OB_FAIL(basic_meta_.deserialize(buf, len, pos))) {
   } else if (OB_FAIL(column_checksums_.deserialize(buf, len, pos))) {
   } else if (OB_FAIL(table_key_.deserialize(buf, len, pos))) {
   } else if (OB_FAIL(serialization::decode_bool(buf, len, pos, &is_small_sstable_))) {
+  } else if (OB_FAIL(schema_image.deserialize(buf, len, pos))) {
+  } else if (schema_image.empty()) {
+    ret = OB_INVALID_DATA;
+  } else if (OB_FAIL(ob_write_string(allocator_, schema_image, storage_schema_image_))) {
   }
   return ret;
 }
@@ -160,7 +173,8 @@ int ObMigrationSSTableParam::deserialize(const char *buf, const int64_t len, int
 int64_t ObMigrationSSTableParam::get_serialize_size() const
 {
   return basic_meta_.get_serialize_size() + column_checksums_.get_serialize_size()
-      + table_key_.get_serialize_size() + serialization::encoded_length_bool(is_small_sstable_);
+      + table_key_.get_serialize_size() + serialization::encoded_length_bool(is_small_sstable_)
+      + storage_schema_image_.get_serialize_size();
 }
 } // namespace blocksstable
 

@@ -166,7 +166,8 @@ private:
       const share::SCN &scn,
       mds::BufferCtx &ctx,
       const storage::ObTabletMdsUserDataType &create_type,
-      const int64_t create_commit_version);
+      const int64_t create_commit_version,
+      const ObStorageSchema &schema);
   static void handle_ret_for_replay(int &ret);
   static int convert_schemas(obcall::ObBatchCreateTabletArg &arg);
   static int check_and_get_create_tablet_schema_info(

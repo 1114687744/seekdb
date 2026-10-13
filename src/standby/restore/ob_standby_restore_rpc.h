@@ -56,6 +56,7 @@ public:
 
   common::ObArenaAllocator allocator_;
   ObSSTableBasicMeta basic_meta_;
+  common::ObString storage_schema_image_;
   common::ObArray<int64_t> column_checksums_;
   storage::ObITable::TableKey table_key_;
   bool is_small_sstable_;

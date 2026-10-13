@@ -504,6 +504,7 @@ STORAGE_INTERFACE_CLOSURE_HEADERS = [
     "tablet/ob_tablet_create_mds_helper.h",
     "tablet/ob_tablet_create_sstable_param.h",
     "tablet/ob_tablet_ddl_complete_mds_data.h",
+    "tablet/tablet_write_layout.h",
     "tablet/ob_tablet_ddl_info.h",
     "tablet/ob_tablet_delete_mds_helper.h",
     "tablet/ob_tablet_dumped_medium_info.h",

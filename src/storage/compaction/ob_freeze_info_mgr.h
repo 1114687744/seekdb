@@ -138,7 +138,8 @@ public:
   // during physical IO or reclamation. No graph is copied or rebuilt here.
   int get_physical_retention(std::shared_ptr<const PhysicalSnapshotRetention> &plan);
 
-  // Complete layout history is retained for the earliest unfinished round.
+  // Catalog metadata and complete layout history are retained for the
+  // earliest unfinished round, including directory pages and core cells.
   // The persisted snapshot-GC fence also covers freezes not yet in this cache,
   // including ones still being committed or replayed. NOT_INIT means recovery
   // has not loaded a complete fence/freeze view; reclamation must not advance.
