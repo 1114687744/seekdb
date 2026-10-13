@@ -23,6 +23,8 @@
 #include "inner_table/ob_inner_table_schema.h"
 #include "share/ob_debug_sync.h"
 #include "share/ob_schema_version_info.h"
+#include "observer/schema/native_schema_catalog.h"
+#include "share/schema/schema_catalog_row.h"
 
 namespace oceanbase
 {
@@ -371,7 +373,13 @@ DEF_TO_STRING(ObCoreTableProxy::Row)
 ObCoreTableProxy::ObCoreTableProxy(
   const char *table_name,
   ObISQLClient &sql_client)
-  : table_name_(table_name), sql_client_(&sql_client), load_for_update_(false),
+  : table_name_(table_name), sql_client_(&sql_client), catalog_(nullptr), load_for_update_(false),
+    cur_idx_(-1), all_row_(), allocator_(ObModIds::OB_CORE_TABLE_PROXY)
+{
+}
+
+ObCoreTableProxy::ObCoreTableProxy(const char *table_name, observer::NativeSchemaCatalog &catalog)
+  : table_name_(table_name), sql_client_(nullptr), catalog_(&catalog), load_for_update_(false),
     cur_idx_(-1), all_row_(), allocator_(ObModIds::OB_CORE_TABLE_PROXY)
 {
 }
@@ -407,6 +415,7 @@ int ObCoreTableProxy::load_for_update()
 
 int ObCoreTableProxy::load(const bool for_update)
 {
+  if (catalog_ != nullptr) { return load_native(for_update); }
   all_row_.reset();
   int ret = OB_SUCCESS;
   ObSqlString sql;
@@ -475,6 +484,88 @@ int ObCoreTableProxy::load(const bool for_update)
       load_for_update_ = for_update;
     }
   }
+  return ret;
+}
+
+int ObCoreTableProxy::load_native(bool for_update)
+{
+  all_row_.reset();
+  load_for_update_ = false;
+  cur_idx_ = -1;
+  int64_t row_id = OB_INVALID_INDEX;
+  ObArray<Cell> cells;
+  int ret = catalog_->scan_core_cells(table_name_, for_update,
+      [&](const schema::ObTableSchema &schema, const ObNewRow &row, bool &) {
+    ObSEArray<schema::ObColDesc, 8> columns;
+    int rc = schema.get_column_ids(columns);
+    const auto *value_column = schema.get_column_schema("column_value");
+    int64_t position = -1;
+    for (int64_t i = 0; rc == OB_SUCCESS && i < columns.count(); ++i) {
+      if (value_column != nullptr && columns.at(i).col_id_ == value_column->get_column_id()) { position = i; }
+    }
+    if (rc == OB_SUCCESS && position < 0) { rc = OB_ERR_UNEXPECTED; }
+    const int64_t next_id = row.cells_[1].get_int();
+    if (rc == OB_SUCCESS && row_id != OB_INVALID_INDEX && next_id != row_id) {
+      rc = add_row(row_id, cells);
+      cells.reuse();
+    }
+    if (rc == OB_SUCCESS) {
+      row_id = next_id;
+      Cell source, stored;
+      source.name_ = row.cells_[2].get_string();
+      const auto &value = row.cells_[position];
+      if (!value.is_null()) {
+        source.value_ = value.get_string();
+        if (source.value_.empty()) { source.value_ = ObString::make_string(""); }
+      }
+      rc = store_cell(source, stored);
+      if (rc == OB_SUCCESS) { rc = cells.push_back(stored); }
+    }
+    return rc;
+  });
+  if (OB_SUCC(ret) && row_id != OB_INVALID_INDEX) { ret = add_row(row_id, cells); }
+  if (OB_SUCC(ret)) { load_for_update_ = for_update; }
+  return ret;
+}
+
+int ObCoreTableProxy::execute_native_update(const Row &row, const ObIArray<UpdateCell> &cells,
+    bool incremental, int64_t &affected_rows)
+{
+  if (!is_valid() || !row.is_inited() || cells.empty()) { return OB_INVALID_ARGUMENT; }
+  int ret = OB_SUCCESS;
+  bool changed = false;
+  for (int64_t i = 0; OB_SUCC(ret) && i < cells.count(); ++i) {
+    const auto &cell = cells.at(i).cell_;
+    Cell *previous = nullptr;
+    ret = row.get_cell(cell.name_, previous);
+    const bool insert = ret == OB_ENTRY_NOT_EXIST;
+    if (insert) { ret = OB_SUCCESS; }
+    if (OB_SUCC(ret) && !insert) {
+      if (previous == nullptr) { ret = OB_ERR_UNEXPECTED; }
+      else if (incremental) {
+        if (previous->value_.ptr() == nullptr || cell.value_.ptr() == nullptr) { ret = OB_ERR_NULL_VALUE; }
+        else if (atoll(previous->value_.ptr()) >= atoll(cell.value_.ptr())
+            && atoll(cell.value_.ptr()) != OB_INVALID_SCHEMA_VERSION) { continue; }
+      } else if ((previous->value_.ptr() == nullptr) == (cell.value_.ptr() == nullptr)
+                 && previous->value_ == cell.value_) { continue; }
+    }
+    if (OB_SUCC(ret)) {
+      const auto encode = [&](schema::SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_name", table_name_);
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("row_id", row.get_row_id()); }
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("column_name", cell.name_); }
+        if (rc == OB_SUCCESS) { rc = fields.add_column("column_value", cell.value_); }
+        if (rc == OB_SUCCESS) { rc = fields.add_gmt_modified(); }
+        return rc;
+      };
+      bool matched = false;
+      ret = insert ? catalog_->insert_fields(OB_ALL_CORE_TABLE_TID, encode)
+                   : catalog_->update_fields(OB_ALL_CORE_TABLE_TID, encode, matched);
+      if (OB_SUCC(ret) && !insert && !matched) { ret = OB_ERR_UNEXPECTED; }
+      if (OB_SUCC(ret)) { changed = true; }
+    }
+  }
+  if (OB_SUCC(ret) && changed) { ++affected_rows; }
   return ret;
 }
 
@@ -639,7 +730,7 @@ int ObCoreTableProxy::incremental_update(const ObIArray<UpdateCell> &cells,
         if (match) {
           match_rows++;
           if (OB_FAIL(execute_incremental_update_sql(*row, cells, affected_rows))) {
-          } else if (OB_FAIL(update_row_struct(cells, *row))) {
+          } else if (OB_FAIL(update_row_struct(cells, *row, catalog_ != nullptr))) {
           }
         }
       }
@@ -842,6 +933,12 @@ int ObCoreTableProxy::execute_delete_sql(const int64_t row_id)
   if (!is_valid() || OB_INVALID_INDEX == row_id) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), KPC(this), K(row_id));
+  } else if (catalog_ != nullptr) {
+    int64_t affected = 0;
+    ret = catalog_->erase_prefix(OB_ALL_CORE_TABLE_TID, [&](schema::SchemaCatalogRow &fields) {
+      int rc = fields.add_pk_column("table_name", table_name_);
+      return rc == OB_SUCCESS ? fields.add_pk_column("row_id", row_id) : rc;
+    }, affected);
   } else {
     int64_t affected_rows = 0;
     ObSqlString sql;
@@ -856,7 +953,30 @@ int ObCoreTableProxy::execute_delete_sql(const int64_t row_id)
 
 int ObCoreTableProxy::store_cell(const Cell &src, Cell &dest)
 {
-  return is_valid() ? dest.assign(allocator_, src) : OB_INVALID_ARGUMENT;
+  if (!is_valid()) { return OB_INVALID_ARGUMENT; }
+  int ret = dest.assign(allocator_, src);
+  // The SQL splicer marks X'...' explicitly. Normalize once so row matching,
+  // repeated updates and persistent bytes all use the same cell value.
+  if (OB_SUCC(ret) && catalog_ != nullptr && src.is_hex_value_ && src.value_.ptr() != nullptr) {
+    const auto &value = src.value_;
+    const int64_t size = value.length();
+    if (size < 3 || value.ptr()[0] != 'X' || value.ptr()[1] != '\''
+        || value.ptr()[size - 1] != '\'' || (size - 3) % 2 != 0) {
+      ret = OB_INVALID_ARGUMENT;
+    } else {
+      const int64_t bytes = (size - 3) / 2;
+      char *buffer = static_cast<char *>(allocator_.alloc(bytes + 1));
+      int64_t written = 0;
+      if (buffer == nullptr) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+      else if (OB_FAIL(hex_to_cstr(value.ptr() + 2, size - 3, buffer, bytes + 1, written))) {
+      } else {
+        buffer[bytes] = '\0';
+        dest.value_ = ObString(0, bytes, buffer);
+        dest.is_hex_value_ = false;
+      }
+    }
+  }
+  return ret;
 }
 
 int ObCoreTableProxy::check_row_match(
@@ -898,6 +1018,7 @@ int ObCoreTableProxy::check_row_match(
 int ObCoreTableProxy::execute_incremental_update_sql(const Row &row, const ObIArray<UpdateCell> &cells,
     int64_t &affected_rows)
 {
+  if (catalog_ != nullptr) { return execute_native_update(row, cells, true, affected_rows); }
   int ret = OB_SUCCESS;
   int64_t affected_rows_bak = affected_rows;
   if (!is_valid() || !row.is_inited() || cells.count() <= 0) {
@@ -996,6 +1117,7 @@ int ObCoreTableProxy::execute_incremental_update_sql(const Row &row, const ObIAr
 int ObCoreTableProxy::execute_update_sql(const Row &row, const ObIArray<UpdateCell> &cells,
     int64_t &affected_rows)
 {
+  if (catalog_ != nullptr) { return execute_native_update(row, cells, false, affected_rows); }
   int ret = OB_SUCCESS;
   int64_t affected_rows_bak = affected_rows;
   if (!is_valid() || !row.is_inited() || cells.count() <= 0) {
@@ -1082,7 +1204,7 @@ int ObCoreTableProxy::execute_update_sql(const Row &row, const ObIArray<UpdateCe
   return ret;
 }
 
-int ObCoreTableProxy::update_row_struct(const common::ObIArray<UpdateCell> &cells, Row &row)
+int ObCoreTableProxy::update_row_struct(const common::ObIArray<UpdateCell> &cells, Row &row, bool incremental)
 {
   int ret = OB_SUCCESS;
   if (!is_valid() || cells.count() <= 0 || !row.is_inited()) {
@@ -1090,6 +1212,13 @@ int ObCoreTableProxy::update_row_struct(const common::ObIArray<UpdateCell> &cell
     LOG_WARN("invalid argument", K(ret), K(cells), K(row), "cell count", cells.count());
   }
   FOREACH_CNT_X(uc, cells, OB_SUCCESS == ret) {
+    Cell *previous = nullptr;
+    if (incremental && row.get_cell(uc->cell_.name_, previous) == OB_SUCCESS && previous != nullptr
+        && previous->value_.ptr() != nullptr && uc->cell_.value_.ptr() != nullptr
+        && atoll(previous->value_.ptr()) >= atoll(uc->cell_.value_.ptr())
+        && atoll(uc->cell_.value_.ptr()) != OB_INVALID_SCHEMA_VERSION) {
+      continue;
+    }
     if (OB_FAIL(row.update_cell(uc->cell_))) {
     }
   }

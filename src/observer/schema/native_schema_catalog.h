@@ -87,6 +87,9 @@ public:
   // is compiled; the returned persisted definitions exclude that fixed table.
   int get_core_tables(int64_t schema_version,
       common::ObIArray<share::schema::ObTableSchema> &);
+  // Existing core-cell representation. A writer serializes the logical DDL
+  // before this call; lock cells in key order and return their latest values.
+  int scan_core_cells(const char *table_name, bool for_update, const RowVisitor &);
   struct SchemaWatermarks {
     int64_t core = -1;
     int64_t system = -1;

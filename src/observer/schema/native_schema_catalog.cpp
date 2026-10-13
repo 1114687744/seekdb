@@ -1313,6 +1313,53 @@ int NativeSchemaCatalog::advance_schema_watermark(SchemaWatermark kind, int64_t 
   return ret;
 }
 
+int NativeSchemaCatalog::scan_core_cells(const char *table_name, bool for_update,
+    const RowVisitor &visitor)
+{
+  if (table_name == nullptr || !visitor) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = for_update ? prepare_write(OB_ALL_CORE_TABLE_TID, target) : OB_SUCCESS;
+  ObObj prefix;
+  prefix.set_varchar(table_name);
+  prefix.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+  Cursor cursor;
+  ObArenaAllocator allocator(ObMemAttr("CoreCatalogKeys"));
+  ObArray<ObRowkey> keys;
+  bool stop = false;
+  if (OB_SUCC(ret) && for_update) {
+    // FOR UPDATE enumerates current keys too: a long-running owner's older
+    // catalog snapshot must not hide rows committed before this statement.
+    ObObj lower[3], upper[3];
+    lower[0] = upper[0] = prefix;
+    lower[1].set_min_value(); lower[2].set_min_value();
+    upper[1].set_max_value(); upper[2].set_max_value();
+    ObNewRange range;
+    range.start_key_.assign(lower, 3);
+    range.end_key_.assign(upper, 3);
+    range.border_flag_.set_inclusive_start(); range.border_flag_.set_inclusive_end();
+    ret = state_->native.scan_current(state_->transaction, target->table, range,
+        [&](const ObNewRow &row, bool &) {
+      ObRowkey key;
+      const int rc = ObRowkey(row.cells_, 3).deep_copy(key, allocator);
+      return rc == OB_SUCCESS ? keys.push_back(key) : rc;
+    });
+  } else if (OB_SUCC(ret)) { ret = open_prefix(OB_ALL_CORE_TABLE_TID, ObRowkey(&prefix, 1), cursor); }
+  const ObNewRow *row = nullptr;
+  while (OB_SUCC(ret) && !for_update && !stop && OB_SUCC(ret = cursor.next(row))) {
+    ret = visitor(*cursor.schema(), *row, stop);
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  const int closed = cursor.close();
+  if (OB_SUCC(ret)) { ret = closed; }
+  for (int64_t i = 0; OB_SUCC(ret) && !stop && i < keys.count(); ++i) {
+    ObNewRow current;
+    ret = state_->native.get_for_update(state_->transaction, target->table, keys.at(i), allocator, current);
+    if (ret == OB_ENTRY_NOT_EXIST) { ret = OB_SUCCESS; }
+    else if (OB_SUCC(ret)) { ret = visitor(target->schema, current, stop); }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::get_core_tables(int64_t version, ObIArray<ObTableSchema> &out)
 {
   if (version <= 0) { return OB_INVALID_ARGUMENT; }

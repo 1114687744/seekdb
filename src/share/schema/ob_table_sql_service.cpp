@@ -36,6 +36,22 @@ namespace share
 namespace schema
 {
 
+namespace {
+int with_core_table(ObISQLClient &client, const char *name,
+    const std::function<int(ObCoreTableProxy &)> &operation)
+{
+  if (GCTX.in_bootstrap_) {
+    ObCoreTableProxy cells(name, client);
+    return operation(cells);
+  }
+  return observer::NativeSchemaCatalog::with_ddl_transaction(client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) {
+    ObCoreTableProxy cells(name, catalog);
+    return operation(cells);
+  });
+}
+} // namespace
+
 int ObTableSqlService::exec_update(
     ObISQLClient &sql_client,
     const uint64_t table_id,
@@ -45,12 +61,12 @@ int ObTableSqlService::exec_update(
 {
   int ret = OB_SUCCESS;
   if (is_core_table(table_id)) {
-    ObArray<ObCoreTableProxy::UpdateCell> cells;
-    ObCoreTableProxy kv(table_name, sql_client);
-    if (OB_FAIL(kv.load_for_update())) {
-    } else if (OB_FAIL(dml.splice_core_cells(kv, cells))) {
-    } else if (OB_FAIL(kv.update_row(cells, affected_rows))) {
-    }
+    ret = with_core_table(sql_client, table_name, [&](ObCoreTableProxy &kv) {
+      ObArray<ObCoreTableProxy::UpdateCell> cells;
+      int rc = kv.load_for_update();
+      if (rc == OB_SUCCESS) { rc = dml.splice_core_cells(kv, cells); }
+      return rc == OB_SUCCESS ? kv.update_row(cells, affected_rows) : rc;
+    });
   } else {
     
     ObDMLExecHelper exec(sql_client);
@@ -108,9 +124,16 @@ int ObTableSqlService::insert_history_fields_(ObISQLClient &sql_client, uint64_t
 {
   affected_rows = 0;
   int ret = OB_SUCCESS;
-  if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  if (!GCTX.in_bootstrap_) {
+    if (is_core_table(table_id)) {
+      ObDMLSqlSplicer dml;
+      if (OB_FAIL(encode(dml))) {
+      } else if (OB_FAIL(exec_insert(sql_client, table_id, table_name, dml, affected_rows))) {
+      } else if (!is_single_row(affected_rows)) { ret = OB_ERR_UNEXPECTED; }
+    }
+    if (OB_SUCC(ret)) { ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_fields(inner_table_id, encode); });
+    }
     if (OB_SUCC(ret)) { affected_rows = 1; }
   } else {
     ObDMLSqlSplicer dml;
@@ -137,12 +160,12 @@ int ObTableSqlService::exec_insert(
 {
   int ret = OB_SUCCESS;
   if (is_core_table(table_id)) {
-    ObArray<ObCoreTableProxy::UpdateCell> cells;
-    ObCoreTableProxy kv(table_name, sql_client);
-    if (OB_FAIL(kv.load_for_update())) {
-    } else if (OB_FAIL(dml.splice_core_cells(kv, cells))) {
-    } else if (OB_FAIL(kv.replace_row(cells, affected_rows))) {
-    }
+    ret = with_core_table(sql_client, table_name, [&](ObCoreTableProxy &kv) {
+      ObArray<ObCoreTableProxy::UpdateCell> cells;
+      int rc = kv.load_for_update();
+      if (rc == OB_SUCCESS) { rc = dml.splice_core_cells(kv, cells); }
+      return rc == OB_SUCCESS ? kv.replace_row(cells, affected_rows) : rc;
+    });
   } else {
     
     ObDMLExecHelper exec(sql_client);
@@ -161,12 +184,12 @@ int ObTableSqlService::exec_delete(
 {
   int ret = OB_SUCCESS;
   if (is_core_table(table_id)) {
-    ObArray<ObCoreTableProxy::UpdateCell> cells;
-    ObCoreTableProxy kv(table_name, sql_client);
-    if (OB_FAIL(kv.load_for_update())) {
-    } else if (OB_FAIL(dml.splice_core_cells(kv, cells))) {
-    } else if (OB_FAIL(kv.delete_row(cells, affected_rows))) {
-    }
+    ret = with_core_table(sql_client, table_name, [&](ObCoreTableProxy &kv) {
+      ObArray<ObCoreTableProxy::UpdateCell> cells;
+      int rc = kv.load_for_update();
+      if (rc == OB_SUCCESS) { rc = dml.splice_core_cells(kv, cells); }
+      return rc == OB_SUCCESS ? kv.delete_row(cells, affected_rows) : rc;
+    });
   } else {
     
     ObDMLExecHelper exec(sql_client);
@@ -1051,6 +1074,32 @@ int ObTableSqlService::add_columns(ObISQLClient &sql_client,
 int ObTableSqlService::add_columns_for_core(ObISQLClient &sql_client, const ObTableSchema &table)
 {
   int ret = OB_SUCCESS;
+  if (!GCTX.in_bootstrap_) {
+    if (OB_FAIL(check_ddl_allowed(table))) { return ret; }
+    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      ObCoreTableProxy kv(OB_ALL_COLUMN_HISTORY_TNAME, catalog);
+      int ret = kv.load_for_update();
+      for (auto it = table.column_begin(); OB_SUCC(ret) && it != table.column_end(); ++it) {
+        ObColumnSchemaV2 column;
+        ObDMLSqlSplicer dml;
+        ObArray<ObCoreTableProxy::UpdateCell> cells;
+        int64_t affected = 0;
+        if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(column.assign(**it))) {
+        } else {
+          column.set_schema_version(table.get_schema_version());
+          column.set_table_id(table.get_table_id());
+          if (OB_FAIL(gen_column_dml(column, dml, true))) {
+          } else if (OB_FAIL(dml.add_column("is_deleted", 0))) {
+          } else if (OB_FAIL(dml.splice_core_cells(kv, cells))) {
+          } else if (OB_FAIL(kv.replace_row(cells, affected))) {
+          } else { ret = catalog.insert_column(column, true); }
+        }
+      }
+      return ret;
+    });
+  }
 
   ObDMLSqlSplicer dml;
   ObCoreTableProxy kv(OB_ALL_COLUMN_HISTORY_TNAME, sql_client);
@@ -1354,31 +1403,33 @@ int ObTableSqlService::supplement_for_core_table(ObISQLClient &sql_client,
     supplement_tbl_name = OB_ALL_COLUMN_HISTORY_TNAME;
   }
   if (OB_SUCC(ret)) {
-    
-    ObCoreTableProxy kv(supplement_tbl_name, sql_client);
-    if (OB_FAIL(kv.load_for_update())) {
-    } else {
-      ObCoreTableProxy::UpdateCell ucell;
-      ucell.is_filter_cell_ = false;
-      ObCoreTableProxy::Cell cell;
-      cell.name_ = column.get_column_name_str();
-      ObSqlString sql_string;
-      if (column.get_orig_default_value().is_null()) {
-        cell.value_.reset();
+    ret = with_core_table(sql_client, supplement_tbl_name, [&](ObCoreTableProxy &kv) {
+      int ret = OB_SUCCESS;
+      if (OB_FAIL(kv.load_for_update())) {
       } else {
-        if (OB_FAIL(sql_append_hex_escape_str(ObHexEscapeSqlStr(orig_default_value).str(),
-                                              sql_string))) {
+        ObCoreTableProxy::UpdateCell ucell;
+        ucell.is_filter_cell_ = false;
+        ObCoreTableProxy::Cell cell;
+        cell.name_ = column.get_column_name_str();
+        ObSqlString sql_string;
+        if (column.get_orig_default_value().is_null()) {
+          cell.value_.reset();
         } else {
-          cell.value_ = sql_string.string();
+          if (OB_FAIL(sql_append_hex_escape_str(ObHexEscapeSqlStr(orig_default_value).str(),
+                                                sql_string))) {
+          } else {
+            cell.value_ = sql_string.string();
+          }
+        }
+        if (OB_SUCC(ret)) {
+          cell.is_hex_value_ = true;
+          if (OB_FAIL(kv.store_cell(cell, ucell.cell_))) {
+          } else if (OB_FAIL(kv.supplement_cell(ucell))) {
+          }
         }
       }
-      if (OB_SUCC(ret)) {
-        cell.is_hex_value_ = true;
-        if (OB_FAIL(kv.store_cell(cell, ucell.cell_))) {
-        } else if (OB_FAIL(kv.supplement_cell(ucell))) {
-        }
-      }
-    }
+      return ret;
+    });
   }
   if (NULL != orig_default_value_buf) {
     free(orig_default_value_buf);
@@ -1411,6 +1462,24 @@ int ObTableSqlService::add_single_column(ObISQLClient &sql_client,
       if (OB_SUCC(ret)) { ret = catalog.insert_column(column, true); }
       return ret;
     });
+  }
+  if (!GCTX.in_bootstrap_) {
+    int ret = OB_SUCCESS;
+    ObDMLSqlSplicer dml;
+    int64_t affected = 0;
+    const uint64_t table_id = column.get_table_id();
+    if (OB_FAIL(gen_column_dml(column, dml, true))) {
+    } else if (OB_FAIL(dml.add_column("is_deleted", 0))) {
+    } else if (OB_FAIL(exec_insert(sql_client, table_id, OB_ALL_COLUMN_HISTORY_TNAME, dml, affected))) {
+    } else if (!is_single_row(affected)) { ret = OB_ERR_UNEXPECTED; }
+    else if (!only_history && (table_id == OB_ALL_TABLE_TID || table_id == OB_ALL_COLUMN_TID)) {
+      ret = supplement_for_core_table(sql_client, table_id == OB_ALL_TABLE_TID, column);
+    }
+    if (OB_SUCC(ret)) {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_column(column, true); });
+    }
+    return ret;
   }
   int ret = OB_SUCCESS;
   ObDMLSqlSplicer dml;
@@ -1472,6 +1541,22 @@ int ObTableSqlService::add_table(
     }
     if (OB_SUCC(ret) && only_history) {
       ret = check_table_history_matched_(sql_client, table.get_table_id(), table.get_schema_version());
+    }
+    return ret;
+  }
+  if (!GCTX.in_bootstrap_) {
+    int ret = OB_SUCCESS;
+    ObDMLSqlSplicer dml;
+    int64_t affected = 0;
+    if (OB_FAIL(add_table_dml(table, update_object_status_ignore_version, dml, true))) {
+    } else if (OB_FAIL(dml.add_column("is_deleted", 0))) {
+    } else if (OB_FAIL(exec_insert(sql_client, table.get_table_id(), OB_ALL_TABLE_HISTORY_TNAME, dml, affected))) {
+    } else if (!is_single_row(affected) && !is_zero_row(affected)) { ret = OB_ERR_UNEXPECTED; }
+    if (OB_SUCC(ret)) {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+          [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.insert_table(table, true, update_object_status_ignore_version);
+      });
     }
     return ret;
   }
@@ -2399,25 +2484,23 @@ int ObTableSqlService::delete_from_all_column_history(ObISQLClient &sql_client,
   
   
   if (OB_FAIL(check_ddl_allowed(table_schema, &sql_client))) {
-  } else if (!is_core_table(table_schema.get_table_id()) && !GCTX.in_bootstrap_) {
-    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
-        [&](observer::NativeSchemaCatalog &catalog) {
-      int ret = OB_SUCCESS;
-      for (auto it = table_schema.column_begin(); OB_SUCC(ret) && it != table_schema.column_end(); ++it) {
-        if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
-        else {
-          ret = catalog.insert_fields(OB_ALL_COLUMN_HISTORY_TID, [&](SchemaCatalogRow &fields) {
+  } else if (!GCTX.in_bootstrap_) {
+    for (auto it = table_schema.column_begin(); OB_SUCC(ret) && it != table_schema.column_end(); ++it) {
+      if (*it == nullptr) { ret = OB_ERR_UNEXPECTED; }
+      else {
+        int64_t affected = 0;
+        ret = insert_history_fields_(sql_client, table_schema.get_table_id(),
+            OB_ALL_COLUMN_HISTORY_TID, OB_ALL_COLUMN_HISTORY_TNAME, [&](auto &fields) {
             int ret = OB_SUCCESS;
             if (OB_FAIL(fields.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id((*it)->get_table_id())))
                 || OB_FAIL(fields.add_pk_column("column_id", (*it)->get_column_id()))
                 || OB_FAIL(fields.add_pk_column("schema_version", new_schema_version))
                 || OB_FAIL(fields.add_column("is_deleted", 1))) {}
             return ret;
-          });
-        }
+          }, affected);
       }
-      return ret;
-    });
+    }
+    return ret;
   } else if (OB_FAIL(sql.append_fmt("INSERT /*+use_plan_cache(none)*/ INTO %s "
       "(TABLE_ID, COLUMN_ID, SCHEMA_VERSION, IS_DELETED) VALUES ",
       OB_ALL_COLUMN_HISTORY_TNAME))) {

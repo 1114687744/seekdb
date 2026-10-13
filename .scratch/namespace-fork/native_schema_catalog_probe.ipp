@@ -371,6 +371,143 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_HISTORY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
+    const char *stage = "begin";
+    const char *logical = "__native_core_cells";
+    const char bytes[] = {'\0', '\'', '\\', '\n', '\xE4', '\xB8', '\xAD'};
+    const ObString binary(sizeof(bytes), bytes);
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    storage::NativeInnerTable::Transaction earlier_owner;
+    observer::NativeSchemaCatalog earlier(namespace_id, *access, *transactions);
+    if (ret == OB_SUCCESS) { ret = native.begin(earlier_owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(earlier_owner, [&](transaction::ObTxDesc &tx) { return earlier.attach(tx, deadline); });
+    }
+    if (ret == OB_SUCCESS) { ret = native.begin(owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+    }
+    auto inspect = [&](observer::NativeSchemaCatalog &reader, int64_t count) {
+      share::ObCoreTableProxy rows(logical, reader);
+      int rc = rows.load();
+      if (rc == OB_SUCCESS && rows.row_count() != count) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS && count == 1) {
+        rc = rows.next();
+        int64_t id = 0, number = 0;
+        ObString value;
+        if (rc == OB_SUCCESS) { rc = rows.get_int("id", id); }
+        if (rc == OB_SUCCESS) { rc = rows.get_int("number", number); }
+        if (rc == OB_SUCCESS && (id != 1 || number != 8)) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = rows.get_varchar("bytes", value); }
+        if (rc == OB_SUCCESS && value != binary) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = rows.get_varchar("empty", value); }
+        if (rc == OB_SUCCESS && (!value.empty() || value.ptr() == nullptr)) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS && rows.get_varchar("nullable", value) != OB_ERR_NULL_VALUE) { rc = OB_ERR_UNEXPECTED; }
+      }
+      return rc;
+    };
+    if (ret == OB_SUCCESS) {
+      stage = "insert";
+      share::ObCoreTableProxy rows(logical, writer);
+      ret = rows.load_for_update();
+      for (int64_t id = 1; ret == OB_SUCCESS && id <= 2; ++id) {
+        share::ObDMLSqlSplicer dml;
+        ObArray<share::ObCoreTableProxy::UpdateCell> cells;
+        int64_t affected = 0;
+        ret = dml.add_pk_column("id", id);
+        if (ret == OB_SUCCESS) { ret = dml.add_column("number", 7); }
+        if (ret == OB_SUCCESS) { ret = dml.add_column("bytes", ObHexEscapeSqlStr(binary)); }
+        if (ret == OB_SUCCESS) { ret = dml.add_column("empty", ObHexEscapeSqlStr("")); }
+        if (ret == OB_SUCCESS) { ret = dml.add_column("nullable", static_cast<const char *>(nullptr)); }
+        if (ret == OB_SUCCESS) { ret = dml.splice_core_cells(rows, cells); }
+        if (ret == OB_SUCCESS) { ret = rows.replace_row(cells, affected); }
+        if (ret == OB_SUCCESS && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+        affected = 0;
+        if (ret == OB_SUCCESS) { ret = rows.replace_row(cells, affected); }
+        if (ret == OB_SUCCESS && affected != 0) { ret = OB_ERR_UNEXPECTED; }
+      }
+      if (ret == OB_SUCCESS) {
+        stage = "update_delete";
+        share::ObDMLSqlSplicer update, erase;
+        ObArray<share::ObCoreTableProxy::UpdateCell> cells;
+        int64_t affected = 0;
+        ret = update.add_pk_column("id", 1);
+        if (ret == OB_SUCCESS) { ret = update.add_column("number", 8); }
+        if (ret == OB_SUCCESS) { ret = update.splice_core_cells(rows, cells); }
+        if (ret == OB_SUCCESS) { ret = rows.update_row(cells, affected); }
+        if (ret == OB_SUCCESS && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+        cells.reuse(); affected = 0;
+        if (ret == OB_SUCCESS) { ret = erase.add_pk_column("id", 2); }
+        if (ret == OB_SUCCESS) { ret = erase.splice_core_cells(rows, cells); }
+        if (ret == OB_SUCCESS) { ret = rows.delete_row(cells, affected); }
+        if (ret == OB_SUCCESS && (affected != 1 || rows.row_count() != 1)) { ret = OB_ERR_UNEXPECTED; }
+      }
+    }
+    if (ret == OB_SUCCESS) { stage = "own_read"; ret = inspect(writer, 1); }
+    if (ret == OB_SUCCESS) {
+      stage = "external_hidden";
+      observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+      ret = outside.begin_read(deadline);
+      if (ret == OB_SUCCESS) { ret = inspect(outside, 0); }
+    }
+    stage = ret == OB_SUCCESS ? "commit" : stage;
+    const int end = owner.is_active() ? (ret == OB_SUCCESS ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+    const int close = writer.close();
+    if (ret == OB_SUCCESS) { ret = end == OB_SUCCESS ? close : end; }
+    if (ret == OB_SUCCESS) { stage = "old_view"; ret = inspect(catalog, 0); }
+    if (ret == OB_SUCCESS) {
+      stage = "locked_current_keys";
+      share::ObCoreTableProxy rows(logical, earlier);
+      ret = rows.load_for_update();
+      if (ret == OB_SUCCESS && rows.row_count() != 1) { ret = OB_ERR_UNEXPECTED; }
+      for (const int64_t candidate : {5, 6}) {
+        share::ObDMLSqlSplicer dml;
+        ObArray<share::ObCoreTableProxy::UpdateCell> cells;
+        int64_t affected = 0;
+        if (ret == OB_SUCCESS) { ret = dml.add_pk_column("id", 1); }
+        if (ret == OB_SUCCESS) { ret = dml.add_column("number", candidate); }
+        if (ret == OB_SUCCESS) { ret = dml.splice_core_cells(rows, cells); }
+        if (ret == OB_SUCCESS) { ret = rows.incremental_update_row(cells, affected); }
+        if (ret == OB_SUCCESS && affected != 0) { ret = OB_ERR_UNEXPECTED; }
+      }
+    }
+    const int earlier_end = earlier_owner.is_active() ? native.rollback(earlier_owner) : OB_SUCCESS;
+    const int earlier_close = earlier.close();
+    if (ret == OB_SUCCESS) { ret = earlier_end == OB_SUCCESS ? earlier_close : earlier_end; }
+    if (ret == OB_SUCCESS) {
+      stage = "committed";
+      observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+      ret = outside.begin_read(deadline);
+      if (ret == OB_SUCCESS) { ret = inspect(outside, 1); }
+    }
+    if (ret == OB_SUCCESS) { ret = native.begin(owner, deadline); }
+    if (ret == OB_SUCCESS) {
+      ret = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+    }
+    if (ret == OB_SUCCESS) {
+      stage = "rollback_delete";
+      share::ObCoreTableProxy rows(logical, writer);
+      ObArray<share::ObCoreTableProxy::UpdateCell> no_filter;
+      int64_t affected = 0;
+      ret = rows.load_for_update();
+      if (ret == OB_SUCCESS) { ret = rows.delete_row(no_filter, affected); }
+      if (ret == OB_SUCCESS && affected != 1) { ret = OB_ERR_UNEXPECTED; }
+      if (ret == OB_SUCCESS) { ret = inspect(writer, 0); }
+    }
+    const int rollback = owner.is_active() ? native.rollback(owner) : OB_SUCCESS;
+    const int detach = writer.close();
+    if (ret == OB_SUCCESS) { ret = rollback == OB_SUCCESS ? detach : rollback; }
+    if (ret == OB_SUCCESS) {
+      stage = "rollback_verified";
+      observer::NativeSchemaCatalog outside(namespace_id, *access, *transactions);
+      ret = outside.begin_read(deadline);
+      if (ret == OB_SUCCESS) { ret = inspect(outside, 1); }
+    }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_CORE_WRITES namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS) {
     VersionHisVal versions;
     ret = catalog.get_table_version_history(table_id, requested_version, versions);

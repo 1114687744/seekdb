@@ -233,6 +233,8 @@ def run(binary, selected=None):
                         'stage=read_rollback ret=0') in trace, trace[-2000:]
                 assert (f'NATIVE_SCHEMA_CATALOG_CORE_HISTORY namespace={child_id} '
                         'stage=read_rollback ret=0') in trace, trace[-2000:]
+                assert (f'NATIVE_SCHEMA_CATALOG_CORE_WRITES namespace={child_id} '
+                        'stage=rollback_verified ret=0') in trace, trace[-2000:]
                 assert f'NATIVE_SCHEMA_CATALOG_TOMBSTONE namespace={child_id} ret=0' in trace
                 borrowed = [line for log in (experiment.base / 'log').glob('seekdb.log*')
                             for line in log.read_text(errors='replace').splitlines()

@@ -531,6 +531,10 @@ int NativeInnerTable::scan(Transaction &tx, const Table &table, const ObNewRange
     const RowVisitor &visitor, bool reverse, const ReadSource *source)
 { return scan_rows(tx, table, range, visitor, false, reverse, source); }
 
+int NativeInnerTable::scan_current(Transaction &tx, const Table &table, const ObNewRange &range,
+    const RowVisitor &visitor)
+{ return scan_rows(tx, table, range, visitor, true, false, nullptr); }
+
 int NativeInnerTable::read(Transaction &tx, const Table &table, const ObRowkey &key,
     ObIAllocator &allocator, ObNewRow &row, bool latest, const ReadSource *source, bool raw_lob)
 {

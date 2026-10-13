@@ -418,3 +418,21 @@
 - `watermark-production-ddl3.log` 修正两级依赖等待边界后退出 0，完整 DDL/索引/父子隔离/崩溃重启与重启后视图、触发器、外键验证通过；实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_abhrenif`。
 - 生产 Namespace 主备复跑退出 0（170.94 秒）：`native-watermark-standby2/results.json`。实际目录行提交 SCN 等待、请求超时、各类目录和版本水位回放、删除准入、父历史来源、提升后装载/执行/写入及再次 fork 均通过。生产源文件已确认无测试钩子，未运行完整 mysqltest/sysbench。
 - 本阶段水位读写验证完成。最终边界审计仍须核对 core 单元格式写入的调用范围；不能把 bootstrap/default 配置下通过等同于任意内表结构 DDL 都已原生化。普通数据库、用户、权限等非表 schema 类型和合并/checksum 接入仍属于既定后续范围。
+
+### 正常 core 定义写入（实施中）
+
+- 最终调用点审计确认 `enable_sys_table_ddl=true` 后仍可执行 core 表属性/列默认值 DDL，不能将 `ObCoreTableProxy` 的所有写入归为 bootstrap。固定内表初始化结构仍由代码提供；本阶段保留既有 core 单元格式及 history 副本。
+- `ObCoreTableProxy` 增加显式接收 NativeSchemaCatalog 的构造入口，复用原有行匹配、逻辑 row_id 分配、replace/update/delete/supplement 规则。SQL backend 仍用于目录建立前初始化；正常表定义写入使用所属 DDL owner 的原生 backend。单元格 X'...' 在输入时解码，后续比较、内存行与持久值采用相同字节，并保留 NULL/空串区别。
+- core 表/列 history 写入、加列补默认字段及删除标记接入；普通 history 镜像同事务通过原生目录写入。批量列写入只加载一次 core 记录，避免按列重扫。
+- 锁定读取先在当前可见视图枚举 key，再按既有 key 顺序锁行读取最新值；显式旧快照读取保持原视图。当前 key 扫描复用 NativeInnerTable 已有的 moving-read 实现；不新增缓存或持久状态。DDL 对象串行化继续由原 owner 提供。
+- `core-writes-build1.log` 编译通过；`core-writes-probe1.log` 的 plain/watermark 冷用例通过。实例 `namespace_fork_PROTOTYPE_native_schema_catalog_ceiyj6uj` 包含 `CORE_WRITES namespace=3 stage=rollback_verified ret=0`，验证单元格二进制/中文/NULL/空串、逻辑行插入/修改/删除、重复值不更新、提交、外部隔离、旧视图及回滚；服务槽位为 0。
+- `core-writes-ddl1.log` 和 `core-writes-ddl2.log` 的实际系统表注释及列默认值 DDL 通过。不过新测试插入代码同时命中了首次登录和重启登录，重启后又执行了一次 core DDL，因此不能用它们证明原 core 版本的持久恢复。已移除重启后重写，增加表/列 core 与普通 history 的逐字段对照；新版本验证待完成。
+- 已增加“更早开启的目录写上下文在另一事务提交后锁定读取新 key”及连续较低 incremental 更新用例，避免旧快照漏 key、内存行错误降版本后覆盖新值。当前 build2 编译中；生产版本、真实重启及主备提升验证待完成。
+
+- `core-writes-build2.log` 编译通过；`core-writes-probe2.log` 的 plain/watermark 冷用例退出 0。实例 `namespace_fork_PROTOTYPE_native_schema_catalog_1fq5rspw` 的 CORE_WRITES 完成标记为 ret=0，包含旧 owner 锁定读取后来提交的行及连续较低 incremental 更新不覆盖较高值。
+- `core-writes-ddl3.log` 退出 0；实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_enwrzwgf`。真实子空间执行 core 表注释和列默认值修改，逐项核对 core 表/列记录与对应普通 history 的版本、正文和默认值；父空间保持原定义。崩溃后只核对先前保存的版本，没有再执行 core DDL。其余 DDL/索引/父子隔离/恢复验证均通过。
+- 冷用例断言、生产 core DDL/重启用例及主备回放/提升用例已进入既有四件套入口。测试钩子已移除，开始生产编译，生产及主备最终结果待完成。
+
+- `core-writes-production-build1.log` 的无测试钩子生产编译通过；`core-writes-production-ddl1.log` 退出 0，实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_vxole4wg`，包含原 core 版本在崩溃恢复后的逐字段验证。
+- 生产 Namespace 主备回归退出 0（181.52 秒），结果见 `gate-results/native-schema-catalog/native-core-writes-standby/results.json`。`native_catalog_core_metadata_replay` 验证 core 表/列与 history 副本回放，提升后再次核对相同版本和定义；原有物化/LOB、DDL 刷新、父 TRUNCATE/DROP、删除准入及提升后再次 fork 均通过。
+- 已核对四件套入口：`native_schema_catalog_probe.py` 的 plain 自动覆盖新增冷 core 写入；`native_schema_catalog_ddl_probe.py` 覆盖生产 DDL/重启；`run_standby_suite.py --case namespace_fork_local` 调用扩展的 `standby_namespace_follow.py`，覆盖回放及提升。没有运行完整 mysqltest/sysbench，也没有将“四件套已接入”写成“四件套全部重跑”。

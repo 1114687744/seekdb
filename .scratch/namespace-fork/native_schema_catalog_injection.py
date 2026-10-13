@@ -18,7 +18,7 @@ if args.action == 'enable':
         text = text.replace(anchor, '// NATIVE_SCHEMA_CATALOG_PROBE_BEGIN\n' + code +
                             '\n// NATIVE_SCHEMA_CATALOG_PROBE_END\n' + anchor, 1)
     before('#include "namespace/catalog.h"\n',
-           '#include "observer/schema/native_schema_catalog.h"\n#include "share/schema/schema_catalog_row.h"\n#include "share/schema/ob_trigger_info.h"\n#include "storage/tx/ob_trans_service.h"')
+           '#include "observer/schema/native_schema_catalog.h"\n#include "share/schema/schema_catalog_row.h"\n#include "share/schema/ob_trigger_info.h"\n#include "share/ob_core_table_proxy.h"\n#include "share/ob_dml_sql_splicer.h"\n#include "storage/tx/ob_trans_service.h"')
     before('int NamespaceForkKernelPrototype::control_namespace(const ObString &source, const ObString &target,\n    uint64_t &id, bool allow_login) {\n',
            '#include "' + str(local / 'native_schema_catalog_probe.ipp') + '"')
     before('  LOG_INFO("PROTOTYPE_NAMESPACE_KV_REGISTER", K(ret), K(id),\n',

@@ -560,6 +560,59 @@ def verify_views(query, evidence):
         assert query(f'SELECT ori_schema_version FROM oceanbase.__all_ori_schema_version WHERE table_id={tid}') == ((version,),)
 
 
+def core_metadata(query):
+    return query("SELECT table_id,schema_version,comment FROM oceanbase.__all_virtual_core_all_table "
+                 "WHERE table_name='__all_column'")
+
+
+def core_column_metadata(query, tid):
+    columns = 'column_id,schema_version,cur_default_value_v2,orig_default_value_v2'
+    actual = query(f'SELECT {columns} FROM oceanbase.__all_virtual_core_column_table '
+                   f"WHERE table_id={tid} AND column_name='data_length'")
+    assert len(actual) == 1, actual
+    cid, version = actual[0][:2]
+    mirror = query(f'SELECT {columns} FROM oceanbase.__all_column_history '
+                   f'WHERE table_id={tid} AND column_id={cid} AND schema_version={version} AND is_deleted=0')
+    assert actual == mirror, (actual, mirror)
+    return actual
+
+
+def exercise_core_metadata(query, administer, comment):
+    before = core_metadata(query)
+    assert len(before) == 1, before
+    tid = before[0][0]
+    old_column = core_column_metadata(query, tid)
+    administer('ALTER SYSTEM SET enable_sys_table_ddl=true')
+    try:
+        query(f"ALTER TABLE oceanbase.__all_column COMMENT='{comment}'")
+        query("ALTER TABLE oceanbase.__all_column ALTER COLUMN data_length SET DEFAULT 17")
+        changed = core_column_metadata(query, tid)
+        assert changed[0][1] > old_column[0][1] and changed[0][2] != old_column[0][2], (old_column, changed)
+        query("ALTER TABLE oceanbase.__all_column ALTER COLUMN data_length DROP DEFAULT")
+    finally:
+        administer('ALTER SYSTEM SET enable_sys_table_ddl=false')
+    after = core_metadata(query)
+    column = core_column_metadata(query, tid)
+    assert column[0][1] > changed[0][1] and column[0][2] != changed[0][2], (changed, column)
+    assert len(after) == 1 and after[0][0] == tid and after[0][1] > before[0][1], (before, after)
+    assert after[0][2] == comment, after
+    expected = (after, column)
+    verify_core_metadata(query, expected)
+    return expected
+
+
+def verify_core_metadata(query, expected):
+    tables, column = expected
+    actual = core_metadata(query)
+    assert actual == tables, (actual, tables)
+    tid, version, comment = tables[0]
+    mirror = query(f'SELECT schema_version,comment FROM oceanbase.__all_table_history '
+                   f'WHERE table_id={tid} AND schema_version={version} AND is_deleted=0')
+    assert mirror == ((version, comment),), (mirror, expected)
+    assert core_column_metadata(query, tid) == column
+    assert comment in query('SHOW CREATE TABLE oceanbase.__all_column')[0][1]
+
+
 def run(binary):
     experiment = BootstrapExperiment(binary, 'native_catalog_ddl', prototype=6)
     child = None
@@ -594,6 +647,9 @@ def run(binary):
         experiment.sql('FORK NAMESPACE native_ddl_child FROM ns1')
         experiment.sql('FORK NAMESPACE native_view_peer FROM ns1')
         child = connect(experiment, 'root@native_ddl_child')
+        inherited_core = core_metadata(experiment.sql)
+        core_evidence = exercise_core_metadata(lambda statement: experiment.sql(statement, child),
+                                               experiment.sql, '原生 core 元数据')
         peer = connect(experiment, 'root@native_view_peer')
         experiment.sql('CREATE TABLE native_ddl.mock_parent(id INT PRIMARY KEY)')
         experiment.sql('USE native_ddl', child)
@@ -646,6 +702,8 @@ def run(binary):
             view_evidence, peer_view_evidence = [job.result() for job in jobs]
 
         def verify():
+            verify_core_metadata(lambda statement: experiment.sql(statement, child), core_evidence)
+            assert core_metadata(experiment.sql) == inherited_core
             verify_dependencies(lambda statement: experiment.sql(statement, child), dependency_evidence)
             assert experiment.sql('SELECT * FROM native_dependency.v2') == ((1, 7),)
             assert dependency_rows(experiment.sql, parent_dependency[0]) == parent_dependency[1]

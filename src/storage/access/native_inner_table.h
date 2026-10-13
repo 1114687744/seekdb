@@ -168,6 +168,9 @@ public:
   // prefix bounds. The range's table_id is ignored: bind selects the target.
   int scan(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &, bool reverse = false,
            const ReadSource *source = nullptr);
+  // Like get_current, enumerate current committed rows plus own writes.
+  // The caller supplies serialization when collecting keys for a mutation.
+  int scan_current(Transaction &, const Table &, const common::ObNewRange &, const RowVisitor &);
   int open_scan(Transaction &, const Table &, const common::ObNewRange &, Cursor &, bool reverse = false,
                 const ReadSource *source = nullptr);
   int insert(Transaction &, const Table &, const common::ObNewRow &);

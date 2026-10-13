@@ -27,6 +27,7 @@ class ObISQLClient;
 class ObTimeZoneInfo;
 }
 
+namespace observer { class NativeSchemaCatalog; }
 namespace share
 {
 
@@ -166,11 +167,13 @@ public:
 
   ObCoreTableProxy(const char *table_name,
                    common::ObISQLClient &sql_client);
+  // Explicit owner-bound native backend. The catalog outlives this proxy.
+  ObCoreTableProxy(const char *table_name, observer::NativeSchemaCatalog &catalog);
   virtual ~ObCoreTableProxy();
 
-  bool is_valid() const { return NULL != table_name_ && NULL != sql_client_; }
+  bool is_valid() const { return table_name_ != nullptr && (sql_client_ != nullptr || catalog_ != nullptr); }
 
-  void set_sql_client(common::ObISQLClient &sql_client) { sql_client_ = &sql_client; }
+  void set_sql_client(common::ObISQLClient &sql_client) { sql_client_ = &sql_client; catalog_ = nullptr; }
   common::ObISQLClient *get_sql_client() const { return sql_client_; }
 
   // select %table_name_'s all rows
@@ -229,6 +232,9 @@ public:
 private:
 
   int load(const bool for_update);
+  int load_native(bool for_update);
+  int execute_native_update(const Row &, const common::ObIArray<UpdateCell> &,
+                            bool incremental, int64_t &affected_rows);
   int add_row(const int64_t row_id, const common::ObIArray<Cell> &cells);
 
   int update(const common::ObIArray<UpdateCell> &cells,
@@ -248,7 +254,7 @@ private:
   int execute_delete_sql(const int64_t row_id);
 
   // update %row
-  int update_row_struct(const common::ObIArray<UpdateCell> &cells, Row &row);
+  int update_row_struct(const common::ObIArray<UpdateCell> &cells, Row &row, bool incremental = false);
 
   // choose the minimal non exist row_id (started with 0)
   int generate_row_id(int64_t &row_id) const;
@@ -256,6 +262,7 @@ private:
 private:
   const char *table_name_;
   common::ObISQLClient *sql_client_;
+  observer::NativeSchemaCatalog *catalog_;
 
   bool load_for_update_;
   int64_t cur_idx_;
