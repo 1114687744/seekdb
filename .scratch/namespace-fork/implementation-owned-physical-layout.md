@@ -107,3 +107,9 @@
 - v6 剩余原生门禁从 checksum 继续运行于 `/tmp/owned-layout-four-gates-v6-resume`，不重新跑已完成前缀。
 
 仍需闭合：原生目录 F 的 MVCC 转储/合并/重启保留回归及原有故障用例替代；Namespace 删除与目录物理对象回收的并发审计；最终四件套及宽表/8000 分区成本。旧 full profile 的已删除历史模块测试尚未全部迁移，总目标仍未完成。
+
+检查点 `7871d4d17` 已推送。新生产版三项备库最终全部通过（115.54/186.92/139.40 秒），`native_schema_catalog_ddl_probe.py` 也通过，日志 `/tmp/owned-layout-native-ddl8.log`。新版本 8000 分区 5 次采样结果备份为 `owned-layout-v8-latency.json`：fork 中位 3.84 ms，首次写提交 10.80 ms，fork 到首次点读 0.426 s，全分区聚合 3.585 s；同期机器负载不同，不能据此宣称细小耗时差异有统计意义。8000 分区 DDL 发布成本用例加入 owned-layout profile。
+
+v6 剩余故障回归发现真实失败：`shared_transaction_probe.py --faults --case rollback_create --case rollback_owned --case crash_create --case crash_owned --flush-redo --creation-identities` 在 crash_owned 重启后的首次写入超时（4012）。持久现场 `namespace_fork_PROTOTYPE_shared_transaction_6fsywn_r/data.tar.gz`；客户端请求反复在 `ObTabletCreateMdsHelper::check_new_tablet_existence` 返回 EAGAIN，等待 aborted CREATE 的持久清理，不能按“全量故障测试已通过”处理。新 v9 不强制 redo 的单独 crash_owned 通过；强制 redo 的最小场景正在 `/tmp/owned-layout-shared-crash-owned-flush9.log` 验证，尚未确认根因或关闭。完整新测试版原生门禁也仍在运行。
+
+补充：v9 强制 redo 的单独 crash_owned 已通过（`/tmp/owned-layout-shared-crash-owned-flush9.log`），正在按原四个连续故障场景重跑 `/tmp/owned-layout-shared-flush9.log`；单例通过不能证明原失败闭环。8000 分区父子两空间、四条 DDL 的发布成本用例通过（`/tmp/owned-layout-ddl-cost9.log`）。

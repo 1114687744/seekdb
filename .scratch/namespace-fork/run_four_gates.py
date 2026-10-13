@@ -164,7 +164,7 @@ if args.profile == 'owned-layout':
                                'local_schema_install_probe.py', 'meta_layout_probe.py',
                                'sstable_layout_probe.py', 'row_layout_replay_probe.py',
                                'physical_merge_layout_probe.py', 'medium_layout_target_probe.py',
-                               'shared_transaction_probe.py'},
+                               'shared_transaction_probe.py', 'ddl_publication_cost_probe.py'},
         'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
         'sql': {'namespace_sql_worker_prototype.py'},
         'direct': {'owned_layout_probe.py', 'native_schema_catalog_ddl_probe.py',
