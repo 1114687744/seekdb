@@ -88,3 +88,5 @@
 - 剩余工作仍包括：旧 `storage_schema_addr_` 的独立正文收敛、恢复/备库/DDL 兼容性覆盖、目录物理对象回收保护的完整审计、旧保留测试替代及四件套/8000 分区成本验收。
 
 补充证据：去历史版的 `/tmp/owned-layout-native-checksum-fts5.log` 已通过，F=`1791886686902667070`；不再有历史正文发布或读取的情况下，本地/全局/全文索引全部完成 checksum。备库 `basic` 通过（116.45 秒），其余两项继续执行。测试版 `seekdb-no-history-probe-v6` SHA256=`9be6dc184a3841ef37c6d1c1c145fd430060ed7a4bfe870459be7a74c0b1dc1c` 已编译，四件套 `bootstrap-native-kv` 正在运行；mini 与普通 fork 的完整描述检查已通过。测试 hook 已全部从生产源码撤除。测试版首轮编译发现审计脚本调用 restore 构造函数的参数顺序未更新，已修正后编译通过。
+
+第二个实施检查点 `a7304f90f` 已推送。撤除 hook 后的生产编译 `owned-layout-no-history-production-build1` 通过；`seekdb-no-history-v7` SHA256=`64af28323e099d1ece17b6b44ab0675d8483524b8d6487a83d1e3c9d89e4fdcf`。四件套生产部分正在 `/tmp/owned-layout-four-gates-v7` 运行，bootstrap 已通过；测试部分在 `/tmp/owned-layout-four-gates-v6` 运行，mini/fork/fork_wide、父空间 meta、孩子 meta 和冷父基线 meta 均通过。三项备库定向测试 runner 已成功退出，结果见 `/tmp/owned-layout-standby-v5/results.json`。当前仍不可判定三项总目标完成。
