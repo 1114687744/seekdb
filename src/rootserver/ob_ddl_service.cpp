@@ -1598,17 +1598,11 @@ int ObDDLService::create_tables_in_trans(const bool if_not_exist,
                                                      i == table_schemas.count() - 1))) {
           LOG_WARN("failed to create table schema, ", K(ret));
         } else if (table_schema.is_view_table() && dep_infos != nullptr && 0 == i) {
-          for (int64_t i = 0 ; OB_SUCC(ret) && i < dep_infos->count(); ++i) {
-            ObDependencyInfo dep;
-            if (OB_FAIL(dep.assign(dep_infos->at(i)))) {
-              LOG_WARN("failed to assign dependency info", K(ret));
-            } else {
-              
-              dep.set_dep_obj_id(table_schema.get_table_id());
-              dep.set_dep_obj_owner_id(table_schema.get_table_id());
-              dep.set_schema_version(table_schema.get_schema_version());
-              OZ (dep.insert_schema_object_dependency(trans));
-            }
+          ObSArray<ObDependencyInfo> deps;
+          if (OB_FAIL(deps.assign(*dep_infos))) {
+          } else {
+            ret = ObDependencyInfo::insert_dependency_infos(trans, deps, table_schema.get_table_id(),
+                table_schema.get_schema_version(), table_schema.get_table_id());
           }
         }
       }

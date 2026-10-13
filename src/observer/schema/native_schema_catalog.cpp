@@ -1,9 +1,11 @@
 /* Copyright (c) 2025 OceanBase. Licensed under the Apache License, Version 2.0. */
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "observer/schema/native_schema_catalog.h"
+#include "namespace/namespace.h"
 #include "observer/schema/ob_schema_retrieve_utils.h"
 #include "share/schema/schema_catalog_fields.h"
 #include "share/schema/schema_catalog_row.h"
+#include "share/schema/ob_dependency_info.h"
 #include "share/ob_core_table_proxy.h"
 #include <map>
 #include <unordered_map>
@@ -137,6 +139,31 @@ int NativeSchemaCatalog::with_ddl_transaction(ObISQLClient &client, int64_t dead
     });
   }
   return ret;
+}
+
+int NativeSchemaCatalog::with_read_client(ObISQLClient &client, int64_t deadline, int64_t snapshot,
+    const std::function<int(NativeSchemaCatalog &)> &operation)
+{
+  if (!operation) { return OB_INVALID_ARGUMENT; }
+  if (dynamic_cast<ObMySQLTransaction *>(&client) != nullptr) {
+    if (snapshot > 0) { return OB_INVALID_ARGUMENT; }
+    return observer::NativeSchemaCatalog::with_ddl_transaction(client, deadline, operation);
+  }
+  auto *access = share::server_service<storage::ObAccessService>();
+  auto *transactions = share::server_service<transaction::ObTransService>();
+  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
+  observer::NativeSchemaCatalog catalog(client.target_namespace(), *access, *transactions);
+  int ret = OB_SUCCESS;
+  if (snapshot > 0) {
+    const auto view = ns::namespace_registry().catalog_views().find(
+        client.target_namespace(), snapshot);
+    ret = view ? catalog.begin_read(deadline, view) : OB_SNAPSHOT_DISCARDED;
+  } else {
+    ret = catalog.begin_read(deadline, !share::server_is_write_enabled());
+  }
+  if (OB_SUCC(ret)) { ret = operation(catalog); }
+  const int cleanup = catalog.close();
+  return ret == OB_SUCCESS ? cleanup : ret;
 }
 
 int NativeSchemaCatalog::begin_read(int64_t deadline, bool weak)
@@ -436,6 +463,27 @@ private:
   ObArenaAllocator key_allocator_{ObMemAttr("CatalogRowKey")};
   ObRowkey last_entity_;
 };
+
+int read_dependency(CatalogRows &result, ObDependencyInfo &dep)
+{
+  int ret = OB_SUCCESS;
+  dep.reset();
+
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, dep_obj_id, dep, uint64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, dep_obj_type, dep, ObObjectType);
+  EXTRACT_INT_FIELD_TO_CLASS_VALUE_MYSQL(result, dep_order, order, dep, uint64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, schema_version, dep, int64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, dep_timestamp, dep, int64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, ref_obj_type, dep, ObObjectType);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, ref_obj_id, dep, uint64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, ref_timestamp, dep, int64_t);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL_WITH_DEFAULT_VALUE(result, dep_obj_owner_id, dep, uint64_t, true, false, OB_INVALID_ID);
+  EXTRACT_INT_FIELD_TO_CLASS_MYSQL(result, property, dep, uint64_t);
+  EXTRACT_VARCHAR_FIELD_TO_CLASS_MYSQL_SKIP_RET(result, dep_attrs, dep);
+  EXTRACT_VARCHAR_FIELD_TO_CLASS_MYSQL_SKIP_RET(result, dep_reason, dep);
+  EXTRACT_VARCHAR_FIELD_TO_CLASS_MYSQL_SKIP_RET(result, ref_obj_name, dep);
+  return ret;
+}
 
 // An index can retain older relationships. Collect candidate identities, then
 // let the caller inspect each entity's latest visible history in the same view.
@@ -1504,6 +1552,90 @@ int NativeSchemaCatalog::insert_schema_operation(const ObSchemaOperation &operat
   return insert_fields(OB_ALL_DDL_OPERATION_TID, [&](SchemaCatalogRow &row) {
     return SchemaCatalogFields::operation(operation, row);
   });
+}
+
+int NativeSchemaCatalog::get_references(uint64_t dependent_id, ObIArray<ObDependencyInfo> &out)
+{
+  out.reset();
+  CatalogRows rows;
+  // The primary key starts with object type; there is no dependent-ID index.
+  int ret = rows.open(*this, OB_ALL_DEPENDENCY_TID, ObRowkey(), INT64_MAX, false, 0, false,
+      [&](const CatalogRows &row, bool &accept) {
+    uint64_t id = OB_INVALID_ID;
+    const int rc = row.get_uint("dep_obj_id", id);
+    accept = id == dependent_id;
+    return rc;
+  });
+  while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+    ObDependencyInfo info;
+    if (OB_FAIL(read_dependency(rows, info))) {
+    } else { ret = out.push_back(info); }
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  if (OB_SUCC(ret) && out.count() > 1) {
+    std::sort(out.get_data(), out.get_data() + out.count(), [](const ObDependencyInfo &a, const ObDependencyInfo &b) {
+      return a.get_order() < b.get_order();
+    });
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::get_dependents(uint64_t reference_id, ObObjectType reference_type,
+    ObIArray<ObDependencyInfo> &out)
+{
+  out.reset();
+  ObObj prefix[2];
+  prefix[0].set_int(reference_id);
+  prefix[1].set_int(static_cast<int64_t>(reference_type));
+  CatalogRows index;
+  int ret = index.open(*this, OB_ALL_DEPENDENCY_IDX_DEPENDENCY_REF_OBJ_TID,
+      ObRowkey(prefix, reference_type == ObObjectType::INVALID ? 1 : 2), INT64_MAX);
+  struct Key { int64_t type; int64_t id; int64_t order; TO_STRING_KV(K(type), K(id), K(order)); };
+  ObSEArray<Key, 8> keys;
+  while (OB_SUCC(ret) && OB_SUCC(index.next())) {
+    Key key{};
+    if (OB_FAIL(index.get_int("dep_obj_type", key.type))
+        || OB_FAIL(index.get_int("dep_obj_id", key.id))
+        || OB_FAIL(index.get_int("dep_order", key.order))) {
+    } else { ret = keys.push_back(key); }
+  }
+  if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
+  const int closed = index.close();
+  if (OB_SUCC(ret)) { ret = closed; }
+  for (int64_t i = 0; OB_SUCC(ret) && i < keys.count(); ++i) {
+    ObObj key[3];
+    key[0].set_int(keys.at(i).type); key[1].set_int(keys.at(i).id); key[2].set_int(keys.at(i).order);
+    CatalogRows rows;
+    ret = rows.open(*this, OB_ALL_DEPENDENCY_TID, ObRowkey(key, 3), INT64_MAX);
+    if (OB_SUCC(ret)) { ret = rows.next(); }
+    if (ret == OB_ITER_END) { ret = OB_ERR_UNEXPECTED; }
+    ObDependencyInfo info;
+    if (OB_SUCC(ret)) { ret = read_dependency(rows, info); }
+    if (OB_SUCC(ret) && (info.get_ref_obj_id() != reference_id
+        || (reference_type != ObObjectType::INVALID && info.get_ref_obj_type() != reference_type))) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (OB_SUCC(ret)) { ret = out.push_back(info); }
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::write_dependency(const ObDependencyInfo &info, bool upsert)
+{
+  const auto fill = [&](SchemaCatalogRow &row) {
+    return SchemaCatalogFields::dependency(info, state_->statement_time, row);
+  };
+  return upsert ? upsert_fields(OB_ALL_DEPENDENCY_TID, fill) : insert_fields(OB_ALL_DEPENDENCY_TID, fill);
+}
+
+int NativeSchemaCatalog::erase_dependencies(uint64_t dependent_id, ObObjectType type)
+{
+  int64_t erased = 0;
+  return erase_prefix(OB_ALL_DEPENDENCY_TID, [&](SchemaCatalogRow &row) {
+    int ret = row.add_pk_column("dep_obj_type", type);
+    if (OB_SUCC(ret)) { ret = row.add_pk_column("dep_obj_id", dependent_id); }
+    return ret;
+  }, erased);
 }
 
 int NativeSchemaCatalog::get_triggers(int64_t version, ObIArray<ObTriggerInfo> &out,

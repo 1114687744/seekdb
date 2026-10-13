@@ -159,25 +159,8 @@ int with_schema_catalog(ObISQLClient &client, const ObRefreshSchemaStatus &statu
 {
   const int64_t deadline = std::min(THIS_WORKER.get_timeout_ts(),
       ObTimeoutCtx::get_ctx().get_abs_timeout(INT64_MAX));
-  if (dynamic_cast<ObMySQLTransaction *>(&client) != nullptr) {
-    if (status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
-    return observer::NativeSchemaCatalog::with_ddl_transaction(client, deadline, operation);
-  }
-  auto *access = share::server_service<storage::ObAccessService>();
-  auto *transactions = share::server_service<transaction::ObTransService>();
-  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
-  observer::NativeSchemaCatalog catalog(client.target_namespace(), *access, *transactions);
-  int ret = OB_SUCCESS;
-  if (status.snapshot_timestamp_ > 0) {
-    const auto view = ns::namespace_registry().catalog_views().find(
-        client.target_namespace(), status.snapshot_timestamp_);
-    ret = view ? catalog.begin_read(deadline, view) : OB_SNAPSHOT_DISCARDED;
-  } else {
-    ret = catalog.begin_read(deadline, !share::server_is_write_enabled());
-  }
-  if (OB_SUCC(ret)) { ret = operation(catalog); }
-  const int cleanup = catalog.close();
-  return ret == OB_SUCCESS ? cleanup : ret;
+  return observer::NativeSchemaCatalog::with_read_client(
+      client, deadline, status.snapshot_timestamp_, operation);
 }
 } // namespace
 

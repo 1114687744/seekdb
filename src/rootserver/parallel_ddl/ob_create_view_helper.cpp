@@ -568,17 +568,11 @@ int ObCreateViewHelper::insert_schema_object_dependency_()
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("new view schema is null", KR(ret));
   } else {
-    for (int64_t i = 0; OB_SUCC(ret) && i < arg_.dep_infos_.count(); ++i) {
-      ObDependencyInfo dep;
-      if (OB_FAIL(dep.assign(arg_.dep_infos_.at(i)))) {
-      } else {
-        
-        dep.set_dep_obj_id(new_view_schema_->get_table_id());
-        dep.set_dep_obj_owner_id(new_view_schema_->get_table_id());
-        dep.set_schema_version(new_view_schema_->get_schema_version());
-        if (OB_FAIL(dep.insert_schema_object_dependency(get_trans_()))) {
-        }
-      }
+    ObSArray<ObDependencyInfo> deps;
+    if (OB_FAIL(deps.assign(arg_.dep_infos_))) {
+    } else {
+      ret = ObDependencyInfo::insert_dependency_infos(get_trans_(), deps, new_view_schema_->get_table_id(),
+          new_view_schema_->get_schema_version(), new_view_schema_->get_table_id());
     }
   }
   return ret;

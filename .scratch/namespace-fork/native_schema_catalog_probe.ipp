@@ -998,6 +998,129 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FOREIGN_KEY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_dependency") != std::string::npos) {
+    using share::schema::ObDependencyInfo;
+    using share::schema::ObObjectType;
+    ObArray<ObDependencyInfo> inherited;
+    ret = catalog.get_dependents(table_id, ObObjectType::TABLE, inherited);
+    if (ret == OB_SUCCESS && (inherited.count() != 1 || inherited.at(0).get_dep_obj_type() != ObObjectType::VIEW)) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    const uint64_t id = table_id + 1000000000;
+    ObDependencyInfo dep;
+    dep.set_dep_obj_id(id); dep.set_dep_obj_type(ObObjectType::VIEW); dep.set_order(4);
+    dep.set_dep_obj_owner_id(id); dep.set_schema_version(1791850000123456);
+    dep.set_dep_timestamp(1791850000111111); dep.set_ref_obj_id(id + 1); dep.set_ref_obj_type(ObObjectType::TABLE);
+    dep.set_ref_timestamp(1791850000222222); dep.set_property(42);
+    const char binary[] = {'a', 0, char(0xff), 'z'};
+    if (ret == OB_SUCCESS) { ret = dep.set_dep_attrs(ObString(sizeof(binary), binary)); }
+    if (ret == OB_SUCCESS) { ret = dep.set_ref_obj_name(ObString::make_string("引用'表")); }
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    auto begin = [&]() {
+      int rc = native.begin(owner, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](bool commit) {
+      int rc = owner.is_active() ? (commit ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+      const int closed = writer.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, bool exists, bool moved) {
+      ObArray<ObDependencyInfo> rows;
+      int rc = reader.get_references(id, rows);
+      if (rc == OB_SUCCESS && rows.count() != (exists ? 2 : 0)) { rc = OB_ERR_UNEXPECTED; }
+      if (rc == OB_SUCCESS && exists) {
+        const auto &v = rows.at(1);
+        if (rows.at(0).get_order() != 1 || rows.at(0).get_dep_obj_type() != ObObjectType::TRIGGER
+            || v.get_order() != 4 || v.get_dep_obj_type() != ObObjectType::VIEW
+            || v.get_dep_timestamp() != dep.get_dep_timestamp() || v.get_ref_timestamp() != dep.get_ref_timestamp()
+            || v.get_schema_version() != dep.get_schema_version() || v.get_dep_obj_owner_id() != id
+            || v.get_dep_attrs() != dep.get_dep_attrs() || v.get_ref_obj_name() != dep.get_ref_obj_name()
+            || v.get_property() != 42 || v.get_ref_obj_id() != id + (moved ? 2 : 1)) { rc = OB_ERR_UNEXPECTED; }
+      }
+      for (int delta : {1, 2}) {
+        if (rc == OB_SUCCESS) { rc = reader.get_dependents(id + delta, ObObjectType::INVALID, rows); }
+        const int64_t expected = !exists ? 0 : delta == 1 ? (moved ? 2 : 3) : (moved ? 1 : 0);
+        if (rc == OB_SUCCESS && rows.count() != expected) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = reader.get_dependents(id + delta, ObObjectType::VIEW, rows); }
+        if (rc == OB_SUCCESS && !rows.empty()) { rc = OB_ERR_UNEXPECTED; }
+      }
+      return rc;
+    };
+    auto outside = [&](bool exists, bool moved) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      if (rc == OB_SUCCESS) { rc = verify(reader, exists, moved); }
+      return rc;
+    };
+    auto insert = [&]() {
+      int rc = writer.write_dependency(dep, false);
+      ObDependencyInfo other;
+      if (rc == OB_SUCCESS) { rc = other.assign(dep); }
+      other.set_dep_obj_type(ObObjectType::TRIGGER); other.set_order(1);
+      if (rc == OB_SUCCESS) { rc = writer.write_dependency(other, true); } // absent-key upsert
+      // A cycle and a self edge exercise both traversal contracts.
+      other.set_dep_obj_id(id + 1); other.set_dep_obj_type(ObObjectType::TABLE); other.set_order(0);
+      other.set_ref_obj_id(id); other.set_ref_obj_type(ObObjectType::VIEW);
+      if (rc == OB_SUCCESS) { rc = writer.write_dependency(other, false); }
+      other.set_order(1); other.set_ref_obj_id(id + 1); other.set_ref_obj_type(ObObjectType::TABLE);
+      if (rc == OB_SUCCESS) { rc = writer.write_dependency(other, false); }
+      return rc;
+    };
+    const char *stage = "insert";
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert(); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, true, false); }
+    if (ret == OB_SUCCESS) { ret = outside(false, false); }
+    if (ret == OB_SUCCESS) { ret = end(false); }
+    if (ret == OB_SUCCESS) { stage = "rollback"; ret = outside(false, false); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = insert(); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "committed"; ret = outside(true, false); }
+    common::TargetSqlProxy client(namespace_id); // no SQL pool or Namespace runtime
+    ObArray<std::pair<uint64_t, ObObjectType>> closure;
+    ObArray<share::schema::CriticalDepInfo> typed_closure;
+    for (int repeat = 0; ret == OB_SUCCESS && repeat < 2; ++repeat) {
+      ret = ObDependencyInfo::collect_all_dep_objs(id + 1, client, closure);
+      if (ret == OB_SUCCESS) { ret = ObDependencyInfo::collect_all_dep_objs(id + 1, ObObjectType::TABLE, client, typed_closure); }
+      if (ret == OB_SUCCESS && (closure.count() != 2 || typed_closure.count() != 3)) { ret = OB_ERR_UNEXPECTED; }
+    }
+    observer::NativeSchemaCatalog old(namespace_id, *access, *transactions);
+    if (ret == OB_SUCCESS) { ret = old.begin_read(deadline); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    dep.set_ref_obj_id(id + 2);
+    if (ret == OB_SUCCESS) { stage = "move_reference"; ret = writer.write_dependency(dep, true); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, true, true); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { ret = outside(true, true); }
+    if (ret == OB_SUCCESS) { ret = verify(old, true, false); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { stage = "delete_type"; ret = writer.erase_dependencies(id, ObObjectType::VIEW); }
+    ObArray<ObDependencyInfo> remaining;
+    if (ret == OB_SUCCESS) { ret = writer.get_references(id, remaining); }
+    if (ret == OB_SUCCESS && (remaining.count() != 1 || remaining.at(0).get_dep_obj_type() != ObObjectType::TRIGGER)) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (ret == OB_SUCCESS) { ret = end(false); }
+    if (ret == OB_SUCCESS) { ret = outside(true, true); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.erase_dependencies(id, ObObjectType::VIEW); }
+    if (ret == OB_SUCCESS) { ret = writer.erase_dependencies(id, ObObjectType::TRIGGER); }
+    if (ret == OB_SUCCESS) { ret = writer.erase_dependencies(id + 1, ObObjectType::TABLE); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "deleted"; ret = outside(false, false); }
+    if (ret == OB_SUCCESS) { ret = verify(old, true, false); }
+    const int cleanup = end(false);
+    if (ret == OB_SUCCESS) { ret = cleanup; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_DEPENDENCY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_operations") != std::string::npos) {
     ObSchemaService::SchemaOperationSetWithAlloc inherited;
     int64_t latest = 0, completed = 0;

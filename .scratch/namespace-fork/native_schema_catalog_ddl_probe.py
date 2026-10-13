@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise production native catalog writes with SQL readers and crash recovery."""
 import argparse
+import time
 import resource
 import pymysql
 from fork_parent_truncate_probe import BootstrapExperiment, connect
@@ -394,6 +395,89 @@ def exercise_recovered_triggers(query):
     assert query('SELECT v FROM native_triggers.audit_t WHERE id=4') == ((15,),)
 
 
+def dependency_rows(query, ids):
+    fields = ('dep_obj_type,dep_obj_id,dep_order,schema_version,dep_timestamp,'
+              'ref_obj_type,ref_obj_id,ref_timestamp,dep_obj_owner_id,property,'
+              'HEX(dep_attrs),HEX(dep_reason),ref_obj_name')
+    condition = 'dep_obj_id IN (' + ','.join(map(str, ids)) + ')'
+    order = ' ORDER BY dep_obj_type,dep_obj_id,dep_order'
+    rows = query(f'SELECT {fields} FROM oceanbase.__all_dependency WHERE {condition}{order}')
+    refs = sorted({row[6] for row in rows})
+    if refs:
+        indexed = query(f'SELECT {fields} FROM oceanbase.__all_dependency FORCE INDEX(idx_dependency_ref_obj) '
+                        f'WHERE {condition} AND ref_obj_id IN (' + ','.join(map(str, refs)) + ')' + order)
+        assert indexed == rows, (rows, indexed)
+    return rows
+
+
+def dependency_id(query, name):
+    return query("SELECT table_id FROM oceanbase.__all_table WHERE database_id="
+                 "(SELECT database_id FROM oceanbase.__all_database WHERE database_name='native_dependency') "
+                 f"AND table_name='{name}'")[0][0]
+
+
+def prepare_dependencies(query):
+    query('CREATE DATABASE native_dependency')
+    query('CREATE TABLE native_dependency.t(id INT PRIMARY KEY,v INT)')
+    query('INSERT INTO native_dependency.t VALUES(1,7)')
+    tid = dependency_id(query, 't')
+    version = query(f'SELECT schema_version FROM oceanbase.__all_table WHERE table_id={tid}')[0][0]
+    query('CREATE VIEW native_dependency.v1 AS SELECT * FROM native_dependency.t')
+    v1 = dependency_id(query, 'v1')
+    rows = dependency_rows(query, [v1])
+    assert len(rows) == 1 and rows[0][6:8] == (tid, version), (rows, tid, version)
+    query('CREATE VIEW native_dependency.v2 AS SELECT * FROM native_dependency.v1')
+    v2 = dependency_id(query, 'v2')
+    assert query('SELECT * FROM native_dependency.v2') == ((1, 7),)
+    return [v1, v2], dependency_rows(query, [v1, v2])
+
+
+def exercise_dependencies(query, prepared=False):
+    if not prepared:
+        prepare_dependencies(query)
+    old_v1 = dependency_id(query, 'v1')
+    v2 = dependency_id(query, 'v2')
+    query('CREATE OR REPLACE VIEW native_dependency.v1 AS SELECT id,v+10 AS v FROM native_dependency.t')
+    new_v1 = dependency_id(query, 'v1')
+    assert new_v1 != old_v1
+    deadline = time.monotonic() + 30
+    while True:
+        assert query('SELECT * FROM native_dependency.v2') == ((1, 17),)
+        rows = dependency_rows(query, [v2])
+        if rows and any(row[6] == new_v1 for row in rows):
+            break
+        assert time.monotonic() < deadline, ('dependent view did not refresh references', rows)
+        time.sleep(.05)
+    assert not dependency_rows(query, [old_v1])
+    # The transitive dependency walk invalidates v1 and v2. Recreating the
+    # referenced table must recompile both and replace their old reference keys.
+    query('DROP TABLE native_dependency.t')
+    query('CREATE TABLE native_dependency.t(id INT PRIMARY KEY,v BIGINT)')
+    query('INSERT INTO native_dependency.t VALUES(1,9)')
+    new_t = dependency_id(query, 't')
+    deadline = time.monotonic() + 30
+    while True:
+        assert query('SELECT * FROM native_dependency.v2') == ((1, 19),)
+        rows = dependency_rows(query, [new_v1, v2])
+        if any(row[1] == new_v1 and row[6] == new_t for row in rows):
+            break
+        assert time.monotonic() < deadline, ('dependency reference not replaced', rows)
+        time.sleep(.05)
+    query('CREATE VIEW native_dependency.disposable AS SELECT * FROM native_dependency.v2')
+    disposable = dependency_id(query, 'disposable')
+    assert dependency_rows(query, [disposable])
+    query('DROP VIEW native_dependency.disposable')
+    assert not dependency_rows(query, [disposable])
+    return [new_v1, v2], dependency_rows(query, [new_v1, v2]), [old_v1, disposable]
+
+
+def verify_dependencies(query, evidence):
+    ids, rows, deleted = evidence
+    assert query('SELECT * FROM native_dependency.v2') == ((1, 19),)
+    assert dependency_rows(query, ids) == rows
+    assert not dependency_rows(query, deleted)
+
+
 def prepare_views(query):
     query('CREATE DATABASE native_views')
     query('CREATE TABLE native_views.base(id INT PRIMARY KEY,v INT,KEY ix(v))')
@@ -480,6 +564,7 @@ def run(binary):
                        'CONSTRAINT fk_mock FOREIGN KEY(fk_id) REFERENCES mock_parent(id))')
         experiment.sql('SET SESSION foreign_key_checks=1')
         prepare_partition_tables(experiment.sql)
+        parent_dependency = prepare_dependencies(experiment.sql)
         prepare_views(experiment.sql)
         prepare_triggers(experiment.sql)
         experiment.sql('FORK NAMESPACE native_ddl_child FROM ns1')
@@ -524,6 +609,7 @@ def run(binary):
         experiment.sql('DROP TABLE native_ddl.p', child)
         partition_evidence = exercise_partitions(lambda statement: experiment.sql(statement, child), prepared=True)
         fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
+        dependency_evidence = exercise_dependencies(lambda statement: experiment.sql(statement, child), prepared=True)
         operation_evidence = exercise_operations(lambda statement: experiment.sql(statement, child))
         trigger_evidence = exercise_triggers(lambda statement: experiment.sql(statement, child), prepared=True)
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
@@ -536,6 +622,9 @@ def run(binary):
             view_evidence, peer_view_evidence = [job.result() for job in jobs]
 
         def verify():
+            verify_dependencies(lambda statement: experiment.sql(statement, child), dependency_evidence)
+            assert experiment.sql('SELECT * FROM native_dependency.v2') == ((1, 7),)
+            assert dependency_rows(experiment.sql, parent_dependency[0]) == parent_dependency[1]
             verify_operations(lambda statement: experiment.sql(statement, child), operation_evidence)
             verify_triggers(lambda statement: experiment.sql(statement, child), trigger_evidence)
             assert experiment.sql('SELECT * FROM native_triggers.t') == ((1,4),)

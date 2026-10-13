@@ -22,6 +22,7 @@ class ObIndexSchemaInfo;
 class SchemaCatalogRow;
 class ObConstraint;
 class ObTriggerInfo;
+class ObDependencyInfo;
 class ObSimpleTriggerSchema;
 struct VersionHisVal;
 } }
@@ -59,6 +60,10 @@ public:
   // commit/rollback. This rejects a standalone SQL proxy; it never starts an
   // independent transaction. Namespace is the owner's explicit target.
   static int with_ddl_transaction(common::ObISQLClient &, int64_t deadline,
+      const std::function<int(NativeSchemaCatalog &)> &);
+  // Legacy client adapter for a single consistent read, or a DDL owner's
+  // own writes. An explicit old SCN must already have a retained directory view.
+  static int with_read_client(common::ObISQLClient &, int64_t deadline, int64_t snapshot,
       const std::function<int(NativeSchemaCatalog &)> &);
   int begin_read(int64_t deadline, bool weak = false);
   // An old snapshot must already be protected by this view's owner.
@@ -120,6 +125,13 @@ public:
   int get_mock_fk_parent_table_id(uint64_t database_id, const common::ObString &, uint64_t &);
   int get_mock_fk_parent_table_schema_versions(const common::ObIArray<uint64_t> &,
       common::ObIArray<share::schema::ObSchemaIdVersion> &);
+  // Dependency rows have no history table; this operation's MVCC view selects
+  // them. INVALID reference type means all types for that reference ID.
+  int get_references(uint64_t dependent_id, common::ObIArray<share::schema::ObDependencyInfo> &);
+  int get_dependents(uint64_t reference_id, share::schema::ObObjectType reference_type,
+      common::ObIArray<share::schema::ObDependencyInfo> &);
+  int write_dependency(const share::schema::ObDependencyInfo &, bool upsert);
+  int erase_dependencies(uint64_t dependent_id, share::schema::ObObjectType);
   int get_triggers(int64_t schema_version, common::ObIArray<share::schema::ObTriggerInfo> &,
                    const common::ObIArray<uint64_t> *ids = nullptr);
   int get_simple_triggers(int64_t schema_version, common::ObIArray<share::schema::ObSimpleTriggerSchema> &,

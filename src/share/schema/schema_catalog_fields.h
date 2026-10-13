@@ -5,6 +5,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "share/schema/ob_constraint.h"
 #include "share/schema/ob_trigger_info.h"
+#include "share/schema/ob_dependency_info.h"
 #include "share/schema/ob_schema_utils.h"
 #include "share/schema/ob_schema_service.h"
 #include "share/ob_dml_sql_splicer.h"
@@ -18,6 +19,8 @@ namespace schema {
 class SchemaCatalogFields final
 {
 public:
+  template<class RowWriter>
+  static int dependency(const ObDependencyInfo &, int64_t statement_time, RowWriter &);
   template<class RowWriter>
   static int operation(const ObSchemaOperation &, RowWriter &);
   template<class RowWriter>
@@ -43,6 +46,30 @@ public:
   template<class RowWriter>
   static int constraint_column(const ObConstraint &, uint64_t column_id, RowWriter &);
 };
+
+template<class RowWriter>
+int SchemaCatalogFields::dependency(const ObDependencyInfo &info, int64_t statement_time, RowWriter &row)
+{
+  using namespace common;
+  int ret = OB_SUCCESS;
+  // These are integer columns. In particular ref_timestamp is a schema version,
+  // not a SQL timestamp to convert to a decimal calendar date.
+  if (OB_FAIL(row.add_pk_column("dep_obj_type", info.get_dep_obj_type()))
+      || OB_FAIL(row.add_pk_column("dep_obj_id", info.get_dep_obj_id()))
+      || OB_FAIL(row.add_pk_column("dep_order", info.get_order()))
+      || OB_FAIL(row.add_column("schema_version", info.get_schema_version()))
+      || OB_FAIL(row.add_column("dep_timestamp", info.get_dep_timestamp() > 0 ? info.get_dep_timestamp() : statement_time))
+      || OB_FAIL(row.add_column("ref_obj_type", info.get_ref_obj_type()))
+      || OB_FAIL(row.add_column("ref_obj_id", info.get_ref_obj_id()))
+      || OB_FAIL(row.add_column("ref_timestamp", info.get_ref_timestamp()))
+      || OB_FAIL(row.add_column("dep_obj_owner_id", info.get_dep_obj_owner_id()))
+      || OB_FAIL(row.add_column("property", info.get_property()))
+      || OB_FAIL(row.add_column("dep_attrs", ObHexEscapeSqlStr(info.get_dep_attrs())))
+      || OB_FAIL(row.add_column("dep_reason", ObHexEscapeSqlStr(info.get_dep_reason())))
+      || OB_FAIL(row.add_column("ref_obj_name", ObHexEscapeSqlStr(info.get_ref_obj_name())))
+      || OB_FAIL(row.add_gmt_create()) || OB_FAIL(row.add_gmt_modified())) {}
+  return ret;
+}
 
 template<class RowWriter>
 int SchemaCatalogFields::operation(const ObSchemaOperation &operation, RowWriter &row)

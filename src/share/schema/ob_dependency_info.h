@@ -122,7 +122,6 @@ public:
   bool is_user_field_valid() const;
   void reset();
   int64_t get_convert_size() const;
-  int parse_from(common::sqlclient::ObMySQLResult &result);
   int insert_schema_object_dependency(common::ObISQLClient &trans,
                                       bool is_replace = false, bool only_history = false);
 
@@ -161,7 +160,6 @@ public:
     const common::ObString &dep_reason,
     const int64_t schema_version);
 
-  int gen_dependency_dml(oceanbase::share::ObDMLSqlSplicer &dml);
 
   static int collect_ref_infos(uint64_t dep_obj_id,
                                common::ObISQLClient &sql_proxy,
@@ -172,10 +170,6 @@ public:
   static int collect_all_dep_objs(uint64_t ref_obj_id,
                                   common::ObISQLClient &sql_proxy,
                                   common::ObIArray<std::pair<uint64_t, share::schema::ObObjectType>> &objs);
-  static int collect_all_dep_objs_inner(uint64_t root_obj_id,
-                                        uint64_t ref_obj_id,
-                                        common::ObISQLClient &sql_proxy,
-                                        common::ObIArray<std::pair<uint64_t, share::schema::ObObjectType>> &objs);
   static int collect_all_dep_objs(uint64_t ref_obj_id,
                                   ObObjectType ref_obj_type,
                                   common::ObISQLClient &sql_proxy,
@@ -202,12 +196,6 @@ public:
                K_(dep_reason),
                K_(ref_obj_name),
                K_(schema_version))
-private:
-  static uint64_t extract_obj_id(uint64_t id);
-  static int collect_all_dep_objs(const common::ObIArray<std::pair<uint64_t, int64_t>>& ref_obj_infos,
-                                  common::ObISQLClient &sql_proxy,
-                                  common::ObIArray<CriticalDepInfo> &objs);
-
 private:
   uint64_t dep_obj_id_;
   ObObjectType dep_obj_type_;
@@ -436,8 +424,7 @@ public:
     ObMySQLTransaction &trans);
 
 private:
-  static int fill_rowkey_pairs(const ObDependencyObjKey &dep_obj_key,
-                               share::ObDMLSqlSplicer &dml);
+
   int get_or_add_def_obj_item(const uint64_t dep_obj_id,
                               const uint64_t dep_db_id,
                               const ObObjectType dep_obj_type,

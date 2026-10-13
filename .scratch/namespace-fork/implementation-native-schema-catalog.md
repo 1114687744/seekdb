@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流读写也已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；依赖元数据及最终入口审计仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流读写也已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；依赖元数据读写已通过冷事务、生产 DDL/重启及主备回放/提升验证；最终入口审计已发现一致性检查和版本号同步等残留，完整目标仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -346,3 +346,25 @@
 - `operations-production-build1.log` 已去除测试钩子的生产编译通过；`operations-production-ddl1.log` 通过实际 DDL/索引/fork/重启，以及恢复后的视图、trigger 与外键行为。
 - 生产 Namespace 主备回归退出 0（163.77 秒），见 `gate-results/native-schema-catalog/native-operations-standby/results.json`。日志含 `native_catalog_operation_replay`，已核对操作记录全部字段及语句正文长度/CRC、强制索引结果、增量刷新、提升后复查/写入和再次 fork。未运行全量 mysqltest 或 sysbench。
 - 本阶段没有新增已知运行缺陷。剩余工作为 `__all_dependency` 等相关依赖入口以及 core/初始化边界和完整表目录调用点的最终审计；完整目标尚未完成。
+
+### 对象依赖元数据接入（实施中）
+
+- `__all_dependency` 没有 history 表；原生读取使用本次目录事务的 MVCC 视图和继承上限。正向引用沿用按 dependent ID 过滤并按 dep_order 排序；反向查询使用现有 `idx_dependency_ref_obj`，在同视图回读主行。
+- 依赖图查询计划改成一次原生读取操作内的局部工作列表，保留原接口的输出追加、对象类型、去重和根对象排除规则，消除逐层 SQL 读取及递归栈。批量写入/删除共用一个 DDL owner 的目录操作，维护同事务物理索引；视图依赖批次不再为每条边保留独立上下文。
+- 旧版本实测 `/tmp/native-schema-catalog-dependency-baseline1.log`：`ref_timestamp` 的来源是被引用对象的 schema_version=1791850085421392，但旧 SQL splicer 使用 `usec_to_time` 写入 BIGINT，持久值成为 20261013080805。新字段映射直接保留整数版本；dep_timestamp 的未指定值取本次操作时间（微秒），显式正值保持原样。没有格式兼容/数据迁移需求，不增加旧值猜测转换。新用例直接核对精确版本值。
+- 系统包在初次目录建立之前写入依赖，需要沿用显式 bootstrap 阶段的 SQL 写入，并复用同一字段映射；正常路径禁止错误后回退 SQL。
+- 已加入冷事务插入/更新/删除、反向索引键变化、类型隔离、二进制及中文字段、回滚/提交、旧视图保留，以及多层视图替换/重建/删除、父子隔离、重启和备库验证用例；目前尚未完成运行验证。
+- `/tmp/native-schema-catalog-dependency-build1.log` 首轮编译发现头文件路径、ObIArray 排序接口和临时键打印声明等错误；修正与重编译待完成，不能计为通过。
+
+- `/tmp/native-schema-catalog-dependency-build2.log` 编译通过；`dependency-probe1.log` 的 dependency/operations/trigger 冷用例全部通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_vc_vxob1`。依赖用例 `stage=deleted ret=0`：类型前缀删除保护同 ID 的其他类型，反向索引旧键移除，二进制/中文字段和精确整数版本回读，自己的写入/独立读/提交/回滚/旧视图均正确；通过不带连接池的显式 TargetSqlProxy 验证两种图遍历的循环、自引用、输出追加与去重，服务槽位保持 0。
+- `dependency-ddl1.log` 在新用例开始等待后台视图更新时因 Python 漏导入 time 失败；补齐导入后 `dependency-ddl2.log` 退出 0。生产调用点完成多层视图替换、被引用表删除重建、后台依赖更换、删除视图依赖清理、父子隔离与崩溃重启；依赖主表与 FORCE INDEX 读取逐字段相同。失败用例随原脚本保留在四件套。
+- 测试钩子已移除，`dependency-production-build1.log` 编译中，生产重跑和主备验证尚未完成。
+
+### 最终调用点审计：已发现仍需闭合的入口
+
+- `ObTableSqlService::check_table_history_matched_`：普通 `add_table(..., only_history=true)` 仍会读取 Namespace SchemaService 取得 history 表列集，然后执行 `history EXCEPT current` SQL。必须改为同一 DDL owner 的原生行比较，使用固定结构，保留忽略 gmt_create/gmt_modified/is_deleted 及 SQL NULL 等值语义。生产 DDL 通过不代表此残留已消除。
+- `ObTableSqlService::sync_schema_version_for_history`：直接 `exec_update` 更新 `__all_table.schema_version`，随后走原生 history。应接既有 update_table_fields_，同事务保留 gmt_modified 更新及原 affected-row 规则；核心表边界另核对。
+- `get_core_version/get_core_and_sys_version/get_normal_schema_version/get_baseline_schema_version` 与 `can_read_schema_version`：仍通过 ObGlobalStatProxy 读取版本水位。需结合 DDL 结束时的水位写入审计，不把“DDL 操作流已原生化”误当作全部 schema 版本访问已闭合。
+- 已回溯的旧表定义装载 helper：`fetch_all_column_info/fetch_column_info/fetch_foreign_key_info/fetch_all_trigger_info/fetch_table_latest_schema_versions_` 的表定义正常调用已被外围 lifecycle 分支切换为原生；保留 bootstrap 实现。`fetch_trigger_list` 还用于 user schema 装载，须按非表 schema 边界说明，不能仅凭函数中存在 SQL 判断其仍用于正常表装载。
+
+- `dependency-production-build1.log` 移除钩子后的生产编译通过；`dependency-production-ddl1.log` 退出 0，依赖主表/索引、父子隔离、崩溃重启及重启后其他 DDL 回归通过。生产 Namespace 主备回归退出 0（166.32 秒），见 `gate-results/native-schema-catalog/native-dependency-standby/results.json`；日志包含 `native_catalog_dependency_replay`，提升后再次逐字段核对依赖记录及多层视图结果，原有物化/LOB 回放、父 TRUNCATE/DROP、删除准入和提升后 fork 均通过。未运行全量 mysqltest/sysbench。

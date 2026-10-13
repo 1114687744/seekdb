@@ -71,11 +71,6 @@ public:
       share::schema::ObSchemaGetterGuard &schema_guard,
       rootserver::ObDDLOperator &ddl_operator);
 
-private:
-  static int batch_fill_kv_pairs(const share::schema::ObReferenceObjTable::ObDependencyObjKey &dep_obj_key,
-                                 const int64_t new_schema_version,
-                                 common::ObIArray<share::schema::ObDependencyInfo> &dep_infos,
-                                 share::ObDMLSqlSplicer &dml);
 };
 
 } // namespace rootserver

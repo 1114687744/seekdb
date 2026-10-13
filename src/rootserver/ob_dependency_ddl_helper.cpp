@@ -16,6 +16,8 @@
 
 #define USING_LOG_PREFIX RS
 #include "ob_dependency_ddl_helper.h"
+#include "observer/schema/native_schema_catalog.h"
+#include "common/ob_timeout_ctx.h"
 #include "ob_ddl_operator.h"
 #include "share/schema/ob_dependency_info.h"
 #include "share/schema/ob_multi_version_schema_service.h"
@@ -97,67 +99,41 @@ int ObDependencyDDLHelper::modify_all_obj_status(const ObIArray<std::pair<uint64
   return ret;
 }
 
-int ObDependencyDDLHelper::batch_fill_kv_pairs(
-    const ObReferenceObjTable::ObDependencyObjKey &dep_obj_key,
-    const int64_t new_schema_version,
-    common::ObIArray<ObDependencyInfo> &dep_infos,
-    share::ObDMLSqlSplicer &dml)
-{
-  int ret = OB_SUCCESS;
-  for (int64_t i = 0 ; OB_SUCC(ret) && i < dep_infos.count(); ++i) {
-    ObDependencyInfo & dep = dep_infos.at(i);
-    dep.set_dep_obj_id(dep_obj_key.dep_obj_id_);
-    dep.set_dep_obj_owner_id(dep_obj_key.dep_obj_id_);
-    dep.set_schema_version(new_schema_version);
-    if (OB_FAIL(dep.gen_dependency_dml(dml))) {
-    } else if (OB_FAIL(dml.finish_row())) {
-    }
-  }
-  return ret;
-}
-
 int ObDependencyDDLHelper::batch_execute_insert_or_update_obj_dependency(
     const int64_t new_schema_version,
     const ObReferenceObjTable::DependencyObjKeyItemPairs &dep_objs,
-    ObMySQLTransaction &trans,
-    share::schema::ObSchemaGetterGuard &schema_guard,
-    rootserver::ObDDLOperator &ddl_operator)
+    ObMySQLTransaction &trans, ObSchemaGetterGuard &schema_guard, ObDDLOperator &ddl_operator)
 {
-  int ret = OB_SUCCESS;
-  {
-    ObSqlString sql;
-    ObDMLSqlSplicer dml;
-    int64_t affected_rows = 0;
-    for (int64_t i = 0 ; OB_SUCC(ret) && i < dep_objs.count(); ++i) {
+  if (dep_objs.empty()) { return OB_SUCCESS; }
+  const int64_t deadline = std::min(THIS_WORKER.get_timeout_ts(), ObTimeoutCtx::get_ctx().get_abs_timeout(INT64_MAX));
+  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, deadline,
+      [&](observer::NativeSchemaCatalog &catalog) {
+    int ret = OB_SUCCESS;
+    for (int64_t i = 0; OB_SUCC(ret) && i < dep_objs.count(); ++i) {
       ObSArray<ObDependencyInfo> dep_infos;
       ObString dummy;
-      const ObReferenceObjTable::ObDependencyObjKey &dep_obj_key = dep_objs.at(i).dep_obj_key_;
-      const ObReferenceObjTable::ObDependencyObjItem &dep_obj_item = dep_objs.at(i).dep_obj_item_;
-      if (!dep_obj_key.is_valid()
-          || OB_INVALID_SCHEMA_VERSION == dep_obj_item.max_ref_obj_schema_version_) {
+      const auto &key = dep_objs.at(i).dep_obj_key_;
+      const auto &item = dep_objs.at(i).dep_obj_item_;
+      if (!key.is_valid() || item.max_ref_obj_schema_version_ == OB_INVALID_SCHEMA_VERSION) {
         ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("illegal schema version or dependency obj key", K(ret), K(dep_obj_key),
-        K(dep_obj_item.max_ref_obj_schema_version_));
-      } else if (OB_FAIL(ObDependencyInfo::collect_dep_infos(
-                  dep_obj_item.get_ref_obj_versions(),
-                  dep_infos,
-                  dep_obj_key.dep_obj_type_,
-                  0, dummy, dummy, false/* is_pl */))) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("failed to collect dependency infos", K(ret));
-      } else if (OB_FAIL(batch_fill_kv_pairs(dep_obj_key,
-                 new_schema_version, dep_infos, dml))) {
-      } else if (OB_FAIL(update_max_dependency_version(dep_obj_key.dep_obj_id_, dep_obj_item.max_ref_obj_schema_version_,
-                 trans, schema_guard, ddl_operator))) {
+      } else {
+        ret = ObDependencyInfo::collect_dep_infos(item.get_ref_obj_versions(), dep_infos,
+            key.dep_obj_type_, 0, dummy, dummy, false /* is_pl */);
+      }
+      for (int64_t j = 0; OB_SUCC(ret) && j < dep_infos.count(); ++j) {
+        auto &dep = dep_infos.at(j);
+        dep.set_dep_obj_id(key.dep_obj_id_);
+        dep.set_dep_obj_owner_id(key.dep_obj_id_);
+        dep.set_schema_version(new_schema_version);
+        ret = catalog.write_dependency(dep, true);
+      }
+      if (OB_SUCC(ret)) {
+        ret = update_max_dependency_version(key.dep_obj_id_, item.max_ref_obj_schema_version_,
+            trans, schema_guard, ddl_operator);
       }
     }
-    if (OB_FAIL(ret)) {
-    } else if (OB_FAIL(dml.splice_batch_insert_update_sql(OB_ALL_DEPENDENCY_TNAME, sql))) {
-    } else if (OB_FAIL(trans.write(sql.ptr(), affected_rows))) {
-    } else {
-    }
-  }
-  return ret;
+    return ret;
+  });
 }
 
 int ObDependencyDDLHelper::update_max_dependency_version(
