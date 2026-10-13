@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', required=True, help='production binary without local test hooks')
 parser.add_argument('--native-probe-binary', required=True, help='same source revision, built with gate_probe_injection.py enable (native, shared transaction, preparation, identity, DDL commit and cold materialization hooks)')
 parser.add_argument('--log-dir', type=Path, default=local / 'gate-results' / datetime.now().strftime('%Y%m%d-%H%M%S'))
-parser.add_argument('--profile', choices=('full', 'native-inner-table', 'fork-boundaries', 'owned-layout'), default='full',
+parser.add_argument('--profile', choices=('full', 'native-inner-table', 'fork-boundaries', 'owned-layout', 'minor-chain'), default='full',
                     help='explicitly scoped regression set; full remains the default')
 parser.add_argument('--gate', action='append', choices=('bootstrap-native-kv', 'bootstrap', 'sql', 'direct', 'tls'), help='rerun selected failed/pending steps; default runs all')
 parser.add_argument('--start-at-script', help='resume one gate at the first command with this script filename; keep prior logs as evidence')
@@ -80,6 +80,8 @@ gates = [
     ]),
     ('sql', [[tools / 'namespace_sql_worker_prototype.py', '--binary', binary, '--case', 'full']]),
     ('direct', [
+        [local / 'minor_last_flag_probe.py', '--binary', binary, '--pre-fork-wait', '10',
+         '--skip-major', '--skip-seed', '--skip-indexes', '--seconds', '30'],
         [local / 'owned_layout_probe.py', '--binary', binary],
         [local / 'native_dml_boundary_probe.py', '--binary', binary, '--minimal'],
         [local / 'native_dml_boundary_probe.py', '--binary', binary],
@@ -143,7 +145,12 @@ gates = [
     ]),
     ('tls', [[tools / 'namespace_worker_direct_prototype.py', '--binary', binary, '--case', 'tls']]),
 ]
-if args.profile == 'owned-layout':
+if args.profile == 'minor-chain':
+    gates = [(name, [command for command in commands
+                     if command[0].name == 'minor_last_flag_probe.py'])
+             for name, commands in gates if name == 'direct']
+    print('PROFILE minor-chain (known failing fork snapshot row conversion; diagnosis only)', flush=True)
+elif args.profile == 'owned-layout':
     selected = {
         'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'namespace_checksum_probe.py',
                                'checksum_group_recovery_probe.py', 'cold_materialization_probe.py',

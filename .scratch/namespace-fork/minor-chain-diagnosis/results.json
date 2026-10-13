@@ -1,0 +1,190 @@
+{
+  "source": "d48bbccd0444c888c77daaeb373b4e3a374b3829",
+  "diagnosis_only": true,
+  "artifacts": [
+    {
+      "path": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+      "sha256": "20578725e34033c739b94a04eb8d01e42345f025fc3d52bc7313440a3a55244a"
+    },
+    {
+      "path": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-chain-diagnostic",
+      "sha256": "f42208f8bcac208fbc864c794d9c014b867e24a6d10a7d373bbd2bb56c33e773"
+    },
+    {
+      "path": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-chain-ab",
+      "sha256": "fd110a6eef5223d2c5c76ba659429d0d208411d631b0fcff62187c860c415b56"
+    }
+  ],
+  "runs": [
+    {
+      "log": "/tmp/ns-minor-primary-only.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_waixzvix",
+      "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+      "verdict": "NO_REPRO",
+      "options": {
+        "binary": "build_release/src/observer/seekdb",
+        "seconds": 90,
+        "skip_seed": false,
+        "skip_major": false
+      },
+      "last_flag_errors": 0,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-primary-delay.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_ys2pntjf",
+      "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "build_release/src/observer/seekdb",
+        "seconds": 90,
+        "skip_seed": false,
+        "skip_major": true,
+        "pre_fork_wait": 60
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-no-seed.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_on0kl8ep",
+      "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "build_release/src/observer/seekdb",
+        "seconds": 90,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 60
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-no-indexes.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag__i0odjnn",
+      "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "build_release/src/observer/seekdb",
+        "seconds": 90,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 60,
+        "skip_indexes": true,
+        "hold_failure": 150
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-delay10.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_xpy1hl3i",
+      "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+        "seconds": 90,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 10,
+        "skip_indexes": true,
+        "hold_failure": 0
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-core-only.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_ux23q6ma",
+      "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+      "verdict": "NO_REPRO",
+      "options": {
+        "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+        "seconds": 90,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 60,
+        "skip_indexes": false,
+        "hold_failure": 0,
+        "core_only": true
+      },
+      "last_flag_errors": 0,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-chain-diagnostic.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_6fozpn6e",
+      "binary": "/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/build_release/src/observer/seekdb",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "build_release/src/observer/seekdb",
+        "seconds": 90,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 60,
+        "skip_indexes": true,
+        "hold_failure": 0,
+        "core_only": false
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": null
+    },
+    {
+      "log": "/tmp/ns-minor-ab-original.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_bbzq54uh",
+      "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+      "verdict": "REPRODUCED",
+      "options": {
+        "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-before-diagnosis",
+        "seconds": 30,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 10,
+        "skip_indexes": true,
+        "hold_failure": 0,
+        "core_only": false
+      },
+      "last_flag_errors": 1,
+      "target_minor_completed": 0
+    },
+    {
+      "log": "/tmp/ns-minor-ab-normalized.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_06238gn4",
+      "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-chain-ab",
+      "verdict": "PASS",
+      "options": {
+        "binary": "/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-minor-chain-ab",
+        "seconds": 30,
+        "skip_seed": true,
+        "skip_major": true,
+        "pre_fork_wait": 10,
+        "skip_indexes": true,
+        "hold_failure": 0,
+        "core_only": false
+      },
+      "last_flag_errors": 0,
+      "target_minor_completed": 1
+    }
+  ],
+  "four_gates": [
+    {
+      "runner": "/tmp/ns-minor-four-gates-ab.log",
+      "log": "/tmp/ns-minor-four-gates-ab/direct.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_xkh_9yck",
+      "verdict": "PASS",
+      "last_flag_errors": 0,
+      "target_minor_completed": 1
+    },
+    {
+      "runner": "/tmp/ns-minor-four-gates-production.log",
+      "log": "/tmp/ns-minor-four-gates-production/direct.log",
+      "base": "/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_minor_last_flag_nre6_f32",
+      "verdict": "REPRODUCED",
+      "last_flag_errors": 1,
+      "target_minor_completed": 0
+    }
+  ],
+  "restored_production_sha256": "20578725e34033c739b94a04eb8d01e42345f025fc3d52bc7313440a3a55244a",
+  "restored_production_build_log": "/tmp/ns-minor-diagnosis-clean-build.log"
+}

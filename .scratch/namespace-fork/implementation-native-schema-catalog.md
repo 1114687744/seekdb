@@ -142,7 +142,9 @@
 - 仍需接入表/索引/约束/外键的名称查询、当前表版本查询、索引信息查询，以及既有清单中的完整 DDL 写入；本轮目标仍未完成。
 - 核心表定义还有独立读取：`get_core_table_priorities/get_core_table_columns` 使用 `ObCoreTableProxy::load`，后者仍对 `__all_core_table` 执行 SQL。正常装载不能漏掉这条路径；后续应复用固定内表定义和现有 core 行解码，避免通过虚拟表查询核心定义。初始化阶段与目录已经建立后的访问必须分清。
 
-#### 待定位：核心 tablet 的 minor 行版本结束标记
+#### 已定位、待修复：核心 tablet 的 minor 行版本结束标记
+
+2026-10-13 更新：根因已定位，正式修复待做。已在无备库、无 major 的独立主库多次复现；fork 快照查询返回的 shadow 行被强制补 First/Last 后原样保存，形成孤立 shadow，minor 跳过它后提前进入下一行。单点转换实验使同一用例完成目标 minor 并通过父子数据断言；生产源码未提交修复。行级证据、代码历史与四件套入口见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md)。以下保留最初发现记录。
 
 - 上述备库历史 schema 场景中，主库子空间 4 的逻辑 tablet 1（物理 ID `4611686568183201793`）在 minor 合并多份 MINI 时反复报 `-4016`。报错位置 `ObMacroBlockWriter::check_order`：切换到下一行时，上一行未见 Last 标记；涉及 `__all_global_stat/change_stream_min_dep_lsn` 等 core 行。
 - major 准备等待期间，后台物化/接管持续推进，最终主库与备库 major、恢复、提升后 major 和用户数据/索引校验均完成。这个日志异常没有阻止本次用例完成，但不能据此认定 minor 正确，也尚未证明它由版本查询改动引入或此前已存在。
@@ -180,6 +182,7 @@
 - mock FK 父表的简单/完整定义、列及外键关系仍有独立 SQL 装载入口（`fetch_mock_fk_parent_tables`、`fetch_all_mock_fk_parent_table_info` 等）；名称与版本查询接入不代表这些装载入口已完成。
 - `/tmp/native-schema-catalog-names-build2.log` 编译通过；`names-probe2.log` 的 typed/plain/part/drop_index/fk 通过，核心表自身名称/当前版本与 SQL 对照一致（ID=1，版本=1048584）。随后 mock_fk 在 SQL 解析阶段失败：未选择默认库时，`ObDDLResolver` 从 session 取得无效 database_id，尚未进入原生目录。单独 `names-mock-repro1.log` 重现相同 1210。仅在用例中增加 `USE` 后，`names-mock-probe1.log` 的 mock_fk/drop_fk/old_fk 全部通过，冷服务槽位仍为 0。
 - TODO（解析器）：缺失 FK 父表的预检查使用 session database_id 和 foreign_key_name；应核对显式限定数据库及父表名。现有代码路径可解释上述失败，但尚未做基线版本的运行对照，不宣称是本轮引入或已修复。原生目录回归先使用明确选择数据库的会话。
+- 2026-10-13 更新：已使用用户指定基线 `/data/1/nijia.nj/herdr-worktree/seekdb/config/.scratch/tablet-persist-perf/seekdb-slog-timed` 实测。无默认库时两次 1210，执行 USE 后两次成功；与当前分支行为一致。日志 `/tmp/ns-fk-1210-baseline-slog-timed.log`，二进制 SHA256=`18d6e8b863bc97dc049add5ff8e3ff5ab212b329a1641006549c9c8dd908c693`。用户明确指定为**低优先级 TODO，暂不解决**；属于独立 SQL 解析缺陷，不作为 Namespace 重构阻塞项。
 
 ### 辅助表与 DDL 发布读取接入
 
@@ -465,7 +468,7 @@
 ### 保留的后续范围与已知 TODO
 
 1. database、user、权限等非表 schema 类型的全面原生化；合并/checksum 的后续接入，以及 SSTable 持有完整物理描述的方案，仍按原定后续范围处理。
-2. `schema_history` 备库场景曾出现核心 tablet minor 多版本行 Last 标记异常：保留上文和 `native-versions-standby/minor-core-error.txt` 的定位线索；尚未证明来源或修复，本轮合并完成不能替代该异常的定向验证。
+2. `schema_history` 场景的核心 tablet minor 多版本行 Last 异常已在独立主库复现，根因为 fork 重写时持久化了孤立 shadow。单点转换实验通过，正式修复尚未合入；见 [minor-chain-diagnosis.md](minor-chain-diagnosis.md) 及四件套 `minor-chain` 用例。
 3. 未选择默认数据库时的缺失 FK 父表解析问题：保留上文 TODO；回归明确执行 USE，未宣称修复解析器。
 
 以上两项已知缺陷继续跟踪；本轮交付是完整表定义原生目录接入，不代表 Namespace/fork 的全部历史 TODO 均已清零。
