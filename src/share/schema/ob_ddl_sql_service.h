@@ -47,17 +47,8 @@ public:
                         common::ObISQLClient &sql_client);
 
 protected:
-  virtual int log_operation(ObSchemaOperation &ddl_operation,
-                            common::ObISQLClient &sql_client,
-                            common::ObSqlString *public_sql_string = NULL);
-  int log_operation_dml(
-      const ObSchemaOperation &ddl_operation,
-      share::ObDMLSqlSplicer &ddl_operation_dml);
-  int gen_ddl_operation_dml(
-      const ObSchemaOperation &ddl_operation,
-      share::ObDMLSqlSplicer &ddl_operation_dml);
-private:
-  uint64_t fill_schema_id(const uint64_t schema_id);
+  virtual int log_operation(ObSchemaOperation &, common::ObISQLClient &);
+  int log_operations(const common::ObIArray<ObSchemaOperation> &, common::ObISQLClient &);
 
 protected:
   ObSchemaService &schema_service_;

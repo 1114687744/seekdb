@@ -21,6 +21,7 @@ def run(binary, selected=None):
             ('versions', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
              "CONSTRAINT ck CHECK (id >= 0)", ' PARTITION BY HASH(id) PARTITIONS 8', (2, 8, 1, 1, 0, 0)),
+            ('operations', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('trigger', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('constraint', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', "
              "CONSTRAINT ck CHECK (id >= 0) NOT ENFORCED", '', (2, 0, 0, 1, 0, 0)),
@@ -105,6 +106,10 @@ def run(binary, selected=None):
                                                 f'WHERE table_id={table_id} ORDER BY column_id')
                 assert not any(row[0] == 'n' for row in stored_columns), stored_columns
                 expected = (len(stored_columns), *expected[1:])
+            if label == 'operations':
+                operations = experiment.sql('SELECT COUNT(*),MAX(schema_version) FROM oceanbase.__all_ddl_operation')[0]
+                completed = experiment.sql('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation '
+                                            'WHERE operation_type=1503')[0][0]
             name = f'native_catalog_cold_{label}'
             version_count, minimum = experiment.sql(
                 f'SELECT COUNT(*), MIN(schema_version) FROM oceanbase.__all_table_history '
@@ -166,6 +171,9 @@ def run(binary, selected=None):
             for aux_id, aux_type, index_type in auxiliary:
                 assert (f'NATIVE_SCHEMA_CATALOG_AUX_ROW namespace={child_id} id={aux_id} '
                         f'type={aux_type} index_type={index_type}') in trace, auxiliary
+            if label == 'operations':
+                assert (f'NATIVE_SCHEMA_CATALOG_OPERATIONS namespace={child_id} count={operations[0]} '
+                        f'latest={operations[1]} completed={completed} stage=cleaned ret=0') in trace, trace[-3000:]
             if label == 'trigger':
                 assert f'NATIVE_SCHEMA_CATALOG_TRIGGER namespace={child_id} stage=deleted ret=0' in trace, trace[-3000:]
             if mock_case:
@@ -224,7 +232,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('trigger', 'range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('operations', 'trigger', 'range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

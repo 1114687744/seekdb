@@ -1869,7 +1869,7 @@ int ObTableSqlService::batch_create_table(ObIArray<ObTableSchema> &tables,
   if (OB_FAIL(ret)) {
   } else if (schemas.empty()) {
   } else {
-    ObDMLSqlSplicer ddl_operation_dml;
+    ObSEArray<ObSchemaOperation, 4> operations;
     
     const bool has_sys_table = is_sys_table(schemas.at(0).get_table_id());
     const bool update_object_status_ignore_version = false;
@@ -1918,7 +1918,7 @@ int ObTableSqlService::batch_create_table(ObIArray<ObTableSchema> &tables,
       } else {
         // for user table
         // add ddl operation
-        if (OB_FAIL(log_operation_dml(opt, ddl_operation_dml))) {
+        if (OB_FAIL(operations.push_back(opt))) {
         }
       }
     }
@@ -1934,8 +1934,7 @@ int ObTableSqlService::batch_create_table(ObIArray<ObTableSchema> &tables,
     } else if (FALSE_IT(time_guard.click("insert_all_cst"))) {
     } else if (OB_FAIL(batch_add_table_part_info(sql_client, schemas))) {
     } else if (FALSE_IT(time_guard.click("add_table_part_info"))) {
-    } else if (OB_FAIL(exec_dml(sql_client, OB_ALL_DDL_OPERATION_TNAME, ddl_operation_dml,
-            schemas.count()))) {
+    } else if (OB_FAIL(log_operations(operations, sql_client))) {
     } else if (FALSE_IT(time_guard.click("insert_all_ddl_operation"))) {
     } else {
       ObTableSchema &last_table = schemas.at(schemas.count() - 1);

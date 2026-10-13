@@ -6,6 +6,7 @@
 #include "share/schema/ob_constraint.h"
 #include "share/schema/ob_trigger_info.h"
 #include "share/schema/ob_schema_utils.h"
+#include "share/schema/ob_schema_service.h"
 #include "share/ob_dml_sql_splicer.h"
 #include "share/ob_timezone_mgr.h"
 
@@ -17,6 +18,8 @@ namespace schema {
 class SchemaCatalogFields final
 {
 public:
+  template<class RowWriter>
+  static int operation(const ObSchemaOperation &, RowWriter &);
   template<class RowWriter>
   static int table(const ObTableSchema &, bool update_object_status_ignore_version,
                    RowWriter &, bool is_history);
@@ -40,6 +43,25 @@ public:
   template<class RowWriter>
   static int constraint_column(const ObConstraint &, uint64_t column_id, RowWriter &);
 };
+
+template<class RowWriter>
+int SchemaCatalogFields::operation(const ObSchemaOperation &operation, RowWriter &row)
+{
+  using namespace common;
+  int ret = OB_SUCCESS;
+  if (!operation.is_valid()) { return OB_INVALID_ARGUMENT; }
+  if (OB_FAIL(row.add_pk_column("schema_version", operation.schema_version_))
+      || OB_FAIL(row.add_column("user_id", operation.user_id_))
+      || OB_FAIL(row.add_column("database_id", operation.database_id_))
+      || OB_FAIL(row.add_column("database_name", ObHexEscapeSqlStr(operation.database_name_ ?: "")))
+      || OB_FAIL(row.add_column("column_id", operation.column_id_))
+      || OB_FAIL(row.add_column("table_id", operation.table_id_))
+      || OB_FAIL(row.add_column("table_name", ObHexEscapeSqlStr(operation.table_name_ ?: "")))
+      || OB_FAIL(row.add_column("operation_type", operation.op_type_))
+      || OB_FAIL(row.add_column("ddl_stmt_str", ObHexEscapeSqlStr(operation.ddl_stmt_str_ ?: "")))
+      || OB_FAIL(row.add_gmt_modified())) {}
+  return ret;
+}
 
 template<class RowWriter>
 int SchemaCatalogFields::table(

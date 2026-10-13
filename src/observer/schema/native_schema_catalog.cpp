@@ -323,13 +323,15 @@ public:
     filter_ = std::move(filter);
     // Taking the first version of an entity requires descending version order.
     if (latest_per_key && !reverse) { return OB_INVALID_ARGUMENT; }
-    int ret = catalog.open_prefix(inner_id, prefix, cursor_, reverse);
-    ObSEArray<ObColDesc, 8> columns;
-    if (OB_SUCC(ret)) { ret = cursor_.schema()->get_column_ids(columns); }
-    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
-      positions_.emplace(columns.at(i).col_id_, i);
-    }
-    return ret;
+    const int ret = catalog.open_prefix(inner_id, prefix, cursor_, reverse);
+    return ret == OB_SUCCESS ? load_columns() : ret;
+  }
+  int open_range(NativeSchemaCatalog &catalog, uint64_t inner_id,
+      const ObNewRange &range, bool reverse = false)
+  {
+    version_ = INT64_MAX;
+    const int ret = catalog.open_scan(inner_id, range, cursor_, reverse);
+    return ret == OB_SUCCESS ? load_columns() : ret;
   }
   int next()
   {
@@ -403,6 +405,15 @@ public:
   }
   int close() { row_ = nullptr; return cursor_.close(); }
 private:
+  int load_columns()
+  {
+    ObSEArray<ObColDesc, 8> columns;
+    int ret = cursor_.schema()->get_column_ids(columns);
+    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+      positions_.emplace(columns.at(i).col_id_, i);
+    }
+    return ret;
+  }
   int cell(const char *name, const ObObj *&out) const
   {
     out = nullptr;
@@ -1408,6 +1419,91 @@ int NativeSchemaCatalog::get_mock_fk_parent_table_schema_versions(const ObIArray
     } else { ret = out.push_back(pair); }
   }
   return ret;
+}
+
+int NativeSchemaCatalog::get_schema_operations(int64_t lower, int64_t upper,
+    ObSchemaService::SchemaOperationSetWithAlloc &out)
+{
+  out.reset();
+  if (lower < 0 || upper < 0) { return OB_INVALID_ARGUMENT; }
+  if (lower >= upper) { return OB_SUCCESS; }
+  ObObj start, end;
+  start.set_int(lower); end.set_int(upper);
+  ObNewRange range;
+  range.start_key_.assign(&start, 1); range.end_key_.assign(&end, 1);
+  range.border_flag_.set_inclusive_end();
+  CatalogRows rows;
+  int ret = rows.open_range(*this, OB_ALL_DDL_OPERATION_TID, range);
+  while (OB_SUCC(ret) && OB_SUCC(rows.next())) {
+    ObSchemaOperation operation;
+    if (OB_FAIL(ObSchemaRetrieveUtils::fill_schema_operation(rows, out, operation))) {
+    } else if (operation.op_type_ == OB_INVALID_DDL_OP) { ret = OB_ERR_UNEXPECTED; }
+    else { ret = out.push_back(operation); }
+  }
+  return ret == OB_ITER_END ? OB_SUCCESS : ret;
+}
+
+int NativeSchemaCatalog::get_latest_schema_version(int64_t &version)
+{
+  version = OB_INVALID_VERSION;
+  CatalogRows rows;
+  int ret = rows.open(*this, OB_ALL_DDL_OPERATION_TID, ObRowkey(), INT64_MAX, true);
+  if (OB_SUCC(ret)) { ret = rows.next(); }
+  if (OB_SUCC(ret)) { ret = rows.get_int("schema_version", version); }
+  return ret == OB_ITER_END ? OB_SUCCESS : ret;
+}
+
+int NativeSchemaCatalog::get_completed_schema_version(int64_t upper, int64_t &version)
+{
+  version = OB_INVALID_VERSION;
+  if (upper <= 0) { return OB_INVALID_ARGUMENT; }
+  ObObj start[2], end[2];
+  start[0].set_int(OB_DDL_END_SIGN); end[0] = start[0];
+  start[1].set_min_value(); end[1].set_int(upper);
+  ObNewRange range;
+  range.start_key_.assign(start, 2); range.end_key_.assign(end, 2);
+  range.border_flag_.set_inclusive_start(); range.border_flag_.set_inclusive_end();
+  CatalogRows rows;
+  int ret = rows.open_range(*this, OB_ALL_DDL_OPERATION_IDX_DDL_TYPE_TID, range, true);
+  if (OB_SUCC(ret)) { ret = rows.next(); }
+  if (OB_SUCC(ret)) { ret = rows.get_int("schema_version", version); }
+  if (ret == OB_ITER_END || (OB_SUCC(ret) && (version <= 0 || !ObSchemaService::is_formal_version(version)))) {
+    ret = OB_EAGAIN;
+  }
+  return ret;
+}
+
+int NativeSchemaCatalog::has_table_schema_changes(const ObIArray<uint64_t> &table_ids,
+    int64_t lower, int64_t upper, bool &changed)
+{
+  changed = false;
+  if (lower < 0 || upper < 0) { return OB_INVALID_ARGUMENT; }
+  if (lower >= upper || table_ids.empty()) { return OB_SUCCESS; }
+  std::set<uint64_t> selected;
+  for (int64_t i = 0; i < table_ids.count(); ++i) { selected.insert(table_ids.at(i)); }
+  ObObj start, end;
+  start.set_int(lower); end.set_int(upper);
+  ObNewRange range;
+  range.start_key_.assign(&start, 1); range.end_key_.assign(&end, 1);
+  range.border_flag_.set_inclusive_end();
+  CatalogRows rows;
+  int ret = rows.open_range(*this, OB_ALL_DDL_OPERATION_TID, range);
+  while (OB_SUCC(ret) && !changed && OB_SUCC(rows.next())) {
+    int64_t type = 0;
+    uint64_t table_id = OB_INVALID_ID;
+    if (OB_FAIL(rows.get_int("operation_type", type))) {
+    } else if (type <= OB_DDL_TABLE_OPERATION_BEGIN || type >= OB_DDL_TABLE_OPERATION_END) {
+    } else if (OB_FAIL(rows.get_uint("table_id", table_id))) {
+    } else { changed = selected.count(table_id) != 0; }
+  }
+  return ret == OB_ITER_END ? OB_SUCCESS : ret;
+}
+
+int NativeSchemaCatalog::insert_schema_operation(const ObSchemaOperation &operation)
+{
+  return insert_fields(OB_ALL_DDL_OPERATION_TID, [&](SchemaCatalogRow &row) {
+    return SchemaCatalogFields::operation(operation, row);
+  });
 }
 
 int NativeSchemaCatalog::get_triggers(int64_t version, ObIArray<ObTriggerInfo> &out,

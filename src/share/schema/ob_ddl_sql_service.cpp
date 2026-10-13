@@ -17,6 +17,9 @@
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_ddl_sql_service.h"
 #include "share/ob_server_struct.h"
+#include "observer/namespace_worker_protocol_prototype.h"
+#include "observer/schema/native_schema_catalog.h"
+#include "share/schema/schema_catalog_fields.h"
 
 namespace oceanbase
 {
@@ -25,78 +28,48 @@ namespace share
 {
 namespace schema
 {
-// A valid SQL execution context records the corresponding __all_ddl_operation row.
-int ObDDLSqlService::log_operation(
-  ObSchemaOperation &schema_operation,
-  common::ObISQLClient &sql_client,
-  common::ObSqlString *public_sql_string /*= NULL*/)
+int ObDDLSqlService::log_operation(ObSchemaOperation &operation, ObISQLClient &client)
 {
-  int ret = OB_SUCCESS;
-  ObSqlString tmp_sql_string;
-  ObSqlString *sql_string = (NULL != public_sql_string ? public_sql_string : &tmp_sql_string);
-  ObDMLSqlSplicer ddl_operation_dml;
-  int64_t affected_rows = 0;
-  if (OB_ISNULL(sql_string)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("pointer is null", KR(ret), KP(sql_string));
-  } else if (FALSE_IT(sql_string->reuse())) {
-  } else if (OB_FAIL(log_operation_dml(schema_operation, ddl_operation_dml))) {
-  } else if (OB_FAIL(ddl_operation_dml.splice_insert_sql(OB_ALL_DDL_OPERATION_TNAME, *sql_string))) {
-  } else if (OB_FAIL(sql_client.write(sql_string->ptr(), affected_rows))) {
-  } else if (affected_rows != 1) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("affected_rows expect to 1, ", KR(ret), K(affected_rows));
-  }
+  ObSEArray<ObSchemaOperation, 1> operations;
+  int ret = operations.push_back(operation);
+  if (OB_SUCC(ret)) { ret = log_operations(operations, client); }
   return ret;
 }
 
-int ObDDLSqlService::log_operation_dml(
-    const ObSchemaOperation &schema_operation,
-    share::ObDMLSqlSplicer &ddl_operation_dml)
+int ObDDLSqlService::log_operations(const ObIArray<ObSchemaOperation> &operations, ObISQLClient &client)
 {
+  if (operations.empty()) { return OB_SUCCESS; }
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(client.target_namespace());
+  auto *last = GET_TSI(TSILastOper);
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (last == nullptr) { return OB_ERR_UNEXPECTED; }
   int ret = OB_SUCCESS;
-  auto *tsi_oper = GET_TSI(TSILastOper);
-  if (OB_UNLIKELY(!schema_operation.is_valid())) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("schema_operation is invalid", K(schema_operation), K(ret));
-  } else if (OB_ISNULL(tsi_oper)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("Failed to get TSILatOper", KR(ret), K(schema_operation)); 
-  } else {
-    tsi_oper->last_operation_schema_version_ = schema_operation.schema_version_;
+  for (int64_t i = 0; OB_SUCC(ret) && i < operations.count(); ++i) {
+    if (!operations.at(i).is_valid()) { ret = OB_INVALID_ARGUMENT; }
+    else { last->last_operation_schema_version_ = operations.at(i).schema_version_; }
   }
   if (OB_FAIL(ret)) {
-  } else if (OB_FAIL(gen_ddl_operation_dml(schema_operation, ddl_operation_dml))) {
-  }
-  return ret;
-}
-
-int ObDDLSqlService::gen_ddl_operation_dml(
-    const ObSchemaOperation &schema_operation,
-    share::ObDMLSqlSplicer &ddl_operation_dml)
-{
-  int ret = OB_SUCCESS;
-  if (OB_UNLIKELY(!schema_operation.is_valid())) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("schema_operation is invalid", K(schema_operation), K(ret));
-  } else if (OB_FAIL(ddl_operation_dml.add_column("schema_version", schema_operation.schema_version_))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("user_id",
-          fill_schema_id(schema_operation.user_id_)))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("database_id",
-          fill_schema_id(schema_operation.database_id_)))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("database_name",
-          ObHexEscapeSqlStr(schema_operation.database_name_?:"")))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("column_id",
-          fill_schema_id(schema_operation.column_id_)))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("table_id",
-          fill_schema_id(schema_operation.table_id_)))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("table_name",
-          ObHexEscapeSqlStr(schema_operation.table_name_?:"")))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("operation_type", schema_operation.op_type_))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_column("ddl_stmt_str",
-          ObHexEscapeSqlStr(schema_operation.ddl_stmt_str_?:"")))) {
-  } else if (OB_FAIL(ddl_operation_dml.add_gmt_modified())) {
-  } else if (OB_FAIL(ddl_operation_dml.finish_row())) {
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = observer::NativeSchemaCatalog::with_ddl_transaction(client, THIS_WORKER.get_timeout_ts(),
+        [&](observer::NativeSchemaCatalog &catalog) {
+      int ret = OB_SUCCESS;
+      for (int64_t i = 0; OB_SUCC(ret) && i < operations.count(); ++i) {
+        ret = catalog.insert_schema_operation(operations.at(i));
+      }
+      return ret;
+    });
+  } else {
+    // The directory is not yet available during initial bootstrap.
+    ObDMLSqlSplicer rows;
+    ObSqlString sql;
+    int64_t affected = 0;
+    for (int64_t i = 0; OB_SUCC(ret) && i < operations.count(); ++i) {
+      if (OB_FAIL(SchemaCatalogFields::operation(operations.at(i), rows))) {
+      } else { ret = rows.finish_row(); }
+    }
+    if (OB_SUCC(ret)) { ret = rows.splice_batch_insert_sql(OB_ALL_DDL_OPERATION_TNAME, sql); }
+    if (OB_SUCC(ret)) { ret = client.write(sql.ptr(), affected); }
+    if (OB_SUCC(ret) && affected != operations.count()) { ret = OB_ERR_UNEXPECTED; }
   }
   return ret;
 }
@@ -126,10 +99,6 @@ int ObDDLSqlService::log_nop_operation(const ObSchemaOperation &schema_operation
   return ret;
 }
 
-uint64_t ObDDLSqlService::fill_schema_id(const uint64_t schema_id)
-{
-  return schema_id;
-}
 } //end of schema
 } //end of share
 } //end of oceanbase

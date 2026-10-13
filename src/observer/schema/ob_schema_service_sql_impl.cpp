@@ -2567,6 +2567,15 @@ int ObSchemaServiceSQLImpl::get_increment_schema_operations(
     ObISQLClient &sql_client,
     SchemaOperationSetWithAlloc &schema_operations)
 {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    if (!check_inner_stat()) { return OB_NOT_INIT; }
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_schema_operations(base_version, new_schema_version, schema_operations);
+    });
+  }
   int ret = OB_SUCCESS;
   if (!check_inner_stat()) {
     ret = OB_NOT_INIT;
@@ -2628,6 +2637,15 @@ int ObSchemaServiceSQLImpl::check_sys_schema_change(
     const int64_t new_schema_version,
     bool &sys_schema_change)
 {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    if (!check_inner_stat()) { return OB_NOT_INIT; }
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.has_table_schema_changes(sys_table_ids, schema_version, new_schema_version, sys_schema_change);
+    });
+  }
   int ret = OB_SUCCESS;
   
   SMART_VAR(ObMySQLProxy::MySQLResult, res) {
@@ -2681,6 +2699,14 @@ int ObSchemaServiceSQLImpl::fetch_schema_version(
     ObISQLClient &sql_client,
     int64_t &schema_version)
 {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_latest_schema_version(schema_version);
+    });
+  }
   int ret = OB_SUCCESS;
   ObSqlString sql;
   SMART_VAR(ObMySQLProxy::MySQLResult, res) {
@@ -5516,6 +5542,15 @@ int ObSchemaServiceSQLImpl::get_schema_version_by_timestamp(
     int64_t timestamp,
     int64_t &schema_version)
 {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(
+      sql_client.target_namespace());
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  if (!lifecycle->is_bootstrapping()) {
+    if (!check_inner_stat()) { return OB_INNER_STAT_ERROR; }
+    return with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      return catalog.get_completed_schema_version(timestamp, schema_version);
+    });
+  }
   int ret = OB_SUCCESS;
   
   schema_version = OB_INVALID_VERSION;

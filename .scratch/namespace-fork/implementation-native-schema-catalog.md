@@ -2,7 +2,7 @@
 
 状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流等剩余入口仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流读写也已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；依赖元数据及最终入口审计仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
 
 ## 目标与边界
 
@@ -327,6 +327,22 @@
 
 ### 下一阶段剩余入口
 
-- DDL 操作流：`ObDDLSqlService::log_operation` 和批量建表的操作记录写入，以及 SQLImpl 的增量操作读取、最新版本、系统表变化检查和 END_SIGN 版本选择仍走 SQL。须保留同一 DDL owner 与最后操作版本的既有含义。
+- DDL 操作流：现已完成正常读写入口接入，验证见下方本阶段记录；目录建立前的初始化 SQL 仍按明确 lifecycle 保留。
 - 完整表定义相关依赖记录：`ObDependencyInfo` / `ObDependencyDDLHelper` 仍使用 `__all_dependency` SQL；需要接入并核对与视图/trigger 修改的事务关系。
 - 最终核对 core 单元格式写入、初始化生命周期及其余表目录调用点；普通用户/权限等其他 schema 类型和统计信息不据本阶段结果宣称完成。
+
+
+### DDL 操作流原生接入
+
+- 单条操作记录与批量建表共用 `log_operations`，正常路径将 `__all_ddl_operation` 及 `idx_ddl_type` 写入同一个 DDL owner；字段映射集中在 `SchemaCatalogFields::operation`。初始化目录尚未建立时，按既有 lifecycle 使用 SQL。删除无调用的 SQL 字符串输出参数和纯透传 ID helper。
+- 保留 `TSILastOper` 最后操作版本以及 DDL end 的既有顺序：END_SIGN、normal schema watermark、Namespace publication 随原事务提交。没有新增发布记录或提交阶段。
+- 增量刷新按主键范围 `(base_version, new_schema_version]` 正序读取；最新版本反向取第一行；已完成版本按 `idx_ddl_type` 的 END_SIGN 范围反向读取，保留无有效 formal 版本时 EAGAIN 的语义。系统表变化检查也接入原生范围读取；调用方 SCN 保护仍由现有目录上下文持有。
+- 冷用例新增继承操作流与 SQL 数量/最大版本对照、90KB 语句正文、Unicode 名称、自身未提交记录、独立读、回滚/提交、区间端点、END_SIGN 上界及删除索引恢复。生产用例涵盖库、含索引/LOB 的表、视图、用户创建/删除、重复列 DDL 失败，以及主表/强制索引逐字段和正文校验值对照；共享脚本已接到四件套。
+- `/tmp/native-schema-catalog-operations-prior1.log` 在修改前生产版本通过新增客户端用例。`operations-build1.log` 编译通过，冷探针和新版本生产 DDL/重启测试正在运行，尚不计为通过。
+
+- `operations-probe1.log` 的 operations/trigger 冷用例通过：原生读取 896 条继承操作记录，最新与完成版本均为 1791849329538504，与 SQL 对照一致。`OPERATIONS stage=cleaned ret=0` 覆盖事务、端点、正文和索引清理；两个孩子的服务槽位均为 0。
+- `operations-ddl1.log` 通过实际 DDL、操作记录主表/索引对照、父子隔离、崩溃恢复、恢复后 trigger 执行和 mock 父表解析。已去除探针钩子，继续生产编译及主备回归。
+
+- `operations-production-build1.log` 已去除测试钩子的生产编译通过；`operations-production-ddl1.log` 通过实际 DDL/索引/fork/重启，以及恢复后的视图、trigger 与外键行为。
+- 生产 Namespace 主备回归退出 0（163.77 秒），见 `gate-results/native-schema-catalog/native-operations-standby/results.json`。日志含 `native_catalog_operation_replay`，已核对操作记录全部字段及语句正文长度/CRC、强制索引结果、增量刷新、提升后复查/写入和再次 fork。未运行全量 mysqltest 或 sysbench。
+- 本阶段没有新增已知运行缺陷。剩余工作为 `__all_dependency` 等相关依赖入口以及 core/初始化边界和完整表目录调用点的最终审计；完整目标尚未完成。

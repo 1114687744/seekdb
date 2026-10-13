@@ -998,6 +998,139 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (definition != nullptr) { definition->~ObTableSchema(); }
     fprintf(stderr, "NATIVE_SCHEMA_CATALOG_FOREIGN_KEY namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
   }
+  if (ret == OB_SUCCESS && name.find("_operations") != std::string::npos) {
+    ObSchemaService::SchemaOperationSetWithAlloc inherited;
+    int64_t latest = 0, completed = 0;
+    ret = catalog.get_schema_operations(0, INT64_MAX, inherited);
+    if (ret == OB_SUCCESS) { ret = catalog.get_latest_schema_version(latest); }
+    if (ret == OB_SUCCESS) { ret = catalog.get_completed_schema_version(INT64_MAX, completed); }
+    if (ret == OB_SUCCESS && (inherited.empty() || inherited.at(inherited.count() - 1).schema_version_ != latest)) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    for (int64_t i = 1; ret == OB_SUCCESS && i < inherited.count(); ++i) {
+      if (inherited.at(i - 1).schema_version_ >= inherited.at(i).schema_version_) { ret = OB_ERR_UNEXPECTED; }
+    }
+    int64_t absent = 0;
+    if (ret == OB_SUCCESS && catalog.get_completed_schema_version(1, absent) != OB_EAGAIN) { ret = OB_ERR_UNEXPECTED; }
+    ObArray<uint64_t> ids;
+    if (ret == OB_SUCCESS) { ret = ids.push_back(table_id); }
+    bool changed = false;
+    if (ret == OB_SUCCESS) { ret = catalog.has_table_schema_changes(ids, 0, latest, changed); }
+    if (ret == OB_SUCCESS && !changed) { ret = OB_ERR_UNEXPECTED; }
+    ids.reset();
+    if (ret == OB_SUCCESS) { ret = catalog.has_table_schema_changes(ids, 0, latest, changed); }
+    if (ret == OB_SUCCESS && changed) { ret = OB_ERR_UNEXPECTED; }
+    const int64_t version = ((latest / 8) + 128) * 8;
+    if (ret == OB_SUCCESS && !ObSchemaService::is_formal_version(version)) { ret = OB_ERR_UNEXPECTED; }
+    ObSchemaOperation operation;
+    operation.schema_version_ = version;
+    operation.op_type_ = OB_DDL_ALTER_TABLE;
+    operation.table_id_ = table_id;
+    operation.database_id_ = 500002;
+    operation.user_id_ = 200001;
+    operation.column_id_ = 17;
+    operation.database_name_ = ObString::make_string("native_目录");
+    operation.table_name_ = ObString::make_string("t'目录");
+    const std::string text(90000, 'd');
+    operation.ddl_stmt_str_ = ObString(text.size(), text.data());
+    ObSchemaOperation end_sign;
+    end_sign.schema_version_ = version + 8;
+    end_sign.op_type_ = OB_DDL_END_SIGN;
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner;
+    observer::NativeSchemaCatalog writer(namespace_id, *access, *transactions);
+    auto begin = [&]() {
+      int rc = native.begin(owner, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(owner, [&](transaction::ObTxDesc &tx) { return writer.attach(tx, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](bool commit) {
+      int rc = owner.is_active() ? (commit ? native.commit(owner) : native.rollback(owner)) : OB_SUCCESS;
+      const int closed = writer.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](observer::NativeSchemaCatalog &reader, bool own) {
+      ObSchemaService::SchemaOperationSetWithAlloc operations;
+      int64_t max_version = 0, end_version = 0;
+      int rc = reader.get_schema_operations(latest, INT64_MAX, operations);
+      if (rc == OB_SUCCESS) { rc = reader.get_latest_schema_version(max_version); }
+      if (rc == OB_SUCCESS) { rc = reader.get_completed_schema_version(INT64_MAX, end_version); }
+      if (rc == OB_SUCCESS && (operations.count() != (own ? 2 : 0)
+          || max_version != (own ? version + 8 : latest) || end_version != (own ? version + 8 : completed))) {
+        rc = OB_ERR_UNEXPECTED;
+      }
+      if (rc == OB_SUCCESS && own) {
+        const auto &actual = operations.at(0);
+        if (actual.schema_version_ != version || actual.op_type_ != operation.op_type_
+            || actual.user_id_ != operation.user_id_ || actual.database_id_ != operation.database_id_
+            || actual.column_id_ != operation.column_id_ || actual.table_id_ != table_id
+            || actual.database_name_ != operation.database_name_ || actual.table_name_ != operation.table_name_
+            || operations.at(1).op_type_ != OB_DDL_END_SIGN) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = reader.get_completed_schema_version(version, end_version); }
+        if (rc == OB_SUCCESS && end_version != completed) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = reader.get_schema_operations(version, version + 8, operations); }
+        if (rc == OB_SUCCESS && (operations.count() != 1 || operations.at(0).op_type_ != OB_DDL_END_SIGN)) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = reader.get_schema_operations(version, version, operations); }
+        if (rc == OB_SUCCESS && !operations.empty()) { rc = OB_ERR_UNEXPECTED; }
+        ObArray<uint64_t> selected;
+        if (rc == OB_SUCCESS) { rc = selected.push_back(table_id); }
+        if (rc == OB_SUCCESS) { rc = reader.has_table_schema_changes(selected, latest, version, changed); }
+        if (rc == OB_SUCCESS && !changed) { rc = OB_ERR_UNEXPECTED; }
+        if (rc == OB_SUCCESS) { rc = reader.has_table_schema_changes(selected, version, version + 8, changed); }
+        if (rc == OB_SUCCESS && changed) { rc = OB_ERR_UNEXPECTED; }
+        observer::NativeSchemaCatalog::Cursor rows;
+        ObObj key; key.set_int(version);
+        const ObNewRow *row = nullptr;
+        if (rc == OB_SUCCESS) { rc = reader.open_prefix(OB_ALL_DDL_OPERATION_TID, ObRowkey(&key, 1), rows); }
+        if (rc == OB_SUCCESS) { rc = rows.next(row); }
+        int64_t statement_column = -1;
+        if (rc == OB_SUCCESS) { rc = column_index(*rows.schema(), "ddl_stmt_str", statement_column); }
+        if (rc == OB_SUCCESS && row->cells_[statement_column].get_string() != operation.ddl_stmt_str_) { rc = OB_ERR_UNEXPECTED; }
+        const int closed = rows.close();
+        if (rc == OB_SUCCESS) { rc = closed; }
+      }
+      return rc;
+    };
+    auto verify_committed = [&](bool own) {
+      observer::NativeSchemaCatalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      if (rc == OB_SUCCESS) { rc = verify(reader, own); }
+      return rc;
+    };
+    const char *stage = "insert";
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_schema_operation(operation); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_schema_operation(end_sign); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, true); }
+    if (ret == OB_SUCCESS) { ret = verify_committed(false); }
+    const int rollback = end(false);
+    if (ret == OB_SUCCESS) { ret = rollback; }
+    if (ret == OB_SUCCESS) { stage = "rollback"; ret = verify_committed(false); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_schema_operation(operation); }
+    if (ret == OB_SUCCESS) { ret = writer.insert_schema_operation(end_sign); }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "commit"; ret = verify_committed(true); }
+    if (ret == OB_SUCCESS) { ret = begin(); }
+    for (int64_t key : {version, version + 8}) {
+      int64_t erased = 0;
+      if (ret == OB_SUCCESS) {
+        ret = writer.erase_prefix(OB_ALL_DDL_OPERATION_TID, [&](SchemaCatalogRow &row) {
+          return row.add_pk_column("schema_version", key);
+        }, erased);
+      }
+      if (ret == OB_SUCCESS && erased != 1) { ret = OB_ERR_UNEXPECTED; }
+    }
+    if (ret == OB_SUCCESS) { ret = end(true); }
+    if (ret == OB_SUCCESS) { stage = "cleaned"; ret = verify_committed(false); }
+    const int cleanup = end(false);
+    if (ret == OB_SUCCESS) { ret = cleanup; }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_OPERATIONS namespace=%lu count=%ld latest=%ld completed=%ld stage=%s ret=%d\n",
+        namespace_id, inherited.count(), latest, completed, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_trigger") != std::string::npos) {
     ObArray<ObTriggerInfo> triggers;
     ObArray<ObSimpleTriggerSchema> simple;

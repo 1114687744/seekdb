@@ -278,6 +278,46 @@ def verify_partitions(query, ids):
     assert query(f"SELECT COUNT(*) FROM oceanbase.__all_part_history WHERE table_id={ids['h']} AND is_deleted=1") == ((130,),)
 
 
+def read_operation_rows(query, lower, upper, index=False):
+    hint = 'FORCE INDEX(idx_ddl_type)' if index else 'IGNORE INDEX(idx_ddl_type)'
+    return query('SELECT schema_version,operation_type,user_id,database_id,column_id,table_id,'
+                 'database_name,table_name,LENGTH(ddl_stmt_str),CRC32(ddl_stmt_str) '
+                 f'FROM oceanbase.__all_ddl_operation {hint} '
+                 f'WHERE schema_version>{lower} AND schema_version<={upper} ORDER BY schema_version')
+
+
+def exercise_operations(query):
+    lower = query('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation')[0][0]
+    query('CREATE DATABASE native_operations')
+    query('CREATE TABLE native_operations.t(id INT PRIMARY KEY,v INT,body LONGTEXT,KEY ix(v))')
+    query("INSERT INTO native_operations.t VALUES(1,7,REPEAT('a',90000))")
+    query('ALTER TABLE native_operations.t ADD extra INT DEFAULT 19')
+    query('CREATE VIEW native_operations.v AS SELECT id,v,extra FROM native_operations.t')
+    query('CREATE USER native_operation_user')
+    query('DROP USER native_operation_user')
+    upper, last_type = query('SELECT schema_version,operation_type FROM oceanbase.__all_ddl_operation '
+                             'ORDER BY schema_version DESC LIMIT 1')[0]
+    # OB_DDL_END_SIGN: each completed DDL has a final record in its owner.
+    assert last_type == 1503, (upper, last_type)
+    before = read_operation_rows(query, lower, upper)
+    try:
+        query('ALTER TABLE native_operations.t ADD v INT')
+        raise AssertionError('duplicate column unexpectedly accepted')
+    except pymysql.MySQLError as error:
+        assert error.args[0] == 1060, error.args
+    assert query('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation') == ((upper,),)
+    assert sum(row[1] == 1503 for row in before) >= 6, before
+    return lower, upper, before
+
+
+def verify_operations(query, evidence):
+    lower, upper, expected = evidence
+    assert query('SELECT * FROM native_operations.v') == ((1,7,19),)
+    current = read_operation_rows(query, lower, upper)
+    indexed = read_operation_rows(query, lower, upper, True)
+    assert current == indexed == expected, (current, indexed, expected)
+
+
 def prepare_triggers(query):
     query('CREATE DATABASE native_triggers')
     query('USE native_triggers')
@@ -484,6 +524,7 @@ def run(binary):
         experiment.sql('DROP TABLE native_ddl.p', child)
         partition_evidence = exercise_partitions(lambda statement: experiment.sql(statement, child), prepared=True)
         fk_evidence = exercise_foreign_keys(lambda statement: experiment.sql(statement, child))
+        operation_evidence = exercise_operations(lambda statement: experiment.sql(statement, child))
         trigger_evidence = exercise_triggers(lambda statement: experiment.sql(statement, child), prepared=True)
         constraint_evidence = exercise_constraints(lambda statement: experiment.sql(statement, child))
         # Same view ID in two Namespaces must identify two independent tasks.
@@ -495,6 +536,7 @@ def run(binary):
             view_evidence, peer_view_evidence = [job.result() for job in jobs]
 
         def verify():
+            verify_operations(lambda statement: experiment.sql(statement, child), operation_evidence)
             verify_triggers(lambda statement: experiment.sql(statement, child), trigger_evidence)
             assert experiment.sql('SELECT * FROM native_triggers.t') == ((1,4),)
             assert experiment.sql('SELECT * FROM native_triggers.audit_t') == ((1,4),)

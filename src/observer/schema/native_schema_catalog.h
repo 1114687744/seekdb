@@ -8,6 +8,7 @@
 #include "common/row/ob_row.h"
 #include "namespace/catalog.h"
 #include "share/schema/ob_schema_struct.h"
+#include "share/schema/ob_schema_service.h"
 
 namespace oceanbase {
 namespace common { class ObISQLClient; }
@@ -94,6 +95,15 @@ public:
   int get_table_latest_schema_versions(const common::ObIArray<uint64_t> &table_ids,
       common::ObIArray<share::schema::ObTableLatestSchemaVersion> &);
   int get_original_table_version(uint64_t table_id, int64_t &schema_version);
+  // Operation versions are logical bounds within this operation's SCN. The
+  // completed-version lookup requires an END_SIGN and uses idx_ddl_type.
+  int get_schema_operations(int64_t lower_exclusive, int64_t upper_inclusive,
+      share::schema::ObSchemaService::SchemaOperationSetWithAlloc &);
+  int get_latest_schema_version(int64_t &);
+  int get_completed_schema_version(int64_t upper_inclusive, int64_t &);
+  int has_table_schema_changes(const common::ObIArray<uint64_t> &table_ids,
+      int64_t lower_exclusive, int64_t upper_inclusive, bool &);
+  int insert_schema_operation(const share::schema::ObSchemaOperation &);
   // Current metadata only. Versions append once per existing requested ID;
   // index information resets the output and owns names in the caller's arena.
   int get_table_schema_versions(const common::ObIArray<uint64_t> &table_ids,
