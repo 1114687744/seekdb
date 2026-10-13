@@ -372,8 +372,15 @@ int ObTabletGCHandler::check_tablet_need_gc_(
       need_retry = true;
       LOG_INFO("tablet cannot be gc, as deleted_commit_scn_ is more than decided_scn, retry", KR(ret), KPC(tablet), K(decided_scn));
     } else {
-      LOG_INFO("tablet is shell, need gc", KR(ret), KPC(tablet), K(decided_scn));
-      need_gc = TabletGCStatus::NEED_GC_AFTER_MDS_PERSIST;
+      // The persisted LS checkpoint already prevents replay from recreating
+      // this incarnation. It need not wait for newer, unrelated CREATEs to
+      // finish before its physical ID can be reused.
+      const SCN checkpoint = ls_->get_tablet_change_checkpoint_scn();
+      need_gc = deleted_commit_scn <= checkpoint
+          ? TabletGCStatus::NEED_GC_IMMEDIATELY
+          : TabletGCStatus::NEED_GC_AFTER_MDS_PERSIST;
+      LOG_INFO("tablet is shell, need gc", KR(ret), KPC(tablet), K(decided_scn),
+          K(checkpoint), K(need_gc));
     }
   } else {
     // for create tablet abort

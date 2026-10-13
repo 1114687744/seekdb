@@ -113,3 +113,19 @@
 v6 剩余故障回归发现真实失败：`shared_transaction_probe.py --faults --case rollback_create --case rollback_owned --case crash_create --case crash_owned --flush-redo --creation-identities` 在 crash_owned 重启后的首次写入超时（4012）。持久现场 `namespace_fork_PROTOTYPE_shared_transaction_6fsywn_r/data.tar.gz`；客户端请求反复在 `ObTabletCreateMdsHelper::check_new_tablet_existence` 返回 EAGAIN，等待 aborted CREATE 的持久清理，不能按“全量故障测试已通过”处理。新 v9 不强制 redo 的单独 crash_owned 通过；强制 redo 的最小场景正在 `/tmp/owned-layout-shared-crash-owned-flush9.log` 验证，尚未确认根因或关闭。完整新测试版原生门禁也仍在运行。
 
 补充：v9 强制 redo 的单独 crash_owned 已通过（`/tmp/owned-layout-shared-crash-owned-flush9.log`），正在按原四个连续故障场景重跑 `/tmp/owned-layout-shared-flush9.log`；单例通过不能证明原失败闭环。8000 分区父子两空间、四条 DDL 的发布成本用例通过（`/tmp/owned-layout-ddl-cost9.log`）。
+
+### 2026-10-13：已落 redo 的 aborted CREATE 回收超时闭环
+
+- v9 原生四件套的前缀（mini/fork/meta/SSTable、回放、checksum、原生目录）通过，最终仍在连续四个强制 redo 故障场景失败。独立复现 `/tmp/owned-layout-shared-flush9.log` 同样失败，实例 `namespace_fork_PROTOTYPE_shared_transaction_5ki2kkf1`，发生于 crash_create 后第一次重试写入。
+- 根因已由日志与代码交叉确认：空壳删除 SCN=`1791889207221926074`，LS 持久 tablet-change checkpoint 已为 `1791889207221926076`。19:00:20 的 GC 扫描遇到另一个正在创建的内表 tablet，将 `no_need_wait_persist` 置位，连已经被旧 checkpoint 覆盖的空壳也留到下一轮，超过首次写入的 10 秒期限。`disable_gc/enable_gc` 没有调用方，读写锁互等假设排除。
+- 修复仅调整 GC 的已有分类：空壳的删除 SCN 已被持久 checkpoint 覆盖时，进入 `NEED_GC_IMMEDIATELY`；其余仍等待 MDS 持久化和 checkpoint。继续使用 `gc_tablets` / `remove_tablet` 的对象身份校验，不绕过落盘清理，也不调整查询超时。CREATE replay 原本就跳过该 checkpoint 以前的记录，新 incarnation 的 CREATE 使用其后的日志 SCN。
+- 测试版 `seekdb-gc-shell-probe-v10`，构建 `/tmp/owned-layout-gc-shell-native-build1.log` 通过；原四场景命令 `/tmp/owned-layout-shared-flush10.log` 全部通过，含两处 rollback、两处 crash、强制 redo、物理创建提交身份和最终重启。实例 `namespace_fork_PROTOTYPE_shared_transaction_n6e1yqqj` 的日志确认 3 个空壳走 `need_gc=2`，并存在其他 tablet 正在 CREATE 的记录。
+- 新的原生门禁从 shared_transaction 继续运行，`/tmp/owned-layout-four-gates-v11-resume.log` 已通过全部剩余项目，包括普通故障集、提交身份恢复和原连续四场景；不能把这个尾段写成重跑了全部前缀。
+- 撤除测试 hook 后，生产编译 `/tmp/owned-layout-gc-shell-production-build1.log` 通过；产物 `seekdb-gc-shell-v12`。本次修复的结构审查核对了 replay checkpoint、空壳持久化、已有立即回收阶段及最终对象身份校验。
+
+### 原生目录保留用例迁移（进行中）
+
+- `run_layout_retention_probe.py` 改为原生读写真正的 `__all_table_history` / `__all_column_history`，F 后实际删除旧逻辑历史行并插入新定义，避免只追加 V 而没有验证 MVCC 保留。保留实际 mini/minor、崩溃重启、持久进度恢复、读者接手和释放后的 MVCC 水位断言。
+- 首轮 v11 通过原生历史读取及 mini/minor；第二轮失败于旧夹具删除了全部 freeze 行。旧布局 KV 的特殊合并分支不需要普通 freeze 列表，原生 schema tablet 的 minor 需要。已改成真实状态：有后续 freeze 行，但本地 persisted broadcast 仍停在旧 F；失败现场与日志 `/tmp/owned-layout-native-retention11.log` 保留，修正后验证待完成。
+- 四件套已移除已删除模块的历史正文发布/引用 GC hook 和调用；对应行为由原生目录保留、MDS 安装、SSTable 自带描述、混合重写和备库 SSTable 回放用例承接。原脚本及失败证据仍保留在历史提交中。默认 full 入口尚未重新执行，不声称通过。
+- 物理生命周期审计仍未闭合：当前空壳候选判断检查 weak horizon，物理保留集合含当前目录与活跃视图；需实测“F 尚未完成、Namespace 已删除、随后才打开 F 原生视图”的窗口。候选方案是让 schema tablet 的整体删除也遵守相同持久 F / 活跃读者边界，避免另建历史正文表或持久引用状态；尚未以此替代动态证明。
