@@ -1,8 +1,8 @@
 # Namespace 原生 schema 目录
 
-状态：实施中；基线 `42d56a8ad`；原生读取和物化进展代码已提交并推送 `908aa69b7`。表/列原生写入代码已提交 `4d5f310a2`。本文记录本轮完整目标和验证证据，未勾选项不表示完成。
+状态：本轮完整表定义原生读写目标已完成。基线 `42d56a8ad`；最终代码提交 `891f92f2d` 已推送 `codex/namespace-worker-proxy-v20`，未创建 PR。完成条件及证据逐项见文末“最终验收审计”。
 
-最新进度：完整定义装载已提交 `72a71854d`；简单定义全量/增量刷新已提交 `7c976ece1`；版本历史、最新版本、原始创建版本查询已提交 `7e7c2d73f`；核心定义读取已提交 `b9b7f77ee`；当前版本和索引列表已提交 `77d3ae27b`；名称、辅助表及 DDL 发布定义读取已提交 `4c517d04d`。mock FK 父表定义装载也已接入，通过冷读取、生产 DDL/重启和 Namespace 主备验证。部分字段及表/列更新已提交并推送 `9829966a8`。表/列删除已提交并推送 `993133499`；约束完整写入已提交并推送 `bb5b619d7`。外键及占位父表完整写入已通过冷读取、生产 DDL/重启及主备回放/提升验证。分区完整写入已提交并推送 `96f9fcb11`。视图列和原始创建版本的原生写入已通过生产 DDL/重启和主备验证，同时修复后台视图任务跨 Namespace 混用服务及去重键的问题；trigger 完整定义读写已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；DDL 操作流读写也已接入并通过冷事务、生产 DDL/重启及主备回放/提升验证；依赖元数据读写已通过冷事务、生产 DDL/重启及主备回放/提升验证；最终入口审计已发现一致性检查和版本号同步等残留，完整目标仍未完成；下文各阶段的“待接入”描述按时间记录，不代表最新状态。
+当前结论：完整/简单表定义装载、历史及名称/关系查询、DDL 当前表/history/索引写入、依赖及操作流、schema 水位和正常 core 单元格式写入均已接入原生目录。冷事务、生产 DDL、父子隔离、崩溃恢复及主备回放/提升验证通过。下文保留各阶段的实际过程和失败证据，其中“待接入”“实施中”描述仅表示当时状态；最终结论以本节及文末验收审计为准。
 
 ## 目标与边界
 
@@ -16,12 +16,12 @@
 
 - [x] 原生访问支持 schema 内表实际使用的标量、字符、时间与 LOB 存储格式；复用原有存储实现。
 - [x] Namespace 目录读上下文：同一事务视图、显式物理来源与继承快照上限、正确释放目录与物理访问保护；冷读取及借用事务定向验证通过。
-- [ ] 写入使用所属 Namespace 物理 tablet；物化、DDL 事务借用和提交保护闭合。
-- [ ] 表、列、分区、索引/辅助表关系、约束、外键等完整定义的当前表/history 写入接入。
-- [ ] SchemaService 对应装载、历史选择及 DDL 内部回读接入；避免表/列/分区拼接不同视图。
-- [ ] SCN 可见性与 schema_version 选择分别表达；旧视图有明确持有者和保留保护。
-- [ ] 无 Namespace runtime 的冷读取、父子 DDL 隔离、物化、并发、回滚、重启及备库验证。
-- [ ] 失败用例与定向验证加入四件套；编译生产版本；提交并推送分支，不创建 PR。
+- [x] 写入使用所属 Namespace 物理 tablet；物化、DDL 事务借用和提交保护闭合。
+- [x] 表、列、分区、索引/辅助表关系、约束、外键等完整定义的当前表/history 写入接入。
+- [x] SchemaService 对应装载、历史选择及 DDL 内部回读接入；避免表/列/分区拼接不同视图。
+- [x] SCN 可见性与 schema_version 选择分别表达；旧视图有明确持有者和保留保护。
+- [x] 无 Namespace runtime 的冷读取、父子 DDL 隔离、物化、并发、回滚、重启及备库验证。
+- [x] 失败用例与定向验证加入四件套；编译生产版本；提交并推送分支，不创建 PR。
 
 ## 已核对的实现约束
 
@@ -436,3 +436,36 @@
 - `core-writes-production-build1.log` 的无测试钩子生产编译通过；`core-writes-production-ddl1.log` 退出 0，实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_vxole4wg`，包含原 core 版本在崩溃恢复后的逐字段验证。
 - 生产 Namespace 主备回归退出 0（181.52 秒），结果见 `gate-results/native-schema-catalog/native-core-writes-standby/results.json`。`native_catalog_core_metadata_replay` 验证 core 表/列与 history 副本回放，提升后再次核对相同版本和定义；原有物化/LOB、DDL 刷新、父 TRUNCATE/DROP、删除准入及提升后再次 fork 均通过。
 - 已核对四件套入口：`native_schema_catalog_probe.py` 的 plain 自动覆盖新增冷 core 写入；`native_schema_catalog_ddl_probe.py` 覆盖生产 DDL/重启；`run_standby_suite.py --case namespace_fork_local` 调用扩展的 `standby_namespace_follow.py`，覆盖回放及提升。没有运行完整 mysqltest/sysbench，也没有将“四件套已接入”写成“四件套全部重跑”。
+
+
+## 最终验收审计（2026-10-13）
+
+按本文原始“目标与边界”和完成清单核对现有代码及运行证据。此结论覆盖完整表定义的持久读写接入，既定后续范围保持不变。
+
+| 完成条件 | 当前实现证据 | 验证证据与结论 |
+| --- | --- | --- |
+| 保留 Namespace 当前表/history 为权威数据 | `NativeSchemaCatalog` 按现有内表 ID 读写；普通定义仍在 table/column/partition/constraint/FK/trigger 等原表；core 保留原有单元表示和 history 镜像 | 生产脚本逐字段与内表 SQL、FORCE INDEX、SHOW CREATE 对照；最新生产 DDL/重启和主备均通过。没有把 schema 搬到实例 KV |
+| 固定内表结构和逻辑 tablet ID 不依赖 SchemaService | `generate_inner_table_schema.py` 从原定义生成 `fixed_inner_table_creator` 和索引归属，包含 core/sys/LOB/索引；`TableState::prepare` 用固定结构并绑定物理目标 | plain/part/part2/fk/mock/LOB 等冷用例；core 的 22 张定义、284 列与固定结构/SQL 核对。新增 core 写入仍保持全部 runtime 槽位为空 |
+| 显式 Namespace、事务、受保护视图 | `NativeSchemaCatalog(namespace_id, ...)`；`with_ddl_transaction` 从显式 owner 的 target_namespace 绑定；`with_read_client` 的旧 SCN 必须找到仍被持有的目录视图；`TabletAccess` 在上层解析物理来源及继承 cap | 冷读取、旧 history、父子独立修改、父 TRUNCATE/DROP 后孩子读取、standby 可见性与请求截止时间用例通过。没有 Namespace 1 或失败后全局回退 |
+| 原生基础访问支持实际内表格式 | NativeInnerTable 支持整数、字符、时间与真实 LONGTEXT/LOB，更新复用存储 locator 协议；core 输入对 X'...' 明确解码 | typed/indexed/lob 的中文、unsigned、NULL/空串、90KB/120KB LONGTEXT、保留未改 LOB、提交/回滚用例通过；core cold 增补二进制/中文/NULL/空串 |
+| DDL owner、物化和资源释放闭合 | `with_ddl_transaction` 借用 native owner 并 `retain_until_end`；`ObMySQLTransaction::end` 结束事务后释放参与者；物化 CREATE MDS、布局及来源映射在原生目录事务中提交；NativeInnerTable 不负责 Namespace 路由 | borrowed、cold-materialization、LOB 和先前原生内表崩溃测试通过；生产 DDL/重启和主备物化/LOB 回放通过。游标未关闭时重入/结束被拒绝，失败由 owner 回滚 |
+| 完整定义当前表/history 及真实索引写入 | `ObTableSqlService`、`ObPartSqlHelper`、`ObTriggerSqlService`、`ObDependencyInfo` 调用原生目录；`mutate` 在同一 owner 维护内表索引；SchemaCatalogFields 复用字段生成 | 表/列、主/二级分区及模板、约束/列关系、FK/mock、视图、trigger、依赖的生产用例与 SQL/索引对照通过，包含更新、删除、回收站、重建和失败 DDL |
+| 表装载/历史/DDL 回读同一视图 | `ObSchemaServiceSQLImpl` 对应正常入口调用 `with_schema_catalog`；完整/简单定义及各组成部分共享操作；DDL 发布使用同一 owner 原生回读 | current 与 history、旧版本删除、辅助索引候选复查、FK 多关系、多层视图依赖、自写可见及独立读隔离用例通过；当前源码核对 bootstrap helper 调用边界 |
+| SCN 与逻辑 schema_version 分离 | 操作固定 MVCC/继承视图，history 在该视图中选择目标 V；schema 水位读取同一视图，推进锁定最新值；DDL 操作及最终版本发布顺序保留 | versions 41 条历史、最近 16 条、删除标记、最小/原始版本验证；watermark 自写/回滚/提交/旧视图/旧事务不能降版本验证通过 |
+| 正常 core 写入完整接入 | `with_core_table` 显式使用原生 backend；core 表/列历史和普通 history 镜像共用 SQL DDL owner；core 列批量只加载一次；初始化保留既有入口 | `core-writes-probe2.log`、`core-writes-production-ddl1.log` 和 `native-core-writes-standby/results.json` 均通过；实际系统表注释/列默认值 DDL、旧 owner 当前 key、重启前后原版本和备库提升后定义一致 |
+| 用例纳入四件套、生产编译、提交推送 | 既有 native probe、DDL probe、standby suite/follow 被四件套调用；生产源码无测试注入；`891f92f2d` 已推送指定分支 | 最终生产编译 exit 0；最终生产 DDL exit 0；最终 Namespace 主备 exit 0（181.52 秒）。未运行完整 mysqltest/sysbench；不声称四件套整体已重新运行；未创建 PR |
+
+### 最终入口边界
+
+- `ObLoadInnerTableSchemaExecutor` 的加载/初始版本写入由 `ObBootstrap::load_all_schema` 调用，保留初次目录建立前的初始化流程。
+- `ObTableSqlService` 正常 core 定义写入已接原生 backend；非 core 正常写入原已接入。保留的 `exec_dml` 正常调用用于自增计数等独立元数据；统计删除不属于表定义目录。没有按默认配置关闭系统表 DDL 来跳过 core 验收。
+- `ObSchemaServiceSQLImpl` 表定义的旧 SQL helper 由明确 bootstrap 分支进入；`fetch_trigger_list` 仍用于非表的 user schema 装载。面向用户的虚拟表/SHOW 查询仍可使用 SQL，未要求把所有客户端内表 SQL 一并替换。
+- 完整固定内表布局仍来自代码。本轮测试系统表属性和默认值的既有 DDL 路径；没有增加运行时任意变更内表物理列布局的能力，也没有增加升级兼容机制。
+
+### 保留的后续范围与已知 TODO
+
+1. database、user、权限等非表 schema 类型的全面原生化；合并/checksum 的后续接入，以及 SSTable 持有完整物理描述的方案，仍按原定后续范围处理。
+2. `schema_history` 备库场景曾出现核心 tablet minor 多版本行 Last 标记异常：保留上文和 `native-versions-standby/minor-core-error.txt` 的定位线索；尚未证明来源或修复，本轮合并完成不能替代该异常的定向验证。
+3. 未选择默认数据库时的缺失 FK 父表解析问题：保留上文 TODO；回归明确执行 USE，未宣称修复解析器。
+
+以上两项已知缺陷继续跟踪；本轮交付是完整表定义原生目录接入，不代表 Namespace/fork 的全部历史 TODO 均已清零。
