@@ -287,6 +287,17 @@ def read_operation_rows(query, lower, upper, index=False):
                  f'WHERE schema_version>{lower} AND schema_version<={upper} ORDER BY schema_version')
 
 
+def schema_watermarks(query):
+    rows = query("SELECT column_name,CAST(column_value AS SIGNED) FROM oceanbase.__all_core_table "
+                 "WHERE table_name='__all_global_stat' AND column_name IN "
+                 "('core_schema_version','sys_schema_version','normal_schema_version','baseline_schema_version')")
+    assert len(rows) == 4, rows
+    versions = dict(rows)
+    assert 0 < versions['core_schema_version'] <= versions['sys_schema_version'] <= versions['normal_schema_version'], versions
+    assert versions['baseline_schema_version'] >= -1, versions
+    return versions
+
+
 def exercise_operations(query):
     lower = query('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation')[0][0]
     query('CREATE DATABASE native_operations')
@@ -301,12 +312,15 @@ def exercise_operations(query):
     # OB_DDL_END_SIGN: each completed DDL has a final record in its owner.
     assert last_type == 1503, (upper, last_type)
     before = read_operation_rows(query, lower, upper)
+    versions = schema_watermarks(query)
+    assert versions['normal_schema_version'] == upper, (versions, upper)
     try:
         query('ALTER TABLE native_operations.t ADD v INT')
         raise AssertionError('duplicate column unexpectedly accepted')
     except pymysql.MySQLError as error:
         assert error.args[0] == 1060, error.args
     assert query('SELECT MAX(schema_version) FROM oceanbase.__all_ddl_operation') == ((upper,),)
+    assert schema_watermarks(query) == versions
     assert sum(row[1] == 1503 for row in before) >= 6, before
     return lower, upper, before
 
@@ -317,6 +331,7 @@ def verify_operations(query, evidence):
     current = read_operation_rows(query, lower, upper)
     indexed = read_operation_rows(query, lower, upper, True)
     assert current == indexed == expected, (current, indexed, expected)
+    assert schema_watermarks(query)['normal_schema_version'] >= upper
 
 
 def prepare_triggers(query):
@@ -455,13 +470,21 @@ def exercise_dependencies(query, prepared=False):
     query('CREATE TABLE native_dependency.t(id INT PRIMARY KEY,v BIGINT)')
     query('INSERT INTO native_dependency.t VALUES(1,9)')
     new_t = dependency_id(query, 't')
+    # Capture the invalidation boundary before reading/recompiling the views.
+    # Filling a view's column metadata can subsequently advance table.schema_version
+    # without invalidating its dependents again.
+    versions = dict(query('SELECT table_id,schema_version FROM oceanbase.__all_table '
+                          f'WHERE table_id IN ({new_v1},{new_t})'))
     deadline = time.monotonic() + 30
     while True:
         assert query('SELECT * FROM native_dependency.v2') == ((1, 19),)
         rows = dependency_rows(query, [new_v1, v2])
-        if any(row[1] == new_v1 and row[6] == new_t for row in rows):
+        # Both background updates must finish before preserving exact evidence.
+        # v1 -> new_t can finish while v2 still references v1's old version.
+        expected = {(new_v1, new_t), (v2, new_v1)}
+        if {(row[1], row[6]) for row in rows} == expected and all(row[7] >= versions[row[6]] for row in rows):
             break
-        assert time.monotonic() < deadline, ('dependency reference not replaced', rows)
+        assert time.monotonic() < deadline, ('dependency chain not refreshed', rows, expected)
         time.sleep(.05)
     query('CREATE VIEW native_dependency.disposable AS SELECT * FROM native_dependency.v2')
     disposable = dependency_id(query, 'disposable')
@@ -474,7 +497,8 @@ def exercise_dependencies(query, prepared=False):
 def verify_dependencies(query, evidence):
     ids, rows, deleted = evidence
     assert query('SELECT * FROM native_dependency.v2') == ((1, 19),)
-    assert dependency_rows(query, ids) == rows
+    actual = dependency_rows(query, ids)
+    assert actual == rows, (actual, rows)
     assert not dependency_rows(query, deleted)
 
 

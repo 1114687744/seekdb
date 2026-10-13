@@ -395,3 +395,26 @@
 - `request-deadline-production-build1.log` 移除全部本轮钩子后的生产编译通过；`consistency-deadline-ddl1.log` 通过实际 DDL、current/history/索引、父子隔离及崩溃重启验证。
 - 原 Namespace 主备场景复跑通过（173.82 秒），结果为 `native-consistency-deadline-production/results.json` exit_code=0。生产新增请求用例首次查询返回 1、真正过期请求被拒绝；约束、外键、分区、视图、trigger、依赖、mock 父表、父 TRUNCATE/DROP、删除准入、提升后执行/写入及再次 fork 均通过。
 - 本阶段完成一致性检查和级联版本同步接入，并修复 schema 刷新读取过期 worker 截止时间。全量 mysqltest/sysbench 未运行。剩余 schema 水位读写与 core/bootstrap 最终调用点审计仍属于完整目标，未标记完成。
+
+
+### Schema 版本水位原生接入（实施中）
+
+- 一致性检查、级联版本同步与请求截止时间修复已提交并推送 `75d0de6b8`。
+- 原生目录直接读取现有 core 单元格式的四个版本水位（core/sys/normal/baseline），同一次读取和可读性判断使用同一受保护 SCN。SchemaService 的历史读取显式传递其受保护视图；无历史要求的 ObGlobalStatProxy 版本接口也接入原生读取。
+- 版本推进仍在原 DDL owner 中，读取并锁住既有 singleton 的全部单元，顺序沿用旧 ObGlobalStatProxy 的 FOR UPDATE，随后比较锁定的最新整数版本。`ObDDLSQLTransaction::end` 的 epoch、END_SIGN、水位、发布和提交顺序不变；初次目录建立前按 Namespace lifecycle 保留初始化 SQL。
+- 没有新增表、版本记录或长生命周期状态。冻结/GC 等其他全局统计字段尚未借此迁移；本阶段仅接入四个 schema 版本字段。
+- 冷测试新增 `watermark`：四个水位与 SQL 对照、自身写入、独立读、全部回滚、提交、旧目录视图及旧事务不能覆盖新提交值；服务槽位须始终为空。生产操作流测试增加水位与最终 END_SIGN 的一致性、失败 DDL 不推进水位以及重启/主备复查。这些测试已加入既有四件套脚本，尚未完成编译与运行。
+
+- `watermark-build1.log` 首轮编译发现 lambda 中误用 `OB_SUCC(rc)`：本仓库该宏会赋值外层 ret，外层是初始化中的 const ret，编译拒绝。已改为直接比较 rc，未以修改宏或取消 const 绕过；继续编译验证。
+
+- `watermark-build2.log` 编译通过；`watermark-probe1.log` 的 typed/plain/watermark 三个冷用例通过，对应实例 `namespace_fork_PROTOTYPE_native_schema_catalog_835yg0wt`。水位初值与 SQL 对照一致，`WATERMARK stage=locked_latest ret=0` 验证全部回滚、提交、旧快照保留与旧事务不能降低新提交值，服务槽位均为 0。
+- `watermark-ddl1.log` 实际 DDL/父子隔离/崩溃重启通过，水位随 END_SIGN 前进，失败 DDL 不改变水位，重启后四项版本及视图/trigger/FK 行为正确。测试钩子已移除，继续生产编译及主备验证。
+
+- `watermark-production-build1.log` 移除钩子后的编译通过。`watermark-production-ddl1.log` 暴露依赖测试的等待缺口：用例仅等待 v1 指向重建表，捕获证据时 v2 仍指向 v1 的旧版本；后台随后正常更新 v2 的依赖版本/时间，导致后续逐字段对照失败。原始实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_x__8pxu_` 中，v2 的 ref_timestamp 从 1791853876312968 更新为 v1 已提交的失效版本 1791853876482568，后者有实际 DDL 操作及表定义日志。
+- 第一次加强等待条件的 `watermark-production-ddl2.log` 仍失败：要求 ref_timestamp 等于不断更新的当前表版本过强。后台填充 view 列可继续推进 table.schema_version，而不再次使依赖失效。修正为在触发视图重编译前记录这次 DDL 的失效版本，等待两条依赖的对象 ID 与引用版本均覆盖该边界；仍保留后续的完整行、主表/索引、重启和主备对照，没有删除版本断言。
+- `native-watermark-standby/results.json` 的首轮主备在请求截止时间测试返回 0（未超时）。证明等待主库通用 sync_scn 不足以覆盖刚提交 DDL：三个定向样本中两次落后目录行 ORA_ROWSCN，差值分别为 141088040 和 80784096。测试改用刚写入 history 行的实际 ORA_ROWSCN 作为目标，再等待备库 readable_scn；`watermark-deadline-scn1.log` 首次查询返回 1，当前请求真正过期仍返回 4012。这是测试同步条件修正，未因此放宽生产读取边界。
+- 新等待条件正在进行生产 DDL 与主备复跑，尚未记为全部通过。
+
+- `watermark-production-ddl3.log` 修正两级依赖等待边界后退出 0，完整 DDL/索引/父子隔离/崩溃重启与重启后视图、触发器、外键验证通过；实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_abhrenif`。
+- 生产 Namespace 主备复跑退出 0（170.94 秒）：`native-watermark-standby2/results.json`。实际目录行提交 SCN 等待、请求超时、各类目录和版本水位回放、删除准入、父历史来源、提升后装载/执行/写入及再次 fork 均通过。生产源文件已确认无测试钩子，未运行完整 mysqltest/sysbench。
+- 本阶段水位读写验证完成。最终边界审计仍须核对 core 单元格式写入的调用范围；不能把 bootstrap/default 配置下通过等同于任意内表结构 DDL 都已原生化。普通数据库、用户、权限等非表 schema 类型和合并/checksum 接入仍属于既定后续范围。

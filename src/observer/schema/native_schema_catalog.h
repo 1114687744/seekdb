@@ -87,6 +87,18 @@ public:
   // is compiled; the returned persisted definitions exclude that fixed table.
   int get_core_tables(int64_t schema_version,
       common::ObIArray<share::schema::ObTableSchema> &);
+  struct SchemaWatermarks {
+    int64_t core = -1;
+    int64_t system = -1;
+    int64_t normal = -1;
+    int64_t baseline = -1;
+  };
+  enum class SchemaWatermark { CORE, SYSTEM, NORMAL, BASELINE };
+  // The existing singleton __all_global_stat row lives in the core cell table.
+  // Read all versions in one view; advances compare against the locked latest
+  // value and join this operation's owner. They do not publish or commit DDL.
+  int get_schema_watermarks(SchemaWatermarks &);
+  int advance_schema_watermark(SchemaWatermark, int64_t version);
   // Append simple table definitions and their partition/name relationships.
   // A null selection reads all tables (except the separately loaded core table);
   // an explicit empty selection reads none. All components share this view.

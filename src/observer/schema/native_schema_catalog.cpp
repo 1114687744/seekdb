@@ -1209,6 +1209,110 @@ int NativeSchemaCatalog::get_simple_tables(int64_t version, ObIAllocator &alloca
   return ret;
 }
 
+int NativeSchemaCatalog::get_schema_watermarks(SchemaWatermarks &out)
+{
+  out = SchemaWatermarks{};
+  int64_t rows = 0;
+  const int ret = read_core_rows(*this, "__all_global_stat", [&](const share::ObCoreTableProxy::Row &row) {
+    int rc = ++rows == 1 ? OB_SUCCESS : OB_ERR_UNEXPECTED;
+    if (rc == OB_SUCCESS) { rc = row.get_int("core_schema_version", out.core); }
+    if (rc == OB_SUCCESS) { rc = row.get_int("sys_schema_version", out.system); }
+    if (rc == OB_SUCCESS) { rc = row.get_int("normal_schema_version", out.normal); }
+    if (rc == OB_SUCCESS) { rc = row.get_int("baseline_schema_version", out.baseline); }
+    return rc;
+  });
+  return ret != OB_SUCCESS ? ret : rows == 0 ? OB_EMPTY_RESULT : OB_SUCCESS;
+}
+
+int NativeSchemaCatalog::advance_schema_watermark(SchemaWatermark kind, int64_t version)
+{
+  const char *name = nullptr;
+  switch (kind) {
+    case SchemaWatermark::CORE: name = "core_schema_version"; break;
+    case SchemaWatermark::SYSTEM: name = "sys_schema_version"; break;
+    case SchemaWatermark::NORMAL: name = "normal_schema_version"; break;
+    case SchemaWatermark::BASELINE: name = "baseline_schema_version"; break;
+    default: return OB_INVALID_ARGUMENT;
+  }
+  if (kind == SchemaWatermark::BASELINE ? version < -1 : version <= 0) { return OB_INVALID_ARGUMENT; }
+  TableState *target = nullptr;
+  int ret = prepare_write(OB_ALL_CORE_TABLE_TID, target);
+  ObObj prefix;
+  prefix.set_varchar("__all_global_stat");
+  prefix.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+  ObArenaAllocator allocator(ObMemAttr("SchemaWatermark"));
+  ObSEArray<ObRowkey, 16> keys;
+  Cursor cursor;
+  const ObNewRow *row = nullptr;
+  int64_t logical_row = OB_INVALID_INDEX;
+  if (OB_SUCC(ret)) { ret = open_prefix(OB_ALL_CORE_TABLE_TID, ObRowkey(&prefix, 1), cursor); }
+  while (OB_SUCC(ret) && OB_SUCC(ret = cursor.next(row))) {
+    // Fixed core-table key: table_name, row_id, column_name. Schema watermarks
+    // only change values after bootstrap; the singleton's key set is stable.
+    ObRowkey key;
+    const int64_t id = row->cells_[1].get_int();
+    if (logical_row != OB_INVALID_INDEX && logical_row != id) { ret = OB_ERR_UNEXPECTED; }
+    else if (OB_FAIL(ObRowkey(row->cells_, 3).deep_copy(key, allocator))) {
+    } else {
+      logical_row = id;
+      ret = keys.push_back(key);
+    }
+  }
+  if (ret == OB_ITER_END) { ret = keys.empty() ? OB_EMPTY_RESULT : OB_SUCCESS; }
+  const int closed = cursor.close();
+  if (OB_SUCC(ret)) { ret = closed; }
+  int64_t value_position = -1;
+  if (OB_SUCC(ret)) {
+    const auto *column = target->schema.get_column_schema("column_value");
+    if (column == nullptr) { ret = OB_ERR_UNEXPECTED; }
+    for (int64_t i = 0; OB_SUCC(ret) && i < target->columns.count(); ++i) {
+      if (target->columns.at(i).col_id_ == column->get_column_id()) { value_position = i; break; }
+    }
+    if (OB_SUCC(ret) && value_position < 0) { ret = OB_ERR_UNEXPECTED; }
+  }
+  int64_t previous = 0;
+  bool found = false;
+  // Preserve ObGlobalStatProxy's FOR UPDATE order across all cells. Other
+  // metadata writers still take these locks, and DDL takes its epoch first.
+  for (int64_t i = 0; OB_SUCC(ret) && i < keys.count(); ++i) {
+    ObNewRow current;
+    ret = state_->native.get_for_update(state_->transaction, target->table, keys.at(i), allocator, current);
+    if (OB_SUCC(ret) && keys.at(i).get_obj_ptr()[2].get_string() == name) {
+      const auto &value = current.cells_[value_position];
+      share::ObCoreTableCell cell;
+      cell.name_ = ObString::make_string(name);
+      if (value.is_null()) { ret = OB_ERR_NULL_VALUE; }
+      else { cell.value_ = value.get_string(); }
+      ObSEArray<share::ObCoreTableCell, 1> cells;
+      share::ObCoreTableCell stored;
+      share::ObCoreTableProxy::Row decoded;
+      if (OB_SUCC(ret)) { ret = stored.assign(allocator, cell); }
+      if (OB_SUCC(ret)) { ret = cells.push_back(stored); }
+      if (OB_SUCC(ret)) { ret = decoded.init(logical_row, allocator, cells); }
+      if (OB_SUCC(ret)) { ret = decoded.get_int(name, previous); }
+      if (OB_SUCC(ret)) { found = true; }
+    }
+  }
+  if (OB_SUCC(ret) && !found) { ret = OB_ERR_NULL_VALUE; }
+  if (OB_SUCC(ret) && version > previous) {
+    ObSqlString value;
+    bool matched = false;
+    if (OB_FAIL(value.append_fmt("%ld", version))) {
+    } else {
+      ret = update_fields(OB_ALL_CORE_TABLE_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_name", "__all_global_stat");
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("row_id", logical_row); }
+        if (rc == OB_SUCCESS) { rc = fields.add_pk_column("column_name", name); }
+        if (rc == OB_SUCCESS) { rc = fields.add_column("column_value", value.string()); }
+        if (rc == OB_SUCCESS) { rc = fields.add_gmt_modified(); }
+        return rc;
+      }, matched);
+      if (OB_SUCC(ret) && !matched) { ret = OB_ERR_UNEXPECTED; }
+    }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::get_core_tables(int64_t version, ObIArray<ObTableSchema> &out)
 {
   if (version <= 0) { return OB_INVALID_ARGUMENT; }

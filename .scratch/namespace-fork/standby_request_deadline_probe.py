@@ -22,13 +22,16 @@ def sql(connection, statement):
         return cursor.fetchall()
 
 
-with connect(42035) as primary, connect(42036) as standby, \
+with connect(42036) as standby, \
         connect(42035, 'replica_seed') as writer, connect(42036, 'replica_seed') as reader:
     sql(reader, 'SET ob_query_timeout=10000000')
     sql(reader, 'SELECT COUNT(*) FROM replica_ns.t')
     name = 'request_deadline_' + str(time.time_ns())
     sql(writer, f'CREATE TABLE replica_ns.{name}(id INT PRIMARY KEY,v INT)')
-    target = int(sql(primary, 'SELECT sync_scn FROM __all_virtual_server_stat')[0][0])
+    # The primary's general decided SCN can lag this just-committed DDL.
+    # Wait for the actual catalog row's commit SCN on the standby instead.
+    target = int(sql(writer, 'SELECT ORA_ROWSCN FROM oceanbase.__all_table_history '
+                     f"WHERE table_name='{name}' AND is_deleted=0")[0][0])
     deadline = time.monotonic() + 30
     while int(sql(standby, 'SELECT readable_scn FROM __all_virtual_server_stat')[0][0]) < target:
         assert time.monotonic() < deadline, 'standby readable SCN did not reach target'
@@ -54,4 +57,5 @@ with connect(42035) as primary, connect(42036) as standby, \
     sql(writer, f'DROP TABLE replica_ns.{name}')
     print(json.dumps(dict(case='request_deadline_before_schema_refresh',
                           query_s=query_seconds, result=result,
+                          catalog_commit_scn=target,
                           expired_current_request_rejected=True)), flush=True)

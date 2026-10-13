@@ -21,6 +21,8 @@
 #include "share/inner_table/ob_inner_table_schema_constants.h"
 #include "share/ob_share_util.h" // ObShareUtil::get_rs_default_timeout_ctx
 #include "common/ob_timeout_ctx.h" // ObTimeoutCtx
+#include "observer/schema/native_schema_catalog.h"
+#include "observer/namespace_worker_protocol_prototype.h"
 
 namespace oceanbase
 {
@@ -28,6 +30,53 @@ using namespace common;
 using namespace common::sqlclient;
 namespace share
 {
+
+namespace {
+int schema_watermark_bootstrap(ObCoreTableProxy &table, bool &bootstrap)
+{
+  bootstrap = false;
+  auto *client = table.get_sql_client();
+  auto *lifecycle = client == nullptr ? nullptr
+      : observer::namespace_worker_prototype::namespace_schema_lifecycle(client->target_namespace());
+  if (lifecycle == nullptr) { return OB_NOT_INIT; }
+  bootstrap = lifecycle->is_bootstrapping();
+  return OB_SUCCESS;
+}
+
+int advance_native_schema_watermark(ObCoreTableProxy &table,
+    observer::NativeSchemaCatalog::SchemaWatermark kind, int64_t value, bool &bootstrap)
+{
+  int ret = schema_watermark_bootstrap(table, bootstrap);
+  if (OB_SUCC(ret) && !bootstrap) {
+    ObTimeoutCtx ctx;
+    if (OB_FAIL(ObShareUtil::get_rs_default_timeout_ctx(ctx))) {
+    } else {
+      ret = observer::NativeSchemaCatalog::with_ddl_transaction(*table.get_sql_client(),
+          ctx.get_abs_timeout(), [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.advance_schema_watermark(kind, value);
+      });
+    }
+  }
+  return ret;
+}
+
+int read_native_schema_watermarks(ObCoreTableProxy &table,
+    observer::NativeSchemaCatalog::SchemaWatermarks &out, bool &bootstrap)
+{
+  int ret = schema_watermark_bootstrap(table, bootstrap);
+  if (OB_SUCC(ret) && !bootstrap) {
+    ObTimeoutCtx ctx;
+    if (OB_FAIL(ObShareUtil::get_rs_default_timeout_ctx(ctx))) {
+    } else {
+      ret = observer::NativeSchemaCatalog::with_read_client(*table.get_sql_client(),
+          ctx.get_abs_timeout(), OB_INVALID_VERSION, [&](observer::NativeSchemaCatalog &catalog) {
+        return catalog.get_schema_watermarks(out);
+      });
+    }
+  }
+  return ret;
+}
+} // namespace
 
 int ObGlobalStatProxy::set_init_value(
     const int64_t core_schema_version,
@@ -74,10 +123,13 @@ int ObGlobalStatProxy::set_init_value(
 int ObGlobalStatProxy::set_core_schema_version(const int64_t core_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
   if (!is_valid() || core_schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid(), K(core_schema_version));
-  } else {
+  } else if (OB_FAIL(advance_native_schema_watermark(core_table_,
+      observer::NativeSchemaCatalog::SchemaWatermark::CORE, core_schema_version, bootstrap))) {
+  } else if (bootstrap) {
     bool is_incremental = true;
     SET_ITEM("core_schema_version", core_schema_version, is_incremental);
   }
@@ -87,10 +139,13 @@ int ObGlobalStatProxy::set_core_schema_version(const int64_t core_schema_version
 int ObGlobalStatProxy::set_sys_schema_version(const int64_t sys_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
   if (!is_valid() || sys_schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid(), K(sys_schema_version));
-  } else {
+  } else if (OB_FAIL(advance_native_schema_watermark(core_table_,
+      observer::NativeSchemaCatalog::SchemaWatermark::SYSTEM, sys_schema_version, bootstrap))) {
+  } else if (bootstrap) {
     bool is_incremental = true;
     SET_ITEM("sys_schema_version", sys_schema_version, is_incremental);
   }
@@ -100,10 +155,13 @@ int ObGlobalStatProxy::set_sys_schema_version(const int64_t sys_schema_version)
 int ObGlobalStatProxy::set_normal_schema_version(const int64_t normal_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
   if (!is_valid() || normal_schema_version <= 0) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid(), K(normal_schema_version));
-  } else {
+  } else if (OB_FAIL(advance_native_schema_watermark(core_table_,
+      observer::NativeSchemaCatalog::SchemaWatermark::NORMAL, normal_schema_version, bootstrap))) {
+  } else if (bootstrap) {
     bool is_incremental = true;
     SET_ITEM("normal_schema_version", normal_schema_version, is_incremental);
   }
@@ -113,10 +171,13 @@ int ObGlobalStatProxy::set_normal_schema_version(const int64_t normal_schema_ver
 int ObGlobalStatProxy::set_baseline_schema_version(const int64_t baseline_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
   if (!is_valid() || baseline_schema_version < -1) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid(), K(baseline_schema_version));
-  } else {
+  } else if (OB_FAIL(advance_native_schema_watermark(core_table_,
+      observer::NativeSchemaCatalog::SchemaWatermark::BASELINE, baseline_schema_version, bootstrap))) {
+  } else if (bootstrap) {
     bool is_incremental = true;
     SET_ITEM("baseline_schema_version", baseline_schema_version, is_incremental);
   }
@@ -177,11 +238,16 @@ int ObGlobalStatProxy::get_snapshot_info(int64_t &snapshot_gc_scn,
 int ObGlobalStatProxy::get_core_schema_version(int64_t &core_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
+  observer::NativeSchemaCatalog::SchemaWatermarks versions;
   ObGlobalStatItem::ItemList list;
   ObGlobalStatItem core_schema_version_item(list, "core_schema_version", core_schema_version);
   if (!is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid());
+  } else if (OB_FAIL(read_native_schema_watermarks(core_table_, versions, bootstrap))) {
+  } else if (!bootstrap) {
+    core_schema_version = versions.core;
   } else if (OB_FAIL(get(list))) {
   } else {
     core_schema_version = core_schema_version_item.value_;
@@ -198,11 +264,16 @@ int ObGlobalStatProxy::get_sys_schema_version(int64_t &sys_schema_version)
 int ObGlobalStatProxy::get_normal_schema_version(int64_t &normal_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
+  observer::NativeSchemaCatalog::SchemaWatermarks versions;
   ObGlobalStatItem::ItemList list;
   ObGlobalStatItem normal_schema_version_item(list, "normal_schema_version", normal_schema_version);
   if (!is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid());
+  } else if (OB_FAIL(read_native_schema_watermarks(core_table_, versions, bootstrap))) {
+  } else if (!bootstrap) {
+    normal_schema_version = versions.normal;
   } else if (OB_FAIL(get(list))) {
   } else {
     normal_schema_version = normal_schema_version_item.value_;
@@ -214,10 +285,16 @@ int ObGlobalStatProxy::get_core_and_sys_schema_version(int64_t &core_schema_vers
     int64_t &sys_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
+  observer::NativeSchemaCatalog::SchemaWatermarks versions;
   ObGlobalStatItem::ItemList list;
   ObGlobalStatItem core_schema_version_item(list, "core_schema_version", core_schema_version);
   ObGlobalStatItem sys_schema_version_item(list, "sys_schema_version", sys_schema_version);
-  if (OB_FAIL(get(list))) {
+  if (OB_FAIL(read_native_schema_watermarks(core_table_, versions, bootstrap))) {
+  } else if (!bootstrap) {
+    core_schema_version = versions.core;
+    sys_schema_version = versions.system;
+  } else if (OB_FAIL(get(list))) {
   } else {
     core_schema_version = core_schema_version_item.value_;
     sys_schema_version = sys_schema_version_item.value_;
@@ -228,11 +305,16 @@ int ObGlobalStatProxy::get_core_and_sys_schema_version(int64_t &core_schema_vers
 int ObGlobalStatProxy::get_baseline_schema_version(int64_t &baseline_schema_version)
 {
   int ret = OB_SUCCESS;
+  bool bootstrap = false;
+  observer::NativeSchemaCatalog::SchemaWatermarks versions;
   ObGlobalStatItem::ItemList list;
   ObGlobalStatItem baseline_schema_version_item(list, "baseline_schema_version", baseline_schema_version);
   if (!is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(ret), "self valid", is_valid());
+  } else if (OB_FAIL(read_native_schema_watermarks(core_table_, versions, bootstrap))) {
+  } else if (!bootstrap) {
+    baseline_schema_version = versions.baseline;
   } else if (OB_FAIL(get(list))) {
   } else {
     baseline_schema_version = baseline_schema_version_item.value_;

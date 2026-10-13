@@ -18,6 +18,7 @@ def run(binary, selected=None):
              "e VARCHAR(100) DEFAULT '', c ENUM('a','b') DEFAULT 'b'", '', (6, 0, 0, 0, 0, 0)),
             ('indexed', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('plain', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
+            ('watermark', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('versions', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始'", '', (2, 0, 0, 0, 0, 0)),
             ('part', "id INT PRIMARY KEY, v VARCHAR(100) DEFAULT '初始', KEY ix(v), "
              "CONSTRAINT ck CHECK (id >= 0)", ' PARTITION BY HASH(id) PARTITIONS 8', (2, 8, 1, 1, 0, 0)),
@@ -144,6 +145,9 @@ def run(binary, selected=None):
                     'WHERE h.mock_fk_parent_table_id=c.mock_fk_parent_table_id '
                     f'AND h.parent_column_id=c.parent_column_id AND h.schema_version<={requested_version}) '
                     'ORDER BY c.parent_column_id')
+            if label == 'watermark':
+                watermarks = dict(experiment.sql("SELECT column_name,CAST(column_value AS SIGNED) "
+                    "FROM oceanbase.__all_core_table WHERE table_name='__all_global_stat'"))
             if label == 'plain':
                 core_self = experiment.sql("SELECT table_id, schema_version FROM oceanbase.__all_virtual_core_all_table WHERE table_name='__all_core_table'")
                 core_tables = experiment.sql('SELECT COUNT(*) FROM oceanbase.__all_virtual_core_all_table '
@@ -177,6 +181,11 @@ def run(binary, selected=None):
             if label == 'operations':
                 assert (f'NATIVE_SCHEMA_CATALOG_OPERATIONS namespace={child_id} count={operations[0]} '
                         f'latest={operations[1]} completed={completed} stage=cleaned ret=0') in trace, trace[-3000:]
+            if label == 'watermark':
+                assert (f'NATIVE_SCHEMA_CATALOG_WATERMARK_INITIAL namespace={child_id} '
+                        f"core={watermarks['core_schema_version']} system={watermarks['sys_schema_version']} "
+                        f"normal={watermarks['normal_schema_version']} baseline={watermarks['baseline_schema_version']} ret=0") in trace
+                assert (f'NATIVE_SCHEMA_CATALOG_WATERMARK namespace={child_id} stage=locked_latest ret=0') in trace, trace[-3000:]
             if label == 'typed':
                 assert f'NATIVE_SCHEMA_CATALOG_HISTORY_MATCH namespace={child_id} ret=0' in trace, trace[-3000:]
             if label == 'dependency':
@@ -239,7 +248,7 @@ def run(binary, selected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--case', action='append', choices=('dependency', 'operations', 'trigger', 'range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
+    parser.add_argument('--case', action='append', choices=('watermark', 'dependency', 'operations', 'trigger', 'range_part', 'list_part', 'typed', 'indexed', 'constraint', 'plain', 'versions', 'part', 'fk', 'mock_fk', 'mock_fk_multi', 'old_mock_fk', 'generated', 'lob', 'history', 'dropped', 'part2', 'drop_index', 'self_fk', 'drop_fk', 'old_fk'))
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     run(args.binary, args.case)

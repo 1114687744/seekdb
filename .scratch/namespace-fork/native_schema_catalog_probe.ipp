@@ -77,6 +77,73 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     });
   }
   if (ret == OB_SUCCESS && (table_rows < 1 || column_rows < expected_columns)) { ret = OB_ERR_UNEXPECTED; }
+  if (ret == OB_SUCCESS && name.find("_watermark") != std::string::npos) {
+    using Catalog = observer::NativeSchemaCatalog;
+    using Kind = Catalog::SchemaWatermark;
+    Catalog::SchemaWatermarks original;
+    ret = catalog.get_schema_watermarks(original);
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_WATERMARK_INITIAL namespace=%lu core=%ld system=%ld normal=%ld baseline=%ld ret=%d\n",
+        namespace_id, original.core, original.system, original.normal, original.baseline, ret);
+    const int64_t deadline = ObTimeUtility::current_time() + 30000000;
+    storage::NativeInnerTable native(*access, *transactions);
+    storage::NativeInnerTable::Transaction owner, earlier;
+    Catalog writer(namespace_id, *access, *transactions), stale(namespace_id, *access, *transactions);
+    auto begin = [&](storage::NativeInnerTable::Transaction &tx, Catalog &operation) {
+      int rc = native.begin(tx, deadline);
+      if (rc == OB_SUCCESS) {
+        rc = native.with_native_transaction(tx, [&](transaction::ObTxDesc &desc) { return operation.attach(desc, deadline); });
+      }
+      return rc;
+    };
+    auto end = [&](storage::NativeInnerTable::Transaction &tx, Catalog &operation, bool commit) {
+      int rc = tx.is_active() ? (commit ? native.commit(tx) : native.rollback(tx)) : OB_SUCCESS;
+      const int closed = operation.close();
+      return rc == OB_SUCCESS ? closed : rc;
+    };
+    auto verify = [&](Catalog &reader, const Catalog::SchemaWatermarks &expected) {
+      Catalog::SchemaWatermarks actual;
+      int rc = reader.get_schema_watermarks(actual);
+      if (rc == OB_SUCCESS && (actual.core != expected.core || actual.system != expected.system
+          || actual.normal != expected.normal || actual.baseline != expected.baseline)) { rc = OB_ERR_UNEXPECTED; }
+      return rc;
+    };
+    auto independent = [&](const Catalog::SchemaWatermarks &expected) {
+      Catalog reader(namespace_id, *access, *transactions);
+      int rc = reader.begin_read(deadline);
+      return rc == OB_SUCCESS ? verify(reader, expected) : rc;
+    };
+    const char *stage = "rollback";
+    Catalog::SchemaWatermarks modified = original;
+    modified.core += 100; modified.system += 100; modified.normal += 100; modified.baseline += 100;
+    if (ret == OB_SUCCESS) { ret = begin(owner, writer); }
+    if (ret == OB_SUCCESS && (writer.advance_schema_watermark(Kind::NORMAL, 0) != OB_INVALID_ARGUMENT
+        || writer.advance_schema_watermark(Kind::BASELINE, -2) != OB_INVALID_ARGUMENT)) { ret = OB_ERR_UNEXPECTED; }
+    if (ret == OB_SUCCESS) { ret = writer.advance_schema_watermark(Kind::CORE, modified.core); }
+    if (ret == OB_SUCCESS) { ret = writer.advance_schema_watermark(Kind::SYSTEM, modified.system); }
+    if (ret == OB_SUCCESS) { ret = writer.advance_schema_watermark(Kind::NORMAL, modified.normal); }
+    if (ret == OB_SUCCESS) { ret = writer.advance_schema_watermark(Kind::BASELINE, modified.baseline); }
+    if (ret == OB_SUCCESS) { ret = verify(writer, modified); }
+    if (ret == OB_SUCCESS) { ret = independent(original); }
+    int ended = end(owner, writer, false);
+    if (ret == OB_SUCCESS) { ret = ended; }
+    if (ret == OB_SUCCESS) { ret = independent(original); }
+    // A transaction started before a newer commit must not lower its watermark.
+    stage = "locked_latest";
+    if (ret == OB_SUCCESS) { ret = begin(earlier, stale); }
+    if (ret == OB_SUCCESS) { ret = verify(stale, original); }
+    if (ret == OB_SUCCESS) { ret = begin(owner, writer); }
+    if (ret == OB_SUCCESS) { ret = writer.advance_schema_watermark(Kind::NORMAL, original.normal + 2); }
+    ended = end(owner, writer, ret == OB_SUCCESS);
+    if (ret == OB_SUCCESS) { ret = ended; }
+    if (ret == OB_SUCCESS) { ret = stale.advance_schema_watermark(Kind::NORMAL, original.normal + 1); }
+    ended = end(earlier, stale, ret == OB_SUCCESS);
+    if (ret == OB_SUCCESS) { ret = ended; }
+    modified = original; modified.normal += 2;
+    if (ret == OB_SUCCESS) { ret = independent(modified); }
+    if (ret == OB_SUCCESS) { ret = verify(catalog, original); }
+    if (ret == OB_SUCCESS) { ret = check_cold(); }
+    fprintf(stderr, "NATIVE_SCHEMA_CATALOG_WATERMARK namespace=%lu stage=%s ret=%d\n", namespace_id, stage, ret);
+  }
   if (ret == OB_SUCCESS && name.find("_plain") != std::string::npos) {
     ObArray<ObTableSchema> core;
     ret = catalog.get_core_tables(INT64_MAX, core);

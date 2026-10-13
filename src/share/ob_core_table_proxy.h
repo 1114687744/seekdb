@@ -171,6 +171,7 @@ public:
   bool is_valid() const { return NULL != table_name_ && NULL != sql_client_; }
 
   void set_sql_client(common::ObISQLClient &sql_client) { sql_client_ = &sql_client; }
+  common::ObISQLClient *get_sql_client() const { return sql_client_; }
 
   // select %table_name_'s all rows
   int load();

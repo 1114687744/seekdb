@@ -826,9 +826,17 @@ int ObSchemaServiceSQLImpl::get_core_version(
     int64_t &core_schema_version)
 {
   int ret = OB_SUCCESS;
-  if (!check_inner_stat()) {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("not init", K(ret));
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      observer::NativeSchemaCatalog::SchemaWatermarks versions;
+      const int rc = catalog.get_schema_watermarks(versions);
+      if (rc == OB_SUCCESS) { core_schema_version = versions.core; }
+      return rc;
+    });
   } else {
     core_schema_version = 0;
     
@@ -867,9 +875,17 @@ int ObSchemaServiceSQLImpl::get_normal_schema_version(
     int64_t &normal_schema_version)
 {
   int ret = OB_SUCCESS;
-  if (!check_inner_stat()) {
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(sql_client.target_namespace());
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("not init", K(ret));
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      observer::NativeSchemaCatalog::SchemaWatermarks versions;
+      const int rc = catalog.get_schema_watermarks(versions);
+      if (rc == OB_SUCCESS) { normal_schema_version = versions.normal; }
+      return rc;
+    });
   } else {
     normal_schema_version = OB_INVALID_VERSION;
     const int64_t snapshot_timestamp = schema_status.snapshot_timestamp_;
@@ -888,10 +904,18 @@ int ObSchemaServiceSQLImpl::get_baseline_schema_version(
     int64_t &baseline_schema_version)
 {
   int ret = OB_SUCCESS;
+  auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(sql_client.target_namespace());
   
-  if (!check_inner_stat()) {
+  if (!check_inner_stat() || lifecycle == nullptr) {
     ret = OB_NOT_INIT;
     LOG_WARN("not init", KR(ret), K(schema_status));
+  } else if (!lifecycle->is_bootstrapping()) {
+    ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+      observer::NativeSchemaCatalog::SchemaWatermarks versions;
+      const int rc = catalog.get_schema_watermarks(versions);
+      if (rc == OB_SUCCESS) { baseline_schema_version = versions.baseline; }
+      return rc;
+    });
   } else {
     const int64_t snapshot_timestamp = schema_status.snapshot_timestamp_;
     bool check_sys_variable = false;
@@ -5277,9 +5301,19 @@ int ObSchemaServiceSQLImpl::can_read_schema_version(
     int64_t core_schema_version = 0;
     int64_t normal_schema_version = OB_INVALID_VERSION;
     ObISQLClient &sql_client = *mysql_proxy_;
-    if (OB_FAIL(get_core_version(sql_client, schema_status, core_schema_version))) {
+    auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(sql_client.target_namespace());
+    if (lifecycle == nullptr) { ret = OB_NOT_INIT; }
+    else if (!lifecycle->is_bootstrapping()) {
+      ret = with_schema_catalog(sql_client, schema_status, [&](observer::NativeSchemaCatalog &catalog) {
+        observer::NativeSchemaCatalog::SchemaWatermarks versions;
+        const int rc = catalog.get_schema_watermarks(versions);
+        if (rc == OB_SUCCESS) { core_schema_version = versions.core; normal_schema_version = versions.normal; }
+        return rc;
+      });
+    } else if (OB_FAIL(get_core_version(sql_client, schema_status, core_schema_version))) {
     } else if (OB_FAIL(get_normal_schema_version(sql_client, schema_status, normal_schema_version))) {
-    } else if (expected_version > core_schema_version
+    }
+    if (OB_SUCC(ret) && expected_version > core_schema_version
                && expected_version > normal_schema_version) {
       ret = OB_SCHEMA_EAGAIN;
       LOG_WARN("__all_global_stat is older than the expected schema version",
