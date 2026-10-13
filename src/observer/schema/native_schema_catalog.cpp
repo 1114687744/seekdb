@@ -1554,6 +1554,63 @@ int NativeSchemaCatalog::insert_schema_operation(const ObSchemaOperation &operat
   });
 }
 
+int NativeSchemaCatalog::check_table_history(uint64_t table_id, int64_t version)
+{
+  if (table_id == OB_INVALID_ID || version <= 0) { return OB_INVALID_ARGUMENT; }
+  ObArenaAllocator allocator(ObMemAttr("CatalogCompare"));
+  struct Field {
+    ObString name;
+    ObObj value;
+    TO_STRING_KV(K(name), K(value));
+  };
+  ObSEArray<Field, 64> expected;
+  ObObj key[2]; key[0].set_int(table_id); key[1].set_int(version);
+  Cursor history;
+  const ObNewRow *row = nullptr;
+  int ret = open_prefix(OB_ALL_TABLE_HISTORY_TID, ObRowkey(key, 2), history);
+  if (OB_SUCC(ret)) { ret = history.next(row); }
+  if (ret == OB_ITER_END) { return OB_SUCCESS; }
+  ObSEArray<ObColDesc, 64> columns;
+  if (OB_SUCC(ret)) { ret = history.schema()->get_column_ids(columns); }
+  for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+    const auto *column = history.schema()->get_column_schema(columns.at(i).col_id_);
+    const auto &name = column->get_column_name_str();
+    if (name == "gmt_create" || name == "gmt_modified" || name == "is_deleted") { continue; }
+    Field field;
+    if (OB_FAIL(ob_write_string(allocator, name, field.name))
+        || OB_FAIL(ob_write_obj(allocator, row->cells_[i], field.value))) {}
+    else { ret = expected.push_back(field); }
+  }
+  const int closed = history.close();
+  if (OB_SUCC(ret)) { ret = closed; }
+  Cursor current;
+  if (OB_SUCC(ret)) { ret = open_prefix(OB_ALL_TABLE_TID, ObRowkey(key, 1), current); }
+  if (OB_SUCC(ret)) { ret = current.next(row); }
+  if (ret == OB_ITER_END) { ret = OB_STATE_NOT_MATCH; }
+  columns.reset();
+  std::unordered_map<uint64_t, int64_t> positions;
+  if (OB_SUCC(ret)) { ret = current.schema()->get_column_ids(columns); }
+  for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) { positions.emplace(columns.at(i).col_id_, i); }
+  for (int64_t i = 0; OB_SUCC(ret) && i < expected.count(); ++i) {
+    const auto &field = expected.at(i);
+    const auto *column = current.schema()->get_column_schema(field.name);
+    if (column == nullptr) { ret = OB_ERR_COLUMN_NOT_FOUND; }
+    else {
+      const auto position = positions.find(column->get_column_id());
+      if (position == positions.end()) { ret = OB_ERR_UNEXPECTED; }
+      else {
+        int comparison = 0;
+        ret = field.value.compare(row->cells_[position->second], comparison);
+        if (OB_SUCC(ret) && comparison != 0) {
+          ret = OB_STATE_NOT_MATCH;
+          LOG_WARN("table history differs from current metadata", K(ret), K(table_id), K(version), K(field.name));
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int NativeSchemaCatalog::get_references(uint64_t dependent_id, ObIArray<ObDependencyInfo> &out)
 {
   out.reset();

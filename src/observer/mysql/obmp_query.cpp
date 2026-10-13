@@ -86,6 +86,13 @@ int ObMPQuery::process()
     ObSQLSessionInfo::LockGuard lock_guard(session.get_query_lock());
     session.set_current_trace_id(ObCurTraceId::get_trace_id());
     // Execute under the bound namespace and refresh its schema before the command.
+    // Refresh can read the catalog before SQL execution initializes its context.
+    // Use this request's deadline, not a previous request's worker state, and
+    // charge refresh and queue time to the same query timeout.
+    if (OB_FAIL(session.get_query_timeout(query_timeout))) {
+    } else {
+      THIS_WORKER.set_timeout_ts(get_receive_timestamp() + query_timeout);
+    }
     namespace_worker_prototype::InProcessServingScope inprocess_serving(
         namespace_worker_prototype::in_process_session_ns(sess));
     if (OB_SUCC(ret) && OB_FAIL(namespace_worker_prototype::refresh_session_schema(sess))) {
@@ -109,7 +116,6 @@ int ObMPQuery::process()
         LOG_WARN("session has been killed", K(session.get_session_state()), K_(sql),
                  K(session.get_server_sid()), K(ret));
       } else if (OB_FAIL(session.check_and_init_retry_info(*cur_trace_id, sql_))) {
-      } else if (OB_FAIL(session.get_query_timeout(query_timeout))) {
       } else if (OB_FAIL(session.effective_schema_service()->get_published_schema_version(
                   database_schema_version))) {
       } else if (OB_UNLIKELY(packet_len > session.get_max_packet_size())) {
@@ -119,7 +125,6 @@ int ObMPQuery::process()
         LOG_WARN("packet too large than allowed for the session", K_(sql), K(ret));
       } else if (OB_FAIL(session.gen_configs_in_pc_str())) {
       } else {
-        THIS_WORKER.set_timeout_ts(get_receive_timestamp() + query_timeout);
         retry_ctrl_.set_current_global_schema_version(database_schema_version);
         session.set_pl_can_retry(true);
         session.set_enable_mysql_compatible_dates(

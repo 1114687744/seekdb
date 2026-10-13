@@ -1821,6 +1821,41 @@ static int probe_native_schema_catalog(uint64_t namespace_id, const std::string 
     if (ret == OB_SUCCESS) { ret = begin(); }
     if (ret == OB_SUCCESS) { stage = "insert"; ret = insert(); }
     if (ret == OB_SUCCESS) { stage = "own_read"; ret = verify(writer, true); }
+    if (ret == OB_SUCCESS) { stage = "history_match"; ret = writer.check_table_history(synthetic_id, definition->get_schema_version()); }
+    bool table_matched = false;
+    auto set_read_only = [&](bool value) {
+      return writer.update_fields(OB_ALL_TABLE_TID, [&](SchemaCatalogRow &fields) {
+        int rc = fields.add_pk_column("table_id", synthetic_id);
+        if (rc == OB_SUCCESS) { rc = fields.add_column("read_only", value); }
+        return rc;
+      }, table_matched);
+    };
+    if (ret == OB_SUCCESS) { ret = set_read_only(!definition->is_read_only()); }
+    if (ret == OB_SUCCESS && writer.check_table_history(synthetic_id, definition->get_schema_version()) != OB_STATE_NOT_MATCH) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (ret == OB_SUCCESS) { ret = set_read_only(definition->is_read_only()); }
+    if (ret == OB_SUCCESS) { ret = writer.check_table_history(synthetic_id, definition->get_schema_version() + 123); }
+    const std::string view_body(90000, 'v');
+    for (bool history : {false, true}) {
+      if (ret == OB_SUCCESS) {
+        ret = writer.update_fields(history ? OB_ALL_TABLE_HISTORY_TID : OB_ALL_TABLE_TID,
+            [&](SchemaCatalogRow &fields) {
+          int rc = fields.add_pk_column("table_id", synthetic_id);
+          if (rc == OB_SUCCESS && history) { rc = fields.add_pk_column("schema_version", definition->get_schema_version()); }
+          if (rc == OB_SUCCESS) { rc = fields.add_column("view_definition", ObString(view_body.size(), view_body.data())); }
+          if (rc == OB_SUCCESS && history) { rc = fields.add_gmt_modified(1); }
+          return rc;
+        }, table_matched);
+      }
+      if (ret == OB_SUCCESS) {
+        const int checked = writer.check_table_history(synthetic_id, definition->get_schema_version());
+        if (checked != (history ? OB_SUCCESS : OB_STATE_NOT_MATCH)) { ret = checked == OB_SUCCESS ? OB_ERR_UNEXPECTED : checked; }
+      }
+    }
+    if (ret == OB_SUCCESS) {
+      fprintf(stderr, "NATIVE_SCHEMA_CATALOG_HISTORY_MATCH namespace=%lu ret=0\n", namespace_id);
+    }
     if (ret == OB_SUCCESS) { stage = "invisible"; ret = outside(false); }
     const int rollback = end(false);
     if (ret == OB_SUCCESS) { ret = rollback; }

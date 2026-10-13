@@ -1548,77 +1548,13 @@ int ObTableSqlService::batch_add_table_for_create_table(common::ObISQLClient &sq
 
 // check table's latest history is matched with related record in __all_table.
 int ObTableSqlService::check_table_history_matched_(
-    ObISQLClient &sql_client,
-    const uint64_t table_id,
-    const int64_t schema_version)
+    ObISQLClient &sql_client, uint64_t table_id, int64_t schema_version)
 {
-  int ret = OB_SUCCESS;
-  if (OB_UNLIKELY(OB_INVALID_ID == table_id
-      || schema_version <= 0)) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid table_id/schema_version",
-             KR(ret), K(table_id), K(schema_version));
-  } else if (is_core_table(table_id)) {
-    // TODO:(yanmu.ztl) core tables don't record in __all_table, we should check __all_core_table instead.
-  } else {
-    // Compare the persisted table-history row using its current column set.
-    ObSchemaGetterGuard guard;
-    const ObTableSchema *table_schema = NULL;
-    ObSqlString column_sql;
-    if (OB_FAIL(multi_version_schema_service_.get_runtime_schema_guard(guard))) {
-    } else if (OB_FAIL(guard.get_table_schema( OB_ALL_TABLE_HISTORY_TID, table_schema))) {
-    } else if (OB_ISNULL(table_schema)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("table schema not exist", KR(ret), "table_id", OB_ALL_TABLE_HISTORY_TID);
-    } else {
-      bool first_flag = true;
-      ObString column_name;
-      for (auto col = table_schema->column_begin();
-           OB_SUCC(ret) && col != table_schema->column_end(); col++) {
-        if (OB_ISNULL(*col)) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("col is null", KR(ret));
-        } else if (FALSE_IT(column_name = (*col)->get_column_name_str())) {
-        } else if (0 == column_name.case_compare("gmt_create")
-                   || 0 == column_name.case_compare("gmt_modified")
-                   || 0 == column_name.case_compare("is_deleted")) {
-          // skip
-        } else if (OB_FAIL(column_sql.append_fmt("%s%.*s",
-                   first_flag ? "" : ",", column_name.length(), column_name.ptr()))) {
-        } else {
-          first_flag = false;
-        }
-      } // end for
-
-      if (OB_SUCC(ret)) {
-      SMART_VAR(ObMySQLProxy::MySQLResult, res) {
-        ObSqlString sql;
-        common::sqlclient::ObMySQLResult *result = NULL;
-        if (OB_FAIL(sql.assign_fmt(
-            "SELECT %s FROM %s WHERE table_id = %lu AND schema_version = %ld"
-            " EXCEPT SELECT %s FROM %s WHERE table_id = %lu",
-            column_sql.ptr(), OB_ALL_TABLE_HISTORY_TNAME, table_id, schema_version,
-            column_sql.ptr(), OB_ALL_TABLE_TNAME, table_id))) {
-        } else if (OB_FAIL(sql_client.read(res, sql.ptr()))) {
-        } else if (OB_ISNULL(result = res.get_result())) {
-          ret = OB_ERR_UNEXPECTED;
-          LOG_WARN("failed to get result", KR(ret));
-        } else if (OB_FAIL(result->next())) {
-          if (OB_ITER_END == ret) {
-            ret = OB_SUCCESS;
-          } else {
-            LOG_WARN("fail to get next", KR(ret));
-          }
-        } else {
-          ret = OB_STATE_NOT_MATCH;
-          LOG_WARN("__all_table_history's row not match with __all_table's",
-                   KR(ret), K(sql), K(table_id), K(schema_version));
-        }
-      } // end SMART_VAR
-      }
-    }
-  }
-  return ret;
+  if (table_id == OB_INVALID_ID || schema_version <= 0) { return OB_INVALID_ARGUMENT; }
+  // Core definitions use the existing cell representation, not __all_table.
+  if (is_core_table(table_id)) { return OB_SUCCESS; }
+  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      [&](observer::NativeSchemaCatalog &catalog) { return catalog.check_table_history(table_id, schema_version); });
 }
 
 /**
@@ -2710,27 +2646,20 @@ int ObTableSqlService::sync_schema_version_for_history(
   schema.set_schema_version(new_schema_version);
   if (OB_FAIL(check_ddl_allowed(schema))) {
   } else {
-    ObDMLSqlSplicer dml;
-    
     const uint64_t table_id = schema.get_table_id();
-    
     int64_t affected_rows = 0;
-    const char *table_name = NULL;
-    const bool only_history = true;
-    const bool update_object_status_ignore_version = false;
-    if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
-                                                 table_id)))
-        || OB_FAIL(dml.add_column("schema_version", new_schema_version))) {
-      LOG_WARN("add column failed", KR(ret));
-    } else if (is_core_table(table_id)) {
-      // The full versioned row is appended below.
-    } else if (OB_FAIL(ObSchemaUtils::get_all_table_name(table_name))) {
-    } else if (OB_FAIL(exec_update(sql_client, table_id,
-                                   table_name, dml, affected_rows))) {
-    } else if (OB_UNLIKELY(affected_rows > 1)) {
+    if (is_core_table(table_id)) {
+      // Core history has its separate publication path.
+    } else if (OB_FAIL(update_table_fields_(sql_client, table_id, [&](auto &fields) {
+      int rc = fields.add_pk_column("table_id", table_id);
+      if (OB_SUCC(rc)) { rc = fields.add_column("schema_version", new_schema_version); }
+      if (OB_SUCC(rc)) { rc = fields.add_gmt_modified(); }
+      return rc;
+    }, affected_rows))) {
+    } else if (affected_rows > 1) {
       ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("unexpected error", KR(ret), K(affected_rows));
-    } else if (OB_FAIL(add_table(sql_client, schema, update_object_status_ignore_version, only_history))) {
+    } else {
+      ret = add_table(sql_client, schema, false /* update_object_status_ignore_version */, true /* only_history */);
     }
   }
 

@@ -75,6 +75,8 @@ gates = [
         [local / 'native_schema_catalog_probe.py', '--binary', probe],
         [local / 'run_standby_suite.py', '--binary', probe, '--case', 'catalog_read_view',
          '--log-dir', args.log_dir / 'catalog-read-view-standby'],
+        [local / 'run_standby_suite.py', '--binary', probe, '--case', 'request_deadline',
+         '--log-dir', args.log_dir / 'request-deadline-standby'],
         [local / 'tablet_preparation_probe.py', '--binary', probe, '--instrumented'],
         [local / 'shared_transaction_probe.py', '--binary', probe, '--faults'],
         [local / 'shared_transaction_probe.py', '--binary', probe, '--faults',

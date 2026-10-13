@@ -177,6 +177,8 @@ def run(binary, selected=None):
             if label == 'operations':
                 assert (f'NATIVE_SCHEMA_CATALOG_OPERATIONS namespace={child_id} count={operations[0]} '
                         f'latest={operations[1]} completed={completed} stage=cleaned ret=0') in trace, trace[-3000:]
+            if label == 'typed':
+                assert f'NATIVE_SCHEMA_CATALOG_HISTORY_MATCH namespace={child_id} ret=0' in trace, trace[-3000:]
             if label == 'dependency':
                 assert f'NATIVE_SCHEMA_CATALOG_DEPENDENCY namespace={child_id} stage=deleted ret=0' in trace, trace[-3000:]
             if label == 'trigger':

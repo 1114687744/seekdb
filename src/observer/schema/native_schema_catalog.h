@@ -109,6 +109,9 @@ public:
   int has_table_schema_changes(const common::ObIArray<uint64_t> &table_ids,
       int64_t lower_exclusive, int64_t upper_inclusive, bool &);
   int insert_schema_operation(const share::schema::ObSchemaOperation &);
+  // Preserve the history EXCEPT current check: missing history is empty;
+  // ignore the history tombstone and automatic creation/modification times.
+  int check_table_history(uint64_t table_id, int64_t schema_version);
   // Current metadata only. Versions append once per existing requested ID;
   // index information resets the output and owns names in the caller's arena.
   int get_table_schema_versions(const common::ObIArray<uint64_t> &table_ids,

@@ -368,3 +368,30 @@
 - 已回溯的旧表定义装载 helper：`fetch_all_column_info/fetch_column_info/fetch_foreign_key_info/fetch_all_trigger_info/fetch_table_latest_schema_versions_` 的表定义正常调用已被外围 lifecycle 分支切换为原生；保留 bootstrap 实现。`fetch_trigger_list` 还用于 user schema 装载，须按非表 schema 边界说明，不能仅凭函数中存在 SQL 判断其仍用于正常表装载。
 
 - `dependency-production-build1.log` 移除钩子后的生产编译通过；`dependency-production-ddl1.log` 退出 0，依赖主表/索引、父子隔离、崩溃重启及重启后其他 DDL 回归通过。生产 Namespace 主备回归退出 0（166.32 秒），见 `gate-results/native-schema-catalog/native-dependency-standby/results.json`；日志包含 `native_catalog_dependency_replay`，提升后再次逐字段核对依赖记录及多层视图结果，原有物化/LOB 回放、父 TRUNCATE/DROP、删除准入和提升后 fork 均通过。未运行全量 mysqltest/sysbench。
+
+### 表定义一致性检查与级联版本同步（实施中）
+
+- 依赖元数据阶段已提交并推送 `a710ded25`。
+- `check_table_history_matched_` 改为借用 DDL owner 的原生点读，比较固定定义中的持久字段，不再取得运行时内表 schema 或执行 EXCEPT SQL。两个游标顺序打开；历史字段只在本次调用的 arena 中保留，NULL 与 NULL 相等；gmt_create/gmt_modified/is_deleted 不参与比较，history 缺失维持旧 EXCEPT 空集语义。core 表继续使用既有独立表示边界。
+- `sync_schema_version_for_history` 接入既有 update_table_fields_，当前 schema_version/gmt_modified 与随后 history/DDL 操作记录共用原事务。没有新增版本水位或持久状态。
+- 冷 typed 用例增加相等行、read_only 不一致、缺失 history 版本、90KB view_definition 不一致/相等、时间戳不同的校验。`consistency-build1.log` 编译中，尚未完成运行验证。
+
+- `consistency-build1.log` 编译通过；`consistency-probe1.log` 的 typed 冷用例退出 0，实例 `namespace_fork_PROTOTYPE_native_schema_catalog_6gw81z7s` 日志含 `NATIVE_SCHEMA_CATALOG_HISTORY_MATCH namespace=3 ret=0`，服务槽位为 0。新增行比较覆盖实际 LOB 正文和 NULL 字段；字段差异与单边 LOB 变化返回 OB_STATE_NOT_MATCH，补齐双方 LOB 后成功，gmt_modified 不同不产生误报。
+- `consistency-ddl1.log` 实际 DDL、父子隔离、崩溃重启通过；实例 `namespace_fork_PROTOTYPE_native_catalog_ddl_p12_lfm1` 的 `sync_version_for_cascade_table` 日志确认新版本同步入口被实际执行。钩子已移除，生产编译/主备验证继续进行。
+
+
+### 主备回归中的请求截止时间（定位中）
+
+- `consistency-production-build1.log` 与 `consistency-production-ddl1.log` 通过；随后 `native-consistency-standby/results.json` 记录主备用例失败（125.61 秒）。约束 history 查询报 4012，准确 trace 为 `YA4117F000001-00065DADF8F220AA-0-0`，查询总耗时仅 284 微秒、排队 18 微秒，未进入 SQL 执行。
+- `ObMPQuery::process` 先调用 `refresh_session_schema`，后设置 `THIS_WORKER` 的本次请求截止时间。刷新中的原生目录读取会使用 worker 截止时间，因此可能用到先前请求的过期值。
+- 新增 `standby_request_deadline_probe.py`：先装载备库孩子，主库同一 Namespace 提交建表，等待备库追上 SCN，随后直接查询 history，不重试 Timeout。测试注入仅在带固定注释的 SELECT 前将 worker 截止时间设为已过期，模拟线程复用。
+- `request-deadline-red-build1.log` 编译通过；`native-deadline-red/namespace_fork_local.log` 的定向查询在 0.47 毫秒报 4012，trace `YA4117F000001-00065DAE27C06F42-0-0` 确认注入生效，完成 red 验证。
+- 修复将会话超时读取及 worker 截止时间设置前移到 schema 刷新之前，截止时间仍为 receive timestamp + query timeout，刷新后不重新延长。测试钩子由现有 native schema 注入脚本控制；四件套增加 native `request_deadline`，生产主备也执行相同 SQL。修复后验证仍在进行。
+
+- `request-deadline-green-build1.log` 编译通过。首次 green 用例不再超时，但 history 返回 0：仅等待 sync_scn，弱读可见性尚未推进。测试改为等待同一虚拟表已有的 readable_scn，未增加查询重试或放宽断言。
+- 复用该次测试保存的数据与二进制，重新启动主备后，`request-deadline-green2.log` 通过：带过期 worker 注入的首个查询返回 1；将当前会话超时改为 1 微秒后，同一查询返回 4012。两个注入 trace 已保存在 `native-deadline-green/injected-fixed-trace.txt`；这证明修复刷新前的截止时间初始化，同时保留真实超时检查。
+- 测试钩子已移除，生产版本编译及原主备场景复跑待完成。没有把首次 green 的可见性断言失败算为通过。
+
+- `request-deadline-production-build1.log` 移除全部本轮钩子后的生产编译通过；`consistency-deadline-ddl1.log` 通过实际 DDL、current/history/索引、父子隔离及崩溃重启验证。
+- 原 Namespace 主备场景复跑通过（173.82 秒），结果为 `native-consistency-deadline-production/results.json` exit_code=0。生产新增请求用例首次查询返回 1、真正过期请求被拒绝；约束、外键、分区、视图、trigger、依赖、mock 父表、父 TRUNCATE/DROP、删除准入、提升后执行/写入及再次 fork 均通过。
+- 本阶段完成一致性检查和级联版本同步接入，并修复 schema 刷新读取过期 worker 截止时间。全量 mysqltest/sysbench 未运行。剩余 schema 水位读写与 core/bootstrap 最终调用点审计仍属于完整目标，未标记完成。

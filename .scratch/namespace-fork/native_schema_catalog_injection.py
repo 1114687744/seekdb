@@ -24,4 +24,14 @@ if args.action == 'enable':
     before('  LOG_INFO("PROTOTYPE_NAMESPACE_KV_REGISTER", K(ret), K(id),\n',
            '  if (ret == OB_SUCCESS) { ret = probe_native_schema_catalog(id, target_name); }')
 source.write_text(text)
+source = local.parents[1] / 'src/observer/mysql/obmp_query.cpp'
+text = re.sub(r'^[ \t]*// NATIVE_SCHEMA_CATALOG_PROBE_BEGIN\n.*?^[ \t]*// NATIVE_SCHEMA_CATALOG_PROBE_END\n',
+              '', source.read_text(), flags=re.M | re.S)
+if args.action == 'enable':
+    before('    // Execute under the bound namespace and refresh its schema before the command.\n',
+           '    if (sql_.prefix_match("SELECT /* native_request_deadline */")) {\n'
+           '      THIS_WORKER.set_timeout_ts(ObTimeUtility::current_time() - 1);\n'
+           '      LOG_INFO("NATIVE_REQUEST_DEADLINE injected expired prior request");\n'
+           '    }')
+source.write_text(text)
 print('Native schema catalog test hooks', args.action)
