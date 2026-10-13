@@ -22,9 +22,16 @@ changes = (
     ('src/storage/tablet/ob_tablet.cpp',
      '    LOG_INFO("succeeded to init tablet with local batch tables", K(ret), K(param), K(old_tablet), KPC(this));\n',
      '''    if (getenv("SEEKDB_LOCAL_SCHEMA_INSTALL_PROBE")) {
+      ObArenaAllocator probe_allocator("LayoutProbe");
+      ObStorageSchema *probe_before = nullptr, *probe_after = nullptr;
+      int probe_ret = old_tablet.load_write_layout(probe_allocator, probe_before);
+      if (probe_ret == OB_SUCCESS) { probe_ret = load_write_layout(probe_allocator, probe_after); }
       fprintf(stderr, "LOCAL_SCHEMA_FORK tablet=%lu before=%ld incoming=%ld result=%ld simplified=%d ret=%d\\n",
-          get_tablet_id().id(), old_storage_schema->get_schema_version(), storage_schema->get_schema_version(),
-          storage_schema_addr_.ptr_->get_schema_version(), storage_schema_addr_.ptr_->is_column_info_simplified(), ret);
+          get_tablet_id().id(), probe_before == nullptr ? -1 : probe_before->get_schema_version(),
+          storage_schema->get_schema_version(), probe_after == nullptr ? -1 : probe_after->get_schema_version(),
+          probe_after == nullptr ? 1 : probe_after->is_column_info_simplified(), probe_ret);
+      ObTabletObjLoadHelper::free(probe_allocator, probe_before);
+      ObTabletObjLoadHelper::free(probe_allocator, probe_after);
       fflush(stderr);
     }
 '''),

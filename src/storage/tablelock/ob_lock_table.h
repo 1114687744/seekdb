@@ -89,6 +89,7 @@ public:
   int offline();
   int online();
   // create lock table tablet.
+  static int build_table_schema(share::schema::ObTableSchema &schema);
   int create_tablet(const share::SCN &create_scn);
   // remove lock table tablet.
   int remove_tablet();
@@ -167,7 +168,6 @@ private:
   // We use the method to recover the lock_table for reboot.
   int restore_lock_table_(storage::ObITable &sstable);
   int recover_(const blocksstable::ObDatumRow &row);
-  int get_table_schema_(share::schema::ObTableSchema &schema);
   int switch_to_follower_();
 
 private:

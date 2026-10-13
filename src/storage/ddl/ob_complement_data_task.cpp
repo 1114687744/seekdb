@@ -81,7 +81,7 @@ int ObComplementDataParam::fill_tablet_param()
   } else if (OB_UNLIKELY(nullptr == tablet_handle.get_obj())) {
     ret = OB_ERR_SYS;
     LOG_WARN("tablet handle is null", K(ret), K(param));
-  } else if (OB_FAIL(tablet_handle.get_obj()->load_storage_schema(allocator_, tablet_param_.storage_schema_))) {
+  } else if (OB_FAIL(tablet_handle.get_obj()->load_write_layout(allocator_, tablet_param_.storage_schema_))) {
   } else if (OB_FAIL(tablet_handle.get_obj()->get_ddl_kv_mgr(ddl_kv_mgr_handle, true /*try_create]*/))) {
   } else {
     tablet_param_.is_micro_index_clustered_ = tablet_handle.get_obj()->get_tablet_meta().micro_index_clustered_;
@@ -91,7 +91,7 @@ int ObComplementDataParam::fill_tablet_param()
       dest_lob_meta_tablet_id_ = mds_data.lob_meta_tablet_id_;
       ObTabletHandle lob_meta_tablet_handle;
       if (OB_FAIL(ObDDLStorageUtil::ddl_get_tablet(ls, mds_data.lob_meta_tablet_id_, lob_meta_tablet_handle, ObMDSGetTabletMode::READ_ALL_COMMITED))) {
-      } else if (OB_FAIL(lob_meta_tablet_handle.get_obj()->load_storage_schema(allocator_, lob_meta_tablet_param_.storage_schema_))) {
+      } else if (OB_FAIL(lob_meta_tablet_handle.get_obj()->load_write_layout(allocator_, lob_meta_tablet_param_.storage_schema_))) {
       } else {
         lob_meta_tablet_param_.is_micro_index_clustered_ = lob_meta_tablet_handle.get_obj()->get_tablet_meta().micro_index_clustered_;
         ObDDLKvMgrHandle lob_ddl_kv_mgr_handle;

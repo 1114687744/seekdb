@@ -90,3 +90,20 @@
 补充证据：去历史版的 `/tmp/owned-layout-native-checksum-fts5.log` 已通过，F=`1791886686902667070`；不再有历史正文发布或读取的情况下，本地/全局/全文索引全部完成 checksum。备库 `basic` 通过（116.45 秒），其余两项继续执行。测试版 `seekdb-no-history-probe-v6` SHA256=`9be6dc184a3841ef37c6d1c1c145fd430060ed7a4bfe870459be7a74c0b1dc1c` 已编译，四件套 `bootstrap-native-kv` 正在运行；mini 与普通 fork 的完整描述检查已通过。测试 hook 已全部从生产源码撤除。测试版首轮编译发现审计脚本调用 restore 构造函数的参数顺序未更新，已修正后编译通过。
 
 第二个实施检查点 `a7304f90f` 已推送。撤除 hook 后的生产编译 `owned-layout-no-history-production-build1` 通过；`seekdb-no-history-v7` SHA256=`64af28323e099d1ece17b6b44ab0675d8483524b8d6487a83d1e3c9d89e4fdcf`。四件套生产部分正在 `/tmp/owned-layout-four-gates-v7` 运行，bootstrap 已通过；测试部分在 `/tmp/owned-layout-four-gates-v6` 运行，mini/fork/fork_wide、父空间 meta、孩子 meta 和冷父基线 meta 均通过。三项备库定向测试 runner 已成功退出，结果见 `/tmp/owned-layout-standby-v5/results.json`。当前仍不可判定三项总目标完成。
+
+### 2026-10-13：删除 tablet 独立正文地址
+
+- 删除 `ObTablet::storage_schema_addr_`，以及它的持久化、反序列化、宏块引用和 persister 写入。所有原 `load_storage_schema` 消费者切换为明确的 `load_write_layout`；普通 tablet 从 MDS 当前提交值取得正文，LS 固定表使用与创建相同的代码定义。没有 Namespace 回退。
+- 创建和物理恢复直接用显式输入构造 rowkey read info；状态更新、MDS 转储、碎片整理复制已有 rowkey read info，不读取另一个完整正文。合并和接管只安装新文件及读信息，不更新写入布局。删除已无调用的 `update_tablet_storage_schema`。
+- SSTable 列描述检查使用各文件自带正文；碎片重写也使用源文件的正文。DDL 完成记录不再清空原始默认值。tablet 尺寸断言（含 rowkey read info）从 1392 更新为实际 1344 字节。
+- 首次编译暴露 rowkey 接口静态类型和尺寸断言两个编译错误，修正后通过。最终生产构建 `/tmp/owned-layout-no-tablet-address-build4.log`；产物 `seekdb-no-tablet-address-v8`，SHA256=`7afbc55ad460984d53e121eb2c0e34c738097366c6c3108c781ee97181b64e92`。测试构建 `/tmp/owned-layout-no-tablet-address-native-build1.log` 通过；产物 `seekdb-no-tablet-address-probe-v9`，SHA256=`d282021eb6c51d0d654afc638f38aaed7a000ebf3266266943ee868b8c34743e`。测试 hook 已从生产源码撤除。
+- 新生产版 `/tmp/owned-layout-probe8.log` 全部通过：默认值、混合布局、首次安装并发及回滚、三次强杀恢复、父子不同类型及文件接管。`/tmp/owned-layout-native-checksum-fts8.log` 通过，F=`1791888665885354058`，覆盖 local/global/FTS。三项备库在 `/tmp/owned-layout-standby-v8` 运行，已见 basic、namespace_fork_local 通过，最后一项尚待结果。
+- 新测试版四件套在 `/tmp/owned-layout-four-gates-v9` 运行，已通过 mini/fork/fork_wide、父子 meta；不可用已通过的前缀代替整套结果。
+
+前一检查点补充结果：
+
+- `/tmp/owned-layout-four-gates-v7.log` 生产 bootstrap/sql/direct/tls 全部通过。direct 内三项备库均通过；8000 分区 5 次采样见 `fork-service-latency-results.json`：fork 中位 3.87 ms，fork 至首次点读中位 0.401 s，首次写提交 10.68 ms，全分区聚合 3.60 s。这是删除旧地址之前的测量，新版本仍需成本验收。
+- v6 原生门禁中的 SSTable 混合重写、行日志崩溃恢复通过；随后 `physical_merge_layout_probe` 失败于遗留的 `simplified == 1` 断言。日志实际为完整描述且 before/observed/result 相同；修改为检查完整正文、正确版本与列数，定向重跑 `/tmp/owned-layout-physical-merge-v6-rerun.log` 通过 F 前后父子 DDL、后续 mini、旧 F major 和晚创建 tablet 排除。原失败日志保留。
+- v6 剩余原生门禁从 checksum 继续运行于 `/tmp/owned-layout-four-gates-v6-resume`，不重新跑已完成前缀。
+
+仍需闭合：原生目录 F 的 MVCC 转储/合并/重启保留回归及原有故障用例替代；Namespace 删除与目录物理对象回收的并发审计；最终四件套及宽表/8000 分区成本。旧 full profile 的已删除历史模块测试尚未全部迁移，总目标仍未完成。

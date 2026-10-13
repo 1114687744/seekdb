@@ -258,9 +258,7 @@ public:
       common::ObArenaAllocator &allocator,
       ObTabletMacroInfo *&tablet_macro_info,
       bool &in_memory) const;
-  int load_storage_schema(
-      common::ObIAllocator &allocator,
-      ObStorageSchema *&storage_schema) const;
+  // Latest committed write layout; file layouts belong to their SSTable metadata.
   int load_write_layout(common::ObIAllocator &allocator, ObStorageSchema *&schema) const;
   int read_medium_info_list(
       common::ObArenaAllocator &allocator,
@@ -615,7 +613,9 @@ private:
   int init_shared_params(const common::ObTabletID &tablet_id);
   int build_read_info(
       common::ObArenaAllocator &allocator,
-      const ObTablet *tablet);
+      const ObStorageSchema &schema,
+      const ObTablet *old_tablet = nullptr);
+  int copy_read_info(common::ObArenaAllocator &allocator, const ObTablet &old_tablet);
   int create_memtable(CreateMemtableArg &arg);
   int try_update_start_scn();
   int try_update_ddl_checkpoint_scn();
@@ -771,7 +771,6 @@ private:
   // in memory or disk
   ObTabletComplexAddr<ObTabletTableStore> table_store_addr_; // size: 56B, alignment: 8B
   // always in disk
-  ObTabletComplexAddr<ObStorageSchema> storage_schema_addr_; // size: 56B, alignment: 8B
   ObTabletComplexAddr<ObTabletMacroInfo> macro_info_addr_;   // size: 56B, alignment: 8B
   int64_t memtable_count_;                                   // size: 8B, alignment: 8B
   ObDDLKV **ddl_kvs_;                                        // size: 8B, alignment: 8B
@@ -826,11 +825,9 @@ inline bool ObTablet::is_valid() const
   return (!is_empty_shell()
           && tablet_meta_.is_valid()
           && table_store_addr_.is_valid()
-          && storage_schema_addr_.is_valid()
           && nullptr != rowkey_read_info_) // judgement case 1
           || (is_empty_shell()
           && table_store_addr_.addr_.is_none()
-          && storage_schema_addr_.addr_.is_none()
           && nullptr == rowkey_read_info_); // judgement case 2
 }
 

@@ -146,7 +146,7 @@ private:
       ObSSTable &new_sstable);
   int prepare_data_desc(
       const ObTablet &tablet,
-      const ObSSTableBasicMeta &basic_meta,
+      const ObSSTableMeta &file_meta,
       const compaction::ObMergeType &merge_type,
       const int64_t snapshot_version,
       const int64_t major_data_version,

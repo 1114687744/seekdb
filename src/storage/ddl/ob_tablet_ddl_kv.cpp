@@ -852,7 +852,7 @@ int ObDDLKV::create_ddl_memtable(ObTablet &tablet, const ObITable::TableKey &tab
     bool need_free_storage_schema = false;
     ObStorageSchema *storage_schema = nullptr;
     ObArenaAllocator arena("init_ddl_memt", OB_MALLOC_NORMAL_BLOCK_SIZE);
-    if (OB_FAIL(tablet.load_storage_schema(arena, storage_schema))) {
+    if (OB_FAIL(tablet.load_write_layout(arena, storage_schema))) {
     } else {
       need_free_storage_schema = true;
     }

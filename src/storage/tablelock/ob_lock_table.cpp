@@ -152,7 +152,7 @@ int ObLockTable::recover_(const blocksstable::ObDatumRow &row)
   return ret;
 }
 
-int ObLockTable::get_table_schema_(
+int ObLockTable::build_table_schema(
     ObTableSchema &schema)
 {
   int ret = OB_SUCCESS;
@@ -320,7 +320,7 @@ int ObLockTable::create_tablet(const SCN &create_scn)
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLockTable not inited", K(ret));
-  } else if (OB_FAIL(get_table_schema_(table_schema))) {
+  } else if (OB_FAIL(build_table_schema(table_schema))) {
   } else if (OB_FAIL(create_tablet_schema.init(arena_allocator, table_schema,
         false/*skip_column_info*/))) {
   } else if (OB_FAIL(parent_->create_ls_inner_tablet(LS_LOCK_TABLET,

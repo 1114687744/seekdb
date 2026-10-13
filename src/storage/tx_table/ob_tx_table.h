@@ -150,6 +150,8 @@ public:
   int init(ObLS *ls);
   void stop();
   void destroy();
+  static int build_data_table_schema(share::schema::ObTableSchema &schema);
+  static int build_ctx_table_schema(share::schema::ObTableSchema &schema);
   int create_tablet(const share::SCN &create_scn);
   int remove_tablet();
   int prepare_offline();
@@ -359,8 +361,6 @@ private:
   int create_data_tablet_(const share::SCN &create_scn);
   int create_ctx_tablet_(const share::SCN &create_scn);
   int remove_tablet_(const common::ObTabletID &tablet_id);
-  int get_data_table_schema_(share::schema::ObTableSchema &schema);
-  int get_ctx_table_schema_(share::schema::ObTableSchema &schema);
   int restore_tx_ctx_table_(ObITable &trans_sstable);
   int load_tx_ctx_table_();
   int offline_tx_ctx_table_();

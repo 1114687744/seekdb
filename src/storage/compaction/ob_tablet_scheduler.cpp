@@ -430,7 +430,7 @@ int ObTabletScheduler::try_update_upper_trans_version_and_gc_sstable(
         } else if (need_update) {
           ObArenaAllocator tmp_arena("RmOldTblTmp", OB_MALLOC_NORMAL_BLOCK_SIZE);
           ObStorageSchema *storage_schema = nullptr;
-          if (OB_TMP_FAIL(tablet->load_storage_schema(tmp_arena, storage_schema))) {
+          if (OB_TMP_FAIL(tablet->load_write_layout(tmp_arena, storage_schema))) {
           } else {
             ObUpdateTableStoreParam param(tablet->get_snapshot_version(), multi_version_start, storage_schema, upper_trans_param);
             ObTabletHandle new_tablet_handle; // no use here

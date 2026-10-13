@@ -248,7 +248,7 @@ int ObMigrationTabletParam::build_from_tablet(const ObTablet &tablet)
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(tablet_meta_.assign(tablet.get_tablet_meta()))) {
     LOG_WARN("failed to assign source tablet meta", K(ret));
-  } else if (OB_FAIL(tablet.load_storage_schema(allocator_, schema))) {
+  } else if (OB_FAIL(tablet.load_write_layout(allocator_, schema))) {
     LOG_WARN("failed to load source storage schema", K(ret));
   } else if (OB_ISNULL(schema)) {
     ret = OB_ERR_UNEXPECTED;

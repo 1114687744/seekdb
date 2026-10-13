@@ -122,14 +122,17 @@ def run(binary):
             def newer_minis():
                 trace.read()
                 prepared = all(any(row['tablet'] == tablet and row['result'] == version
-                                   and row['simplified'] == 1 for row in trace.minis)
+                                   and row['before'] == version and row['observed'] == version
+                                   and row['simplified'] == 0 and row['ret'] == 0
+                                   and row['before_columns'] == row['observed_columns']
+                                   for row in trace.minis)
                                for tablet, version in ((parent_tablet, after_parent_version),
                                                        (child_tablet, after_child_version)))
                 installed = exp.sql("SELECT tablet_id FROM oceanbase.V$OB_SSTABLES "
                     f"WHERE table_type IN ('MINI','MINOR') AND upper_trans_version>{frozen} "
                     f"AND tablet_id IN ({parent_tablet},{child_tablet})", log=False)
                 return prepared and {int(row[0]) for row in installed} == {parent_tablet, child_tablet}
-            wait_for(newer_minis, 'post-freeze mini did not advance the local descriptor')
+            wait_for(newer_minis, 'post-freeze mini did not use the complete installed descriptor')
             # A new physical object after F must not be made a member by its
             # initial empty major snapshot or by a logical schema enumeration.
             exp.sql('CREATE TABLE merge_layout.late(id INT PRIMARY KEY,v INT)')

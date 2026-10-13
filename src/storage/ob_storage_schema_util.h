@@ -29,19 +29,9 @@ class ObTabletID;
 namespace  storage
 {
 
-// TODO(@DanLing) manage major/minor/mini's storage schema here
 class ObStorageSchemaUtil
 {
 public:
-  // Both descriptors must belong to the same stable layout identity. Preserve
-  // the newer version as a whole; a same-version full descriptor can restore
-  // simplified columns. Cross-layout copy callers supply the TARGET layout.
-  static int update_tablet_storage_schema(
-      const common::ObTabletID &tablet_id,
-      common::ObIAllocator &allocator,
-      const ObStorageSchema &old_schema_on_tablet,
-      const ObStorageSchema &param_schema,
-      ObStorageSchema *&chosen_schema);
   static int alloc_storage_schema(
       common::ObIAllocator &allocator,
       ObStorageSchema *&new_storage_schema);

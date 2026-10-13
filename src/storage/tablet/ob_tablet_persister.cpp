@@ -58,7 +58,6 @@ ObTabletTransformArg::ObTabletTransformArg()
     tablet_macro_info_ptr_(nullptr),
     tablet_meta_(),
     table_store_addr_(),
-    storage_schema_addr_(),
     tablet_macro_info_addr_(),
     ddl_kvs_(nullptr),
     ddl_kv_count_(0),
@@ -78,7 +77,6 @@ void ObTabletTransformArg::reset()
   tablet_macro_info_ptr_ = nullptr;
   tablet_meta_.reset();
   table_store_addr_.reset();
-  storage_schema_addr_.reset();
   tablet_macro_info_addr_.reset();
   ddl_kvs_ = nullptr;
   ddl_kv_count_ = 0;
@@ -93,7 +91,6 @@ bool ObTabletTransformArg::is_valid() const
   return table_store_addr_.is_none() ^ (nullptr != rowkey_read_info_ptr_)
       && tablet_meta_.is_valid()
       && table_store_addr_.is_valid()
-      && storage_schema_addr_.is_valid()
       && tablet_macro_info_addr_.is_valid();
 }
 
@@ -447,7 +444,6 @@ int ObTabletPersister::convert_tablet_to_mem_arg(
     arg.tablet_macro_info_ptr_ = tablet.macro_info_addr_.ptr_;
     arg.rowkey_read_info_ptr_ = tablet.rowkey_read_info_;
     arg.table_store_addr_ = tablet.table_store_addr_.addr_;
-    arg.storage_schema_addr_ = tablet.storage_schema_addr_.addr_;
     arg.ddl_kvs_ = tablet.ddl_kvs_;
     arg.ddl_kv_count_ = tablet.ddl_kv_count_;
     MEMCPY(arg.memtables_, tablet.memtables_, sizeof(ObIMemtable*) * MAX_MEMSTORE_CNT);
@@ -492,8 +488,6 @@ int ObTabletPersister::convert_tablet_to_disk_arg(
   }
 
   if (OB_FAIL(ret)) {
-  } else if (OB_FAIL(load_storage_schema_and_fill_write_info(tablet, allocator_, write_infos))) {
-  } else if (FALSE_IT(time_stats->click("load_storage_schema"))) {
   } else if (OB_FAIL(write_and_fill_args(write_infos, arg, total_write_ctxs, total_tablet_meta_size, block_info_set.meta_block_info_set_))) {
   } else if (FALSE_IT(time_stats->click("write_and_fill_args"))) {
   } else {
@@ -775,7 +769,6 @@ int ObTabletPersister::convert_arg_to_tablet(const ObTabletTransformArg &arg, Ob
   } else if (OB_FAIL(tablet.assign_memtables(arg.memtables_, arg.memtable_count_))) {
   } else {
     tablet.table_store_addr_.addr_ = arg.table_store_addr_;
-    tablet.storage_schema_addr_.addr_ = arg.storage_schema_addr_;
     tablet.macro_info_addr_.addr_ = arg.tablet_macro_info_addr_;
   }
   return ret;
@@ -1268,7 +1261,6 @@ int ObTabletPersister::write_and_fill_args(
   ObObjectBatchHandle handle;
   ObMetaDiskAddr* addr[] = { // NOTE: The order must be the same as the batch async write.
     &arg.table_store_addr_,
-    &arg.storage_schema_addr_,
   };
   constexpr int64_t total_addr_cnt = sizeof(addr) / sizeof(addr[0]);
   int64_t none_addr_cnt = 0;
@@ -1534,23 +1526,6 @@ int ObTabletPersister::fetch_table_store_and_write_info(
   } else {
     time_stats->click("fill_write_info");
   }
-  return ret;
-}
-
-int ObTabletPersister::load_storage_schema_and_fill_write_info(
-    const ObTablet &tablet,
-    common::ObArenaAllocator &allocator,
-    common::ObIArray<ObObjectWriteInfo> &write_infos)
-{
-  int ret = OB_SUCCESS;
-  ObStorageSchema *storage_schema = nullptr;
-  if (OB_FAIL(tablet.load_storage_schema(allocator, storage_schema))) {
-  } else if (OB_ISNULL(storage_schema)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("storage schema is null", K(ret), KP(storage_schema));
-  } else if (OB_FAIL(fill_write_info(allocator, storage_schema, write_infos))) {
-  }
-  ObTabletObjLoadHelper::free(allocator, storage_schema);
   return ret;
 }
 

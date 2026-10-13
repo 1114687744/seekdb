@@ -9,6 +9,9 @@
 #include "storage/tx/ob_multi_data_source.h"
 #include "share/rc/ob_server_runtime.h"
 #include "lib/time/ob_time_utility.h"
+#include "storage/instance_meta/instance_meta_store.h"
+#include "storage/tablelock/ob_lock_table.h"
+#include "storage/tx_table/ob_tx_table.h"
 
 namespace oceanbase
 {
@@ -17,6 +20,40 @@ using namespace share;
 using namespace transaction;
 namespace storage
 {
+int TabletWriteLayoutHelper::load_fixed_layout(const ObTabletID &tablet_id,
+    ObIAllocator &allocator, ObStorageSchema *&schema)
+{
+  using namespace share::instance_meta;
+  int ret = OB_INVALID_ARGUMENT;
+  schema = nullptr;
+  share::schema::ObTableSchema definition;
+  if (tablet_id.is_ls_tx_ctx_tablet()) {
+    ret = ObTxTable::build_ctx_table_schema(definition);
+  } else if (tablet_id.is_ls_tx_data_tablet()) {
+    ret = ObTxTable::build_data_table_schema(definition);
+  } else if (tablet_id.is_ls_lock_tablet()) {
+    ret = transaction::tablelock::ObLockTable::build_table_schema(definition);
+  } else {
+    for (int i = 0; i < static_cast<int>(InstanceTable::COUNT); ++i) {
+      const auto table = static_cast<InstanceTable>(i);
+      if (instance_table_definition(table)->tablet_id == tablet_id.id()) {
+        ret = InstanceMetaStore::build_schema(table, definition);
+        break;
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(ObTabletObjLoadHelper::alloc_and_new(allocator, schema))) {
+  } else {
+    ret = schema->init(allocator, definition);
+  }
+  if (OB_FAIL(ret)) {
+    ObTabletObjLoadHelper::free(allocator, schema);
+    schema = nullptr;
+  }
+  return ret;
+}
+
 bool TabletWriteLayout::is_valid() const
 {
   return layout_id_ != 0 && layout_id_ != OB_INVALID_ID

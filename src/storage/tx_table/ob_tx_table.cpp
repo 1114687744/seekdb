@@ -185,7 +185,7 @@ int ObTxTable::create_tablet(const SCN &create_scn)
   return ret;
 }
 
-int ObTxTable::get_ctx_table_schema_(share::schema::ObTableSchema &schema)
+int ObTxTable::build_ctx_table_schema(share::schema::ObTableSchema &schema)
 {
   int ret = OB_SUCCESS;
   uint64_t table_id = ObTabletID::LS_TX_CTX_TABLET_ID;
@@ -250,7 +250,7 @@ int ObTxTable::create_ctx_tablet_(const share::SCN &create_scn)
   share::schema::ObTableSchema table_schema;
   ObArenaAllocator arena_allocator;
   ObCreateTabletSchema create_tablet_schema;
-  if (OB_FAIL(get_ctx_table_schema_( table_schema))) {
+  if (OB_FAIL(build_ctx_table_schema( table_schema))) {
   } else if (OB_FAIL(create_tablet_schema.init(arena_allocator, table_schema,
         false/*skip_column_info*/))) {
   } else if (OB_FAIL(ls_->create_ls_inner_tablet(LS_TX_CTX_TABLET,
@@ -261,7 +261,7 @@ int ObTxTable::create_ctx_tablet_(const share::SCN &create_scn)
   return ret;
 }
 
-int ObTxTable::get_data_table_schema_(share::schema::ObTableSchema &schema)
+int ObTxTable::build_data_table_schema(share::schema::ObTableSchema &schema)
 {
   int ret = OB_SUCCESS;
   uint64_t table_id = ObTabletID::LS_TX_DATA_TABLET_ID;
@@ -357,7 +357,7 @@ int ObTxTable::create_data_tablet_(const share::SCN &create_scn)
   share::schema::ObTableSchema table_schema;
   ObArenaAllocator arena_allocator;
   ObCreateTabletSchema create_tablet_schema;
-  if (OB_FAIL(get_data_table_schema_( table_schema))) {
+  if (OB_FAIL(build_data_table_schema( table_schema))) {
   } else if (OB_FAIL(create_tablet_schema.init(arena_allocator, table_schema,
         false/*skip_column_info*/))) {
   } else if (OB_FAIL(ls_->create_ls_inner_tablet(LS_TX_DATA_TABLET,

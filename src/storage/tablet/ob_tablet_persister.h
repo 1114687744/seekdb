@@ -72,7 +72,6 @@ public:
   TO_STRING_KV(KP_(rowkey_read_info_ptr),
                K_(tablet_meta),
                K_(table_store_addr),
-               K_(storage_schema_addr),
                K_(tablet_macro_info_addr),
                KP_(tablet_macro_info_ptr));
 public:
@@ -80,7 +79,6 @@ public:
   const ObTabletMacroInfo *tablet_macro_info_ptr_;
   ObTabletMeta tablet_meta_;
   ObMetaDiskAddr table_store_addr_;
-  ObMetaDiskAddr storage_schema_addr_;
   ObMetaDiskAddr tablet_macro_info_addr_;
   ObDDLKV **ddl_kvs_;
   int64_t ddl_kv_count_;
@@ -345,10 +343,6 @@ private:
       common::ObIArray<ObObjectsWriteCtx> &meta_write_ctxs,
       int64_t &total_tablet_meta_size,
       ObBlockInfoSet &block_info_set);
-  int load_storage_schema_and_fill_write_info(
-      const ObTablet &tablet,
-      common::ObArenaAllocator &allocator,
-      common::ObIArray<ObObjectWriteInfo> &write_infos);
   int link_write_medium_info_list(
       const ObTabletDumpedMediumInfo *medium_info_list,
       common::ObIArray<ObObjectsWriteCtx> &meta_write_ctxs,

@@ -153,7 +153,7 @@ int ObDDLTableMergeDag::init_tablet_ctx()
                ddl_param_.direct_load_type_ == IDEM_DIRECT_LOAD_DDL) {
       tablet_ctx_->tablet_param_.storage_schema_ = &ddl_param_.user_data_.storage_schema_;
     } else {
-      if (OB_FAIL(tablet_handle.get_obj()->load_storage_schema(arena_, tablet_ctx_->tablet_param_.storage_schema_))) {
+      if (OB_FAIL(tablet_handle.get_obj()->load_write_layout(arena_, tablet_ctx_->tablet_param_.storage_schema_))) {
       }
     }
   }
@@ -1052,7 +1052,7 @@ int get_storage_schema_sn_idem(const ObTabletDDLParam &ddl_param,
     LOG_WARN("invalid argument", K(ret), K(ddl_param), K(tablet));
   } else if (OB_FAIL(tablet.get_ddl_complete(share::SCN::max_scn(), allocator, data))) {
   } else if (!data.has_complete_ || !data.is_valid()) {
-    if (OB_FAIL(tablet.load_storage_schema(allocator, storage_schema))) {
+    if (OB_FAIL(tablet.load_write_layout(allocator, storage_schema))) {
     }
   } else {
     /* load storage schema */
@@ -1086,7 +1086,7 @@ int ObTabletDDLUtil::compact_ddl_kv(
   } else if (is_idem_type(ddl_param.direct_load_type_) &&
                           OB_FAIL(get_storage_schema_sn_idem(ddl_param, arena, tablet, storage_schema))) {
     LOG_WARN("load storage schema failed", K(ret), K(ddl_param));
-  } else if (OB_FAIL(tablet.load_storage_schema(arena, storage_schema))) {
+  } else if (OB_FAIL(tablet.load_write_layout(arena, storage_schema))) {
   }
 
   if (OB_FAIL(ret)) {

@@ -36,6 +36,8 @@ private:
 class TabletWriteLayoutHelper final
 {
 public:
+  static int load_fixed_layout(const common::ObTabletID &tablet_id,
+      common::ObIAllocator &allocator, ObStorageSchema *&schema);
   static int ensure_installed(ObTablet &tablet, const ObStorageSchema &schema, int64_t deadline);
   static int initialize(ObTablet &tablet, const ObStorageSchema &schema,
       mds::MdsCtx &ctx, bool replay, const share::SCN &scn);

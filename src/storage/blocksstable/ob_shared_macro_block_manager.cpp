@@ -527,15 +527,7 @@ int ObSharedMacroBlockMgr::update_tablet(
       const int64_t data_block_count = meta_handle.get_sstable_meta().get_data_macro_block_count();
       ObMacroIdIterator id_iterator;
       MacroBlockId macro_id;
-      ObArenaAllocator tmp_arena("ShrBlkMgrTmp");
-      ObStorageSchema *storage_schema = nullptr;
-      if (OB_FAIL(tablet_handle.get_obj()->load_storage_schema(tmp_arena, storage_schema))) {
-      } else if (storage_schema->is_column_info_simplified()) {
-        /* column info simplified, cannot calculate column checksum while ObSSTableIndexBuilder::merge_index_tree
-           in ObSSTableIndexBuilder::close operation later. Therefore, the defragmentation action is deferred
-           until a complete storage schema is available. */
-        ret = OB_EAGAIN;
-      } else if (OB_UNLIKELY(1 != data_block_count)) {
+      if (OB_UNLIKELY(1 != data_block_count)) {
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("this sstable is not small", K(ret), K(data_block_count));
       } else if (OB_FAIL(meta_handle.get_sstable_meta().get_macro_info().get_data_block_iter(id_iterator))) {
@@ -628,7 +620,7 @@ int ObSharedMacroBlockMgr::rebuild_sstable(
   } else if (OB_FAIL(parse_merge_type(old_sstable, merge_type))) {
   } else if (OB_FAIL(prepare_data_desc(
       tablet,
-      old_meta_handle.get_sstable_meta().get_basic_meta(),
+      old_meta_handle.get_sstable_meta(),
       merge_type,
       tablet.get_snapshot_version(),
       data_version,
@@ -684,7 +676,7 @@ int ObSharedMacroBlockMgr::create_new_sstable(
 
 int ObSharedMacroBlockMgr::prepare_data_desc(
     const ObTablet &tablet,
-    const ObSSTableBasicMeta &basic_meta,
+    const ObSSTableMeta &file_meta,
     const ObMergeType &merge_type,
     const int64_t snapshot_version,
     const int64_t major_data_version,
@@ -693,48 +685,17 @@ int ObSharedMacroBlockMgr::prepare_data_desc(
 {
   int ret = OB_SUCCESS;
   data_desc.reset();
-  if (is_mds_merge(merge_type)) {
-    const ObStorageSchema *storage_schema = ObMdsSchemaHelper::get_instance().get_storage_schema();
-    if (OB_ISNULL(storage_schema)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("storage schema is null", K(ret), KP(storage_schema));
-    } else if (OB_UNLIKELY(!storage_schema->is_valid())) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("mds storage schema is invalid", K(ret), KP(storage_schema), KPC(storage_schema));
-    } else if (OB_FAIL(data_desc.init(
-          false/*is_ddl*/,
-          *storage_schema,
-          tablet.get_tablet_meta().tablet_id_,
-          merge_type,
-          snapshot_version,
-          major_data_version,
-          tablet.get_tablet_meta().micro_index_clustered_,
-          0/*concurrent_cnt*/,
-          end_scn))) {
-    }
-  } else {
-    ObArenaAllocator tmp_arena("ShrBlkMgrTmp");
-    ObStorageSchema *storage_schema = nullptr;
-    if (OB_FAIL(tablet.load_storage_schema(tmp_arena, storage_schema))) {
-    }
-
-    if (FAILEDx(data_desc.init(
-          false/*is_ddl*/,
-          *storage_schema,
-          tablet.get_tablet_meta().tablet_id_,
-          merge_type,
-          snapshot_version,
-          major_data_version,
-          tablet.get_tablet_meta().micro_index_clustered_,
-          0/*concurrent_cnt*/,
-          end_scn))) {
-      LOG_WARN("failed to init static desc", K(ret), KPC(storage_schema),
-        K(tablet), "merge_type", merge_type_to_str(merge_type), K(snapshot_version),
-        "major_data_version", DVP(major_data_version));
-    } else if (OB_FAIL(data_desc.get_desc().update_basic_info_from_macro_meta(basic_meta))) {
-    } else if (OB_FAIL(data_desc.get_col_desc().mock_valid_col_default_checksum_array(basic_meta.column_cnt_))) {
-    }
-    ObTabletObjLoadHelper::free(tmp_arena, storage_schema);
+  ObArenaAllocator allocator("ShrBlkMgrTmp");
+  ObStorageSchema schema;
+  const auto &basic_meta = file_meta.get_basic_meta();
+  if (OB_FAIL(file_meta.get_storage_schema(allocator, schema))) {
+  } else if (OB_FAIL(data_desc.init(false /* is_ddl */, schema,
+      tablet.get_tablet_meta().tablet_id_, merge_type, snapshot_version, major_data_version,
+      tablet.get_tablet_meta().micro_index_clustered_, 0 /* concurrent_cnt */, end_scn))) {
+  } else if (!is_mds_merge(merge_type)
+      && OB_FAIL(data_desc.get_desc().update_basic_info_from_macro_meta(basic_meta))) {
+  } else if (!is_mds_merge(merge_type)
+      && OB_FAIL(data_desc.get_col_desc().mock_valid_col_default_checksum_array(basic_meta.column_cnt_))) {
   }
   return ret;
 }

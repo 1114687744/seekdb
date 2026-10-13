@@ -764,13 +764,9 @@ int ObStandbyRestoreTabletBuilderUtil::inner_update_tablet_table_store_with_majo
 {
   int ret = OB_SUCCESS;
   ObTabletHandle tablet_handle;
-  ObArenaAllocator allocator;
-  ObStorageSchema *tablet_storage_schema = nullptr;
   if (multi_version_start < 0 || OB_ISNULL(tablet) || OB_ISNULL(ls) || !table_handle.is_valid()) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("table ptr should not be null", K(ret), K(multi_version_start), KP(tablet), K(table_handle), KP(ls));
-  } else if (OB_FAIL(tablet->load_storage_schema(allocator, tablet_storage_schema))) {
-    LOG_WARN("fail to load storage schema failed", K(ret));
   } else {
     const ObTabletID &tablet_id = tablet->get_tablet_meta().tablet_id_;
     const ObITable *table = table_handle.get_table();
@@ -789,12 +785,7 @@ int ObStandbyRestoreTabletBuilderUtil::inner_update_tablet_table_store_with_majo
               true/*need_report*/,
               major_sstables_param.has_truncate_info_)))) {
       LOG_WARN("failed to init with compaction info", KR(ret));
-    } else if (tablet_storage_schema->get_schema_version() < major_sstables_param.storage_schema_.get_schema_version()) {
-      SERVER_EVENT_ADD("standby_restore", "schema_change_need_merge_tablet_meta",
-          "tenant_id", OB_SERVER_RUNTIME_ID,
-          "tablet_id", tablet_id.id(),
-          "old_schema_version", tablet_storage_schema->get_schema_version(),
-          "new_schema_version", major_sstables_param.storage_schema_.get_schema_version());
+
     }
 #ifdef ERRSIM
     SERVER_EVENT_ADD("standby_restore", "update_major_tablet_table_store",
@@ -813,7 +804,6 @@ int ObStandbyRestoreTabletBuilderUtil::inner_update_tablet_table_store_with_majo
       LOG_INFO("succeed to build ha tablet new table store", K(ret), KPC(tablet), K(param), K(tablet_id));
     }
   }
-  ObTabletObjLoadHelper::free(allocator, tablet_storage_schema);
   return ret;
 }
 

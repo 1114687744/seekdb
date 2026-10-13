@@ -1346,7 +1346,7 @@ int ObTabletForkUtil::schedule_baseline(const ObTablet &tablet, int depth) {
   ObStorageSchema *storage_schema = nullptr;
   if (meta.create_table_id_ == OB_INVALID_ID) {
     ret = OB_ERR_UNEXPECTED;
-  } else if (OB_FAIL(tablet.load_storage_schema(allocator, storage_schema))) {
+  } else if (OB_FAIL(tablet.load_write_layout(allocator, storage_schema))) {
   } else if (OB_ISNULL(storage_schema)) {
     ret = OB_ERR_UNEXPECTED;
   } else {
