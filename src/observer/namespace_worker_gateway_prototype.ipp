@@ -753,23 +753,17 @@ int prepare_in_process_write(const WritePrepareRequest &request,
   THIS_WORKER.set_timeout_ts(old_timeout);
   return ret;
 }
-int write_in_process_batch(const ObTxDesc &view, const WriteBatch &batch,
-                           int64_t &affected, WriteResult &duplicates)
+int invoke_in_process_write(const ObTxDesc &view, uint64_t handle,
+    const ObTabletID &tablet, bool skip_flush_redo, const NativeWriteOperation &operation)
 {
-  affected = 0;
   InProcessStorage *ctx = in_process_storage;
   const StorageSpaceHandle space = active_worker_storage_space();
   if (ctx == nullptr || !ctx->initialized || !ctx->writes) { return OB_NOT_INIT; }
-  if (ctx->ns != serving_namespace() || !ctx->owns(space)) {
-    return OB_INVALID_ARGUMENT;
-  }
-  const int64_t old_timeout = THIS_WORKER.get_timeout_ts();
-  auto *old_session = THIS_WORKER.get_session();
-  THIS_WORKER.set_session(&ctx->session);
-  const int ret = ctx->writes->batch(view, batch, affected, duplicates);
-  THIS_WORKER.set_session(old_session);
-  THIS_WORKER.set_timeout_ts(old_timeout);
-  return ret;
+  if (ctx->ns != serving_namespace() || !ctx->owns(space)) { return OB_INVALID_ARGUMENT; }
+  // The iterator belongs to SQL and may evaluate rows while storage consumes
+  // it. Keep the caller's session, just as the native scan entry does; only
+  // the explicitly supplied transaction changes to the storage owner.
+  return ctx->writes->invoke(view, handle, tablet, skip_flush_redo, operation);
 }
 int build_tablet_write_defensive(const ObTableSchema &schema,
                                  int64_t schema_version,

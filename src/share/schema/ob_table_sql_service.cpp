@@ -18,7 +18,7 @@
 #include "ob_table_sql_service.h"
 #include "share/schema/schema_catalog_fields.h"
 #include "share/schema/schema_catalog_row.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "share/ob_server_struct.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 #include "rootserver/fork_table/namespace_fork_kernel_prototype.h"
@@ -44,7 +44,7 @@ int with_core_table(ObISQLClient &client, const char *name,
     ObCoreTableProxy cells(name, client);
     return operation(cells);
   }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     ObCoreTableProxy cells(name, catalog);
     return operation(cells);
@@ -84,7 +84,7 @@ int ObTableSqlService::update_table_fields_(ObISQLClient &sql_client, uint64_t t
   int ret = OB_SUCCESS;
   if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
     bool matched = false;
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       return catalog.update_fields(OB_ALL_TABLE_TID, encode, matched);
     });
@@ -106,7 +106,7 @@ int ObTableSqlService::delete_catalog_fields_(ObISQLClient &sql_client, uint64_t
   affected_rows = 0;
   int ret = OB_SUCCESS;
   if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       return catalog.erase_prefix(inner_table_id, encode, affected_rows);
     });
@@ -131,7 +131,7 @@ int ObTableSqlService::insert_history_fields_(ObISQLClient &sql_client, uint64_t
       } else if (OB_FAIL(exec_insert(sql_client, table_id, table_name, dml, affected_rows))) {
       } else if (!is_single_row(affected_rows)) { ret = OB_ERR_UNEXPECTED; }
     }
-    if (OB_SUCC(ret)) { ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    if (OB_SUCC(ret)) { ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_fields(inner_table_id, encode); });
     }
     if (OB_SUCC(ret)) { affected_rows = 1; }
@@ -236,7 +236,7 @@ int ObTableSqlService::delete_table_part_info(const ObTableSchema &table_schema,
   int ret = check_ddl_allowed(table_schema, &sql_client);
   if (OB_SUCC(ret) && !is_inner_table(table_schema.get_table_id())
       && table_schema.get_part_level() > 0 && !table_schema.is_vir_table() && !table_schema.is_view_table()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (uint64_t inner : {OB_ALL_PART_INFO_TID, OB_ALL_PART_TID, OB_ALL_SUB_PART_TID, OB_ALL_DEF_SUB_PART_TID}) {
@@ -332,7 +332,7 @@ int ObTableSqlService::drop_inc_partition(common::ObISQLClient &sql_client,
       } else { ret = delete_from_all_monitor_modified(sql_client, table_id, modified); }
     }
     if (OB_SUCC(ret)) {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) {
         int ret = OB_SUCCESS;
         int64_t total = 0;
@@ -428,7 +428,7 @@ int ObTableSqlService::drop_inc_sub_partition(common::ObISQLClient &sql_client,
 
     if (OB_SUCC(ret)) {
       int64_t affected_rows = 0;
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) {
         int ret = OB_SUCCESS;
         for (int64_t i = 0; OB_SUCC(ret) && i < inc_part_num; ++i) {
@@ -467,7 +467,7 @@ int ObTableSqlService::drop_inc_all_sub_partition(common::ObISQLClient &sql_clie
   if (OB_SUCC(ret) && !ori_table.has_tablet()) { ret = OB_INVALID_ARGUMENT; }
   if (OB_SUCC(ret) && inc_table.get_part_array() == nullptr) { ret = OB_ERR_UNEXPECTED; }
   if (OB_SUCC(ret)) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       const int64_t count = is_truncate_table ? 1 : inc_table.get_partition_num();
@@ -927,7 +927,7 @@ int ObTableSqlService::revise_check_cst_column_info(
   if (OB_FAIL(check_ddl_allowed(table_schema))) {
   } else if (csts.empty()) { ret = OB_ERR_UNEXPECTED; }
   else {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < csts.count(); ++i) {
@@ -988,7 +988,7 @@ int ObTableSqlService::update_single_column(
   ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
   } else if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_column(new_column_schema); });
   } else if (OB_FAIL(gen_column_dml(new_column_schema, dml))) {
   } else if (!is_core_table(table_id)) {
@@ -1076,7 +1076,7 @@ int ObTableSqlService::add_columns_for_core(ObISQLClient &sql_client, const ObTa
   int ret = OB_SUCCESS;
   if (!GCTX.in_bootstrap_) {
     if (OB_FAIL(check_ddl_allowed(table))) { return ret; }
-    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       ObCoreTableProxy kv(OB_ALL_COLUMN_HISTORY_TNAME, catalog);
       int ret = kv.load_for_update();
@@ -1211,7 +1211,7 @@ int ObTableSqlService::batch_add_columns_for_create_table(common::ObISQLClient &
     const ObIArray<ObTableSchema> &tables)
 {
   if (tables.empty()) { return OB_SUCCESS; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
@@ -1233,7 +1233,7 @@ int ObTableSqlService::add_columns_for_not_core(ObISQLClient &sql_client,
   if (!GCTX.in_bootstrap_) {
     int ret = check_ddl_allowed(table, &sql_client);
     if (OB_SUCC(ret)) {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_columns(table); });
     }
     return ret;
@@ -1282,7 +1282,7 @@ int ObTableSqlService::batch_add_constraints_for_create_table(
     else { has_constraints = true; }
   }
   if (OB_SUCC(ret) && has_constraints) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
@@ -1302,7 +1302,7 @@ int ObTableSqlService::add_constraints_for_not_core(ObISQLClient &sql_client, co
   if (OB_FAIL(check_ddl_allowed(table))) {
   } else if (is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
   else if (table.get_constraint_count() > 0) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_constraints(table); });
   }
   return ret;
@@ -1314,7 +1314,7 @@ int ObTableSqlService::rename_csts_in_inner_table(common::ObISQLClient &sql_clie
   int ret = OB_SUCCESS;
   if (OB_FAIL(check_ddl_allowed(table_schema))) {
   } else if (table_schema.get_constraint_count() > 0) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       ObArenaAllocator allocator(ObModIds::OB_SCHEMA_OB_SCHEMA_ARENA);
       int ret = OB_SUCCESS;
@@ -1337,7 +1337,7 @@ int ObTableSqlService::delete_constraint(common::ObISQLClient &sql_client,
   int ret = OB_SUCCESS;
   if (OB_FAIL(check_ddl_allowed(table_schema, &sql_client))) {
   } else if (table_schema.get_constraint_count() > 0) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (auto it = table_schema.constraint_begin(); OB_SUCC(ret) && it != table_schema.constraint_end(); ++it) {
@@ -1445,7 +1445,7 @@ int ObTableSqlService::add_single_constraint(ObISQLClient &sql_client,
     const bool need_to_deal_with_cst_cols, const bool do_cst_revise)
 {
   UNUSED(do_cst_revise);
-  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     return catalog.insert_constraint(constraint, only_history, need_to_deal_with_cst_cols);
   });
@@ -1456,7 +1456,7 @@ int ObTableSqlService::add_single_column(ObISQLClient &sql_client,
                                          const bool only_history)
 {
   if (!is_core_table(column.get_table_id()) && !GCTX.in_bootstrap_) {
-    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = only_history ? OB_SUCCESS : catalog.insert_column(column, false);
       if (OB_SUCC(ret)) { ret = catalog.insert_column(column, true); }
@@ -1476,7 +1476,7 @@ int ObTableSqlService::add_single_column(ObISQLClient &sql_client,
       ret = supplement_for_core_table(sql_client, table_id == OB_ALL_TABLE_TID, column);
     }
     if (OB_SUCC(ret)) {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_column(column, true); });
     }
     return ret;
@@ -1532,7 +1532,7 @@ int ObTableSqlService::add_table(
   if (!is_core_table(table.get_table_id()) && !GCTX.in_bootstrap_) {
     int ret = check_table_options(table);
     if (OB_SUCC(ret)) {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) {
         int rc = only_history ? OB_SUCCESS : catalog.insert_table(table, false, update_object_status_ignore_version);
         if (rc == OB_SUCCESS) { rc = catalog.insert_table(table, true, update_object_status_ignore_version); }
@@ -1553,7 +1553,7 @@ int ObTableSqlService::add_table(
     } else if (OB_FAIL(exec_insert(sql_client, table.get_table_id(), OB_ALL_TABLE_HISTORY_TNAME, dml, affected))) {
     } else if (!is_single_row(affected) && !is_zero_row(affected)) { ret = OB_ERR_UNEXPECTED; }
     if (OB_SUCC(ret)) {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) {
         return catalog.insert_table(table, true, update_object_status_ignore_version);
       });
@@ -1618,7 +1618,7 @@ int ObTableSqlService::batch_add_table_for_create_table(common::ObISQLClient &sq
     const ObIArray<ObTableSchema> &tables)
 {
   if (tables.empty()) { return OB_SUCCESS; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
@@ -1638,7 +1638,7 @@ int ObTableSqlService::check_table_history_matched_(
   if (table_id == OB_INVALID_ID || schema_version <= 0) { return OB_INVALID_ARGUMENT; }
   // Core definitions use the existing cell representation, not __all_table.
   if (is_core_table(table_id)) { return OB_SUCCESS; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) { return catalog.check_table_history(table_id, schema_version); });
 }
 
@@ -1744,7 +1744,7 @@ int ObTableSqlService::delete_single_constraint(
   int ret = OB_SUCCESS;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
   } else {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int64_t deleted_columns = 0;
       return catalog.erase_constraint(orig_constraint, new_schema_version, deleted_columns);
@@ -2161,7 +2161,7 @@ int ObTableSqlService::update_table_attribute(ObISQLClient &sql_client,
   } else if (native_update) {
     if (OB_FAIL(check_table_options(new_table_schema))) {
     } else {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) {
         return catalog.update_table(new_table_schema, update_object_status_ignore_version);
       });
@@ -2245,7 +2245,7 @@ int ObTableSqlService::update_partition_option_(ObISQLClient &sql_client,
                                                 const ObTableSchema &table)
 {
   if (!is_core_table(table.get_table_id()) && !GCTX.in_bootstrap_) {
-    return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       bool matched = false;
       int ret = catalog.update_fields(OB_ALL_TABLE_TID, [&](SchemaCatalogRow &fields) {
@@ -2275,7 +2275,7 @@ int ObTableSqlService::update_all_part_for_subpart(ObISQLClient &sql_client,
 {
   int ret = check_ddl_allowed(table);
   if (OB_SUCC(ret) && !update_part_array.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < update_part_array.count(); ++i) {
@@ -3007,7 +3007,7 @@ int ObTableSqlService::batch_insert_ori_schema_version(
   bool has_user_table = false;
   for (int64_t i = 0; i < table_ids.count(); ++i) { has_user_table |= !is_inner_table(table_ids.at(i)); }
   if (!has_user_table) { return OB_SUCCESS; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < table_ids.count(); ++i) {
@@ -3043,7 +3043,7 @@ int ObTableSqlService::delete_foreign_key(
   int ret = check_ddl_allowed(table_schema, &sql_client);
   const auto &infos = table_schema.get_foreign_key_infos();
   if (OB_SUCC(ret) && !infos.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
@@ -3069,7 +3069,7 @@ int ObTableSqlService::update_check_constraint_state(
   if (OB_FAIL(check_ddl_allowed(table))) {
   } else if (is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
   else {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_constraint(cst); });
     if (OB_SUCC(ret)) {
       ObSchemaOperation opt;
@@ -3089,7 +3089,7 @@ int ObTableSqlService::update_foreign_key_state(common::ObISQLClient &sql_client
   int ret = check_ddl_allowed(table);
   const auto &infos = table.get_foreign_key_infos();
   if (OB_SUCC(ret) && !infos.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
@@ -3116,7 +3116,7 @@ int ObTableSqlService::add_foreign_key(
   const auto &infos = table.get_foreign_key_infos();
   if (OB_SUCC(ret) && is_inner_table(table.get_table_id())) { ret = OB_OP_NOT_ALLOW; }
   if (OB_SUCC(ret) && !infos.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < infos.count(); ++i) {
@@ -3156,7 +3156,7 @@ int ObTableSqlService::drop_foreign_key(
 {
   int ret = check_ddl_allowed(table_schema);
   if (OB_SUCC(ret) && foreign_key_info != nullptr) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = catalog.erase_foreign_key(*foreign_key_info, new_schema_version, true);
       if (OB_SUCC(ret)) { ret = catalog.erase_foreign_key_columns(*foreign_key_info, new_schema_version); }
@@ -3220,7 +3220,7 @@ int ObTableSqlService::inner_update_table_options_(ObISQLClient &sql_client,
   } else if (!is_core_table(table_id) && !GCTX.in_bootstrap_) {
     if (OB_FAIL(check_table_options(new_table_schema))) {
     } else {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+      ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
           [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_table(new_table_schema); });
     }
   } else if (OB_FAIL(gen_table_options_dml(new_table_schema, update_object_status_ignore_version, dml))) {
@@ -3357,7 +3357,7 @@ int ObTableSqlService::add_mock_fk_parent_table(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("sql_client is NULL", K(ret));
   } else {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = catalog.insert_mock_parent(mock_fk_parent_table_schema, false);
       if (OB_SUCC(ret)) { ret = catalog.insert_mock_parent_columns(mock_fk_parent_table_schema); }
@@ -3398,10 +3398,10 @@ int ObTableSqlService::alter_mock_fk_parent_table(
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("sql_client is NULL", K(ret));
   } else if (MOCK_FK_PARENT_TABLE_OP_ADD_COLUMN == mock_fk_parent_table_schema.get_operation_type()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.insert_mock_parent_columns(mock_fk_parent_table_schema); });
   } else if (MOCK_FK_PARENT_TABLE_OP_DROP_COLUMN == mock_fk_parent_table_schema.get_operation_type()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.erase_mock_parent_columns(mock_fk_parent_table_schema); });
   }
   if (OB_SUCC(ret)) {
@@ -3421,7 +3421,7 @@ int ObTableSqlService::drop_mock_fk_parent_table(
 {
   int ret = OB_SUCCESS;
   if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
-  ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+  ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = catalog.erase_mock_parent_columns(mock_fk_parent_table_schema);
     if (OB_SUCC(ret)) { ret = catalog.erase_mock_parent(mock_fk_parent_table_schema); }
@@ -3457,7 +3457,7 @@ int ObTableSqlService::replace_mock_fk_parent_table(
 {
   int ret = OB_SUCCESS;
   if (sql_client == nullptr) { return OB_INVALID_ARGUMENT; }
-  ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+  ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = catalog.erase_mock_parent_columns(mock_fk_parent_table_schema);
     if (OB_SUCC(ret)) { ret = catalog.erase_mock_parent(mock_fk_parent_table_schema); }
@@ -3491,7 +3491,7 @@ int ObTableSqlService::update_mock_fk_parent_table_schema_version(
   if (OB_FAIL(schema_service_.gen_new_schema_version(OB_INVALID_VERSION, new_schema_version))) {
   } else {
     mock_fk_parent_table_schema.set_schema_version(new_schema_version);
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) { return catalog.update_mock_parent_version(mock_fk_parent_table_schema); });
   }
   if (OB_SUCC(ret)) {
@@ -3526,7 +3526,7 @@ int ObTableSqlService::update_foreign_key_in_mock_fk_parent_table(
     } else { ret = schema_service_.gen_new_schema_version(OB_INVALID_VERSION, version); }
   }
   if (OB_SUCC(ret) && !infos.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(*sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(*sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       if (need_update_foreign_key_columns) {
@@ -3550,7 +3550,7 @@ int ObTableSqlService::update_view_columns(ObISQLClient &sql_client,
 {
   int ret = check_ddl_allowed(table, &sql_client);
   if (OB_SUCC(ret) && table.get_column_count() > 0) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (auto iter = table.column_begin(); OB_SUCC(ret) && iter != table.column_end(); ++iter) {

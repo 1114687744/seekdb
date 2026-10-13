@@ -18,7 +18,7 @@
 #include "ob_ddl_sql_service.h"
 #include "share/ob_server_struct.h"
 #include "observer/namespace_worker_protocol_prototype.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "share/schema/schema_catalog_fields.h"
 
 namespace oceanbase
@@ -50,7 +50,7 @@ int ObDDLSqlService::log_operations(const ObIArray<ObSchemaOperation> &operation
   }
   if (OB_FAIL(ret)) {
   } else if (!lifecycle->is_bootstrapping()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(client, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(client, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int ret = OB_SUCCESS;
       for (int64_t i = 0; OB_SUCC(ret) && i < operations.count(); ++i) {

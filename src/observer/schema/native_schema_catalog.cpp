@@ -1,7 +1,6 @@
 /* Copyright (c) 2025 OceanBase. Licensed under the Apache License, Version 2.0. */
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "observer/schema/native_schema_catalog.h"
-#include "namespace/namespace.h"
 #include "observer/schema/ob_schema_retrieve_utils.h"
 #include "share/schema/schema_catalog_fields.h"
 #include "share/schema/schema_catalog_row.h"
@@ -17,8 +16,6 @@
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tx/ob_trans_service.h"
 #include "storage/tx_storage/ob_access_service.h"
-#include "common/mysqlclient/ob_mysql_transaction.h"
-#include "query/session/ob_inner_sql_connection_access.h"
 
 namespace oceanbase {
 namespace observer {
@@ -118,53 +115,6 @@ struct NativeSchemaCatalog::State
 NativeSchemaCatalog::NativeSchemaCatalog(uint64_t id, storage::ObAccessService &access,
     transaction::ObTransService &transactions) : state_(new State(id, access, transactions)) {}
 NativeSchemaCatalog::~NativeSchemaCatalog() { close(); }
-
-int NativeSchemaCatalog::with_ddl_transaction(ObISQLClient &client, int64_t deadline,
-    const std::function<int(NativeSchemaCatalog &)> &operation)
-{
-  auto *owner = dynamic_cast<ObMySQLTransaction *>(&client);
-  if (owner == nullptr || !owner->is_started() || !operation) { return OB_INVALID_ARGUMENT; }
-  auto *access = share::server_service<storage::ObAccessService>();
-  auto *transactions = share::server_service<transaction::ObTransService>();
-  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
-  std::shared_ptr<NativeSchemaCatalog> catalog(new (std::nothrow)
-      NativeSchemaCatalog(owner->target_namespace(), *access, *transactions));
-  if (!catalog) { return OB_ALLOCATE_MEMORY_FAILED; }
-  int ret = owner->retain_until_end(catalog);
-  if (OB_SUCC(ret)) {
-    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(owner->get_connection(),
-        [&](transaction::ObTxDesc &native) {
-      const int rc = catalog->attach(native, deadline);
-      return rc == OB_SUCCESS ? operation(*catalog) : rc;
-    });
-  }
-  return ret;
-}
-
-int NativeSchemaCatalog::with_read_client(ObISQLClient &client, int64_t deadline, int64_t snapshot,
-    const std::function<int(NativeSchemaCatalog &)> &operation)
-{
-  if (!operation) { return OB_INVALID_ARGUMENT; }
-  if (dynamic_cast<ObMySQLTransaction *>(&client) != nullptr) {
-    if (snapshot > 0) { return OB_INVALID_ARGUMENT; }
-    return observer::NativeSchemaCatalog::with_ddl_transaction(client, deadline, operation);
-  }
-  auto *access = share::server_service<storage::ObAccessService>();
-  auto *transactions = share::server_service<transaction::ObTransService>();
-  if (access == nullptr || transactions == nullptr) { return OB_NOT_INIT; }
-  observer::NativeSchemaCatalog catalog(client.target_namespace(), *access, *transactions);
-  int ret = OB_SUCCESS;
-  if (snapshot > 0) {
-    const auto view = ns::namespace_registry().catalog_views().find(
-        client.target_namespace(), snapshot);
-    ret = view ? catalog.begin_read(deadline, view) : OB_SNAPSHOT_DISCARDED;
-  } else {
-    ret = catalog.begin_read(deadline, !share::server_is_write_enabled());
-  }
-  if (OB_SUCC(ret)) { ret = operation(catalog); }
-  const int cleanup = catalog.close();
-  return ret == OB_SUCCESS ? cleanup : ret;
-}
 
 int NativeSchemaCatalog::begin_read(int64_t deadline, bool weak)
 {

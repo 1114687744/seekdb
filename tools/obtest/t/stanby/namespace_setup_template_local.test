@@ -20,4 +20,4 @@ insert into replica_ns.t values(1,10,repeat('baseline',2048));
 eval FORK NAMESPACE replica_seed FROM ns1;
 db_s=OBI(cluster=1,proxy_num=0,primary=db_p);
 db_s.reboot;
-sleep 3;
+db_s.check_until_timeout select count(*) from oceanbase.__all_virtual_server_stat where role = 'STANDBY', 1, 120;

@@ -16,7 +16,7 @@
 
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_trigger_sql_service.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "share/schema/ob_trigger_info.h"
 
 namespace oceanbase
@@ -33,7 +33,7 @@ int ObTriggerSqlService::create_trigger(const ObTriggerInfo &trigger_info,
                                         ObISQLClient &sql_client,
                                         const ObString *ddl_stmt_str)
 {
-  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  int ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
         return catalog.write_trigger(trigger_info, trigger_info.get_schema_version(),
             is_replace ? NativeSchemaCatalog::TriggerWrite::UPDATE : NativeSchemaCatalog::TriggerWrite::INSERT);
@@ -51,7 +51,7 @@ int ObTriggerSqlService::drop_trigger(const ObTriggerInfo &trigger_info,
                                       ObISQLClient &sql_client,
                                       const ObString *ddl_stmt_str)
 {
-  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  int ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
         return catalog.write_trigger(trigger_info, new_schema_version,
             drop_to_recyclebin ? NativeSchemaCatalog::TriggerWrite::UPDATE : NativeSchemaCatalog::TriggerWrite::ERASE);
@@ -68,7 +68,7 @@ int ObTriggerSqlService::alter_trigger(const ObTriggerInfo &trigger_info,
                                        ObISQLClient &sql_client,
                                        const ObString *ddl_stmt_str)
 {
-  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  int ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
         return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
       });
@@ -83,7 +83,7 @@ int ObTriggerSqlService::restore_trigger(const ObTriggerInfo &trigger_info,
                                            int64_t new_schema_version,
                                            ObISQLClient &sql_client)
 {
-  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  int ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
         return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
       });
@@ -100,7 +100,7 @@ int ObTriggerSqlService::update_trigger_on_rename(
     ObISQLClient &sql_client,
     ObSchemaOperationType op_type)
 {
-  int ret = NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+  int ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
         return catalog.write_trigger(trigger_info, new_schema_version, NativeSchemaCatalog::TriggerWrite::UPDATE);
       });

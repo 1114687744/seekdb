@@ -30,7 +30,7 @@
 #include "mysqlclient/ob_isql_client.h"
 #include "object/ob_object.h"
 #include "share/inner_table/ob_inner_table_schema_constants.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "share/schema/schema_catalog_row.h"
 #include "share/schema/ob_schema_utils.h"
 #include "timezone/ob_timezone_info.h"
@@ -309,7 +309,7 @@ int ObPartSqlHelper::write_all(bool only_history)
     has_partitions |= tables_.at(i)->is_user_partition_table();
   }
   if (!has_partitions) { return OB_SUCCESS; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < tables_.count(); ++i) {
@@ -917,7 +917,7 @@ int ObUpdatePartHelper::update_partition_info()
   if (ori_table_ == nullptr || upd_table_ == nullptr) { return OB_ERR_UNEXPECTED; }
   if (!ori_table_->is_user_partition_table()) { return OB_INVALID_ARGUMENT; }
   if (ori_table_->get_part_level() == PARTITION_LEVEL_TWO) { return OB_NOT_SUPPORTED; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     const int64_t visible = upd_table_->get_partition_num();
@@ -951,7 +951,7 @@ int ObAddIncPartHelper::add_partition_info()
 {
   if (ori_table_ == nullptr || inc_table_ == nullptr) { return OB_ERR_UNEXPECTED; }
   if (!ori_table_->is_user_partition_table() || inc_table_->get_partition_num() == 0) { return OB_SUCCESS; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     const int64_t count = inc_table_->get_partition_num();
@@ -986,7 +986,7 @@ int ObAddIncSubPartHelper::add_subpartition_info(const bool is_subpart_idx_speci
 {
   if (ori_table_ == nullptr || inc_table_ == nullptr) { return OB_ERR_UNEXPECTED; }
   if (inc_table_->get_partition_num() == 0) { return OB_SUCCESS; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     const int64_t count = inc_table_->get_partition_num();
@@ -1016,7 +1016,7 @@ int ObDropIncPartHelper::drop_partition_info()
 {
   if (ori_table_ == nullptr || inc_table_ == nullptr) { return OB_ERR_UNEXPECTED; }
   if (!ori_table_->is_user_partition_table() || inc_table_->get_partition_num() == 0) { return OB_SUCCESS; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     auto **parts = inc_table_->get_part_array();
@@ -1048,7 +1048,7 @@ int ObDropIncSubPartHelper::drop_subpartition_info()
 {
   if (ori_table_ == nullptr || inc_table_ == nullptr) { return OB_ERR_UNEXPECTED; }
   if (!ori_table_->is_user_partition_table() || inc_table_->get_partition_num() == 0) { return OB_SUCCESS; }
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     auto **parts = inc_table_->get_part_array();
@@ -1079,7 +1079,7 @@ int ObRenameIncPartHelper::rename_partition_info(const bool update_part_idx)
   auto **parts = inc_table_->get_part_array();
   if (inc_table_->get_partition_num() != 1 || parts == nullptr || parts[0] == nullptr) { return OB_ERR_UNEXPECTED; }
   const auto &part = *parts[0];
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     bool matched = false;
     int ret = catalog.update_fields(OB_ALL_PART_TID, [&](SchemaCatalogRow &fields) {
@@ -1113,7 +1113,7 @@ int ObRenameIncSubpartHelper::rename_subpartition_info()
   auto **subparts = part.get_subpart_array();
   if (part.get_subpartition_num() != 1 || subparts == nullptr || subparts[0] == nullptr) { return OB_ERR_UNEXPECTED; }
   const auto &subpart = *subparts[0];
-  return NativeSchemaCatalog::with_ddl_transaction(sql_client_, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(sql_client_, THIS_WORKER.get_timeout_ts(),
       [&](NativeSchemaCatalog &catalog) {
     bool matched = false;
     int ret = catalog.update_fields(OB_ALL_SUB_PART_TID, [&](SchemaCatalogRow &fields) {

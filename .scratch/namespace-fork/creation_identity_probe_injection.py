@@ -23,10 +23,10 @@ if a.action=='enable':
          '  const int identity_ret = verify_creation_identities();\n  if (identity_ret != OB_SUCCESS) { return identity_ret; }')
     hook('  if (OB_SUCC(ret) && !already) {\n    failure_stage = "sources";\n',
          '''  if (ret == OB_SUCCESS && !already) {
-    ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-        trans.get_connection(), [&](transaction::ObTxDesc &native) -> int {
+    ret = directory_kv_store()->with_native_transaction(
+        directory_tx, [&](transaction::ObTxDesc &native) -> int {
       for (const auto &item : items) {
-        const int rc = record_creation_identity(directory_tx,
+        const int rc = record_creation_identity(layout_tx,
             ObTabletID(encoded(db, item.local_tablet)), native.get_tx_id().get_id());
         if (rc != OB_SUCCESS) { return rc; }
       }

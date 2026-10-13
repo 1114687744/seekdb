@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', required=True, help='production binary without local test hooks')
 parser.add_argument('--native-probe-binary', required=True, help='same source revision, built with gate_probe_injection.py enable (native, shared transaction, preparation, identity, DDL commit and cold materialization hooks)')
 parser.add_argument('--log-dir', type=Path, default=local / 'gate-results' / datetime.now().strftime('%Y%m%d-%H%M%S'))
-parser.add_argument('--profile', choices=('full', 'native-inner-table'), default='full',
+parser.add_argument('--profile', choices=('full', 'native-inner-table', 'fork-boundaries'), default='full',
                     help='explicitly scoped regression set; full remains the default')
 parser.add_argument('--gate', action='append', choices=('bootstrap-native-kv', 'bootstrap', 'sql', 'direct', 'tls'), help='rerun selected failed/pending steps; default runs all')
 parser.add_argument('--start-at-script', help='resume one gate at the first command with this script filename; keep prior logs as evidence')
@@ -94,6 +94,8 @@ gates = [
     ]),
     ('sql', [[tools / 'namespace_sql_worker_prototype.py', '--binary', binary, '--case', 'full']]),
     ('direct', [
+        [local / 'native_dml_boundary_probe.py', '--binary', binary, '--minimal'],
+        [local / 'native_dml_boundary_probe.py', '--binary', binary],
         [local / 'native_schema_catalog_ddl_probe.py', '--binary', binary],
         [local / 'native_scan_probe.py', '--binary', binary],
         [local / 'large_partition_fork_probe.py', '--binary', binary],
@@ -154,7 +156,29 @@ gates = [
     ]),
     ('tls', [[tools / 'namespace_worker_direct_prototype.py', '--binary', binary, '--case', 'tls']]),
 ]
-if args.profile == 'native-inner-table':
+if args.profile == 'fork-boundaries':
+    selected = {
+        'bootstrap-native-kv': {'native_schema_catalog_probe.py', 'cold_materialization_probe.py',
+                               'shared_transaction_probe.py', 'physical_gc_plan_probe.py',
+                               'physical_retention_cut_probe.py', 'standby_baseline_progress_probe.py'},
+        'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
+        'sql': {'namespace_sql_worker_prototype.py'},
+        'direct': {'native_dml_boundary_probe.py', 'native_schema_catalog_ddl_probe.py',
+                   'tablet_access_concurrency_probe.py', 'tablet_access_index_probe.py',
+                   'ddl_physical_drop_probe.py', 'retired_baseline_restart_probe.py',
+                   'fork_detached_restart_probe.py', 'namespace_fork_table_prototype.py',
+                   'namespace_worker_direct_prototype.py'},
+        'tls': {'namespace_worker_direct_prototype.py'},
+    }
+    gates = [(name, [command for command in commands if command[0].name in selected[name]])
+             for name, commands in gates]
+    gates[0][1].append([local / 'run_standby_suite.py', '--binary', probe,
+                       '--case', 'catalog_read_view', '--log-dir', args.log_dir / 'catalog-standby'])
+    gates[3][1].append([local / 'run_standby_suite.py', '--binary', binary,
+                       '--case', 'basic', '--case', 'namespace_fork_local',
+                       '--log-dir', args.log_dir / 'production-standby'])
+    print('PROFILE fork-boundaries (native catalog, DML, physical cleanup and takeover)', flush=True)
+elif args.profile == 'native-inner-table':
     # Exercise the actual KV users, GC admission, SQL-owned transactions,
     # inherited snapshots, replica reads and the original four front doors.
     # Keep unrelated physical-layout and index-family suites in the full run.

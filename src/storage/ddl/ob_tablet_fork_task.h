@@ -35,13 +35,12 @@
 #include "storage/ddl/ob_tablet_copy_util.h"
 #include "common/ob_tablet_id.h"
 #include "storage/tablet/ob_tablet_table_store_iterator.h"
-#include <memory>
+#include "storage/physical_tablet_access.h"
 
 namespace oceanbase
 {
 namespace storage
 {
-class TabletAccessProtection;
 class ObLS;
 class ObTableForkInfo;
 
@@ -167,7 +166,7 @@ public:
   ObTablesHandleArray created_sstable_handles_;
   lib::ObMutex created_sstable_handles_lock_;  // Protect concurrent access to created_sstable_handles_
   int64_t row_inserted_;
-  std::unique_ptr<TabletAccessProtection> prototype_access_; // Protect the snapshot through asynchronous baseline completion.
+  PhysicalTabletAccess physical_access_; // Released after the captured input tables.
   DISALLOW_COPY_AND_ASSIGN(ObTabletForkCtx);
 };
 
@@ -285,6 +284,7 @@ private:
 struct ObTabletForkUtil final
 {
 public:
+  static int schedule_baseline(const ObTablet &tablet, int depth = 0);
   static int check_satisfy_fork_condition(const ObTabletForkParam &param, bool &is_satisfied);
   static int check_fork_data_complete(const common::ObTabletID &dest_tablet_id, bool &is_complete);
   static int get_participants(

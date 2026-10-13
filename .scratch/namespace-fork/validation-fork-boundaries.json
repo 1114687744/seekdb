@@ -1,0 +1,392 @@
+{
+  "date": "2026-10-13",
+  "baseline_commit": "24c2bfa4a963c2dadf2002dd9cfc0ff46c5cd77c",
+  "scope": "fork-boundaries profile only; not full mysqltest, sysbench or full gate profile",
+  "result": "PASS after documented fixes and scoped reruns",
+  "production_sha256": "33b175ecd56c8cbd613765ae3f74de11cf23f40e683576ae6ca74bdbb90b47bd",
+  "initial_probe_sha256": "22c0e7d82a115b90e2b64f39a036a00c0e8dc5d3760d1465aa1b72509ae4845e",
+  "final_probe_sha256": "d3da086f6d320a11381f154c7de93ef806cf80a5038210ebfbc3b5a48532323a",
+  "build": {
+    "cwd": "build_release",
+    "command": "source ~/.bashrc && make -j80",
+    "log": "/tmp/seekdb-fork-boundaries-final-build2.log",
+    "exit_code": 0,
+    "production_hash_matches_tested_artifact": true
+  },
+  "runs": [
+    {
+      "name": "frontdoors",
+      "command": [
+        "python3",
+        ".scratch/namespace-fork/run_four_gates.py",
+        "--profile",
+        "fork-boundaries",
+        "--binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-production",
+        "--native-probe-binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-probe",
+        "--gate",
+        "bootstrap",
+        "--gate",
+        "sql",
+        "--gate",
+        "tls",
+        "--log-dir",
+        ".scratch/namespace-fork/gate-results/fork-boundaries/frontdoors"
+      ],
+      "exit_code": 0,
+      "evidence": [
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/frontdoors/bootstrap.log",
+          "sha256": "419134d2d4484bd765c29a07fe90c76446097177fb9d00c29ee78d6593ae85bf",
+          "pass_events": [
+            {
+              "case": "quick_startup"
+            },
+            {
+              "case": "inprocess_bootstrap"
+            }
+          ]
+        },
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/frontdoors/sql.log",
+          "sha256": "21965fa0f95f97cf1a1524b5dcd9a9a761d487dfa8a36212a6ab49923ff7df91",
+          "pass_events": [
+            {
+              "case": "inprocess_sql"
+            }
+          ]
+        },
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/frontdoors/tls.log",
+          "sha256": "5ef206045159602cfa889dc4d3bc0ae88bbc64d37f51aec455305de1c4e25c10",
+          "pass_events": [
+            {
+              "case": "inprocess_tls"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "direct",
+      "command": [
+        "python3",
+        ".scratch/namespace-fork/run_four_gates.py",
+        "--profile",
+        "fork-boundaries",
+        "--binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-production",
+        "--native-probe-binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-probe",
+        "--gate",
+        "direct",
+        "--log-dir",
+        ".scratch/namespace-fork/gate-results/fork-boundaries/direct"
+      ],
+      "exit_code": 1,
+      "evidence": [
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/direct/direct.log",
+          "sha256": "2b9d6f7ff4134abce6520a161bb1a6af7e84a807f88b5ae3da51318e035bc95a",
+          "pass_events": [
+            {
+              "case": "native_upsert_minimal"
+            },
+            {
+              "case": "native_dml_boundary"
+            },
+            {
+              "case": "native_catalog_ddl_sql_indexes_and_fork"
+            },
+            {
+              "case": "native_catalog_ddl_crash_recovery"
+            },
+            {
+              "case": "native_catalog_trigger_execution_after_restart"
+            },
+            {
+              "case": "native_catalog_mock_parent_resolution_after_restart"
+            },
+            {
+              "case": "inprocess_fork_table"
+            },
+            {
+              "case": "ddl_physical_drop"
+            },
+            {
+              "case": "detached_child_restart_plain_index_lob"
+            },
+            {
+              "case": "detached_child_restart_plain_index_lob"
+            },
+            {
+              "case": "retired_baseline_restart"
+            },
+            {
+              "case": "inprocess_direct"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "direct-standby-rerun",
+      "command": [
+        "python3",
+        ".scratch/namespace-fork/run_four_gates.py",
+        "--profile",
+        "fork-boundaries",
+        "--binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-production",
+        "--native-probe-binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-probe",
+        "--gate",
+        "direct",
+        "--start-at-script",
+        "run_standby_suite.py",
+        "--log-dir",
+        ".scratch/namespace-fork/gate-results/fork-boundaries/direct-standby-rerun"
+      ],
+      "exit_code": 0,
+      "evidence": [
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/direct-standby-rerun/direct.log",
+          "sha256": "884988da81885e0409264c8b88908ef51dc85dc2357b04194cf02456ea2bbb77",
+          "pass_events": []
+        }
+      ]
+    },
+    {
+      "name": "native",
+      "command": [
+        "python3",
+        ".scratch/namespace-fork/run_four_gates.py",
+        "--profile",
+        "fork-boundaries",
+        "--binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-production",
+        "--native-probe-binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-probe",
+        "--gate",
+        "bootstrap-native-kv",
+        "--log-dir",
+        ".scratch/namespace-fork/gate-results/fork-boundaries/native"
+      ],
+      "exit_code": 1,
+      "evidence": [
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/native/bootstrap-native-kv.log",
+          "sha256": "8964c15639629774c59c79522f34913dee4e2187760d9a0aede3d19c4ef83fb6",
+          "pass_events": [
+            {
+              "case": "independent_replica_baseline"
+            },
+            {
+              "case": "physical_retention_cut"
+            },
+            {
+              "case": "physical_gc_plan_cut"
+            },
+            {
+              "case": "cold_catalog_materialization"
+            },
+            {
+              "case": "native_schema_catalog_typed"
+            },
+            {
+              "case": "native_schema_catalog_indexed"
+            },
+            {
+              "case": "native_schema_catalog_plain"
+            },
+            {
+              "case": "native_schema_catalog_watermark"
+            },
+            {
+              "case": "native_schema_catalog_versions"
+            },
+            {
+              "case": "native_schema_catalog_part"
+            },
+            {
+              "case": "native_schema_catalog_dependency"
+            },
+            {
+              "case": "native_schema_catalog_operations"
+            },
+            {
+              "case": "native_schema_catalog_trigger"
+            },
+            {
+              "case": "native_schema_catalog_constraint"
+            },
+            {
+              "case": "native_schema_catalog_range_part"
+            },
+            {
+              "case": "native_schema_catalog_list_part"
+            },
+            {
+              "case": "native_schema_catalog_part2"
+            },
+            {
+              "case": "native_schema_catalog_drop_index"
+            },
+            {
+              "case": "native_schema_catalog_fk"
+            },
+            {
+              "case": "native_schema_catalog_mock_fk"
+            },
+            {
+              "case": "native_schema_catalog_mock_fk_multi"
+            },
+            {
+              "case": "native_schema_catalog_old_mock_fk"
+            },
+            {
+              "case": "native_schema_catalog_self_fk"
+            },
+            {
+              "case": "native_schema_catalog_drop_fk"
+            },
+            {
+              "case": "native_schema_catalog_old_fk"
+            },
+            {
+              "case": "native_schema_catalog_history"
+            },
+            {
+              "case": "native_schema_catalog_dropped"
+            },
+            {
+              "case": "native_schema_catalog_generated"
+            },
+            {
+              "case": "native_schema_catalog_lob"
+            },
+            {
+              "case": "shared_transaction"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "native-rerun",
+      "command": [
+        "python3",
+        ".scratch/namespace-fork/run_four_gates.py",
+        "--profile",
+        "fork-boundaries",
+        "--binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-production",
+        "--native-probe-binary",
+        "/data/1/nijia.nj/test/fork-boundaries-artifacts/seekdb-probe-final",
+        "--gate",
+        "bootstrap-native-kv",
+        "--start-at-script",
+        "shared_transaction_probe.py",
+        "--log-dir",
+        ".scratch/namespace-fork/gate-results/fork-boundaries/native-rerun"
+      ],
+      "exit_code": 0,
+      "evidence": [
+        {
+          "path": ".scratch/namespace-fork/gate-results/fork-boundaries/native-rerun/bootstrap-native-kv.log",
+          "sha256": "c5e7986e4da5eb3f49981b7ed0b7606914afc108b17ccf9f27964f4dbf99d1e4",
+          "pass_events": [
+            {
+              "case": "shared_transaction"
+            },
+            {
+              "case": "shared_transaction_selected",
+              "selected": [
+                "rollback_create",
+                "crash_committed"
+              ],
+              "flushed_redo": false
+            },
+            {
+              "case": "shared_transaction_selected",
+              "selected": [
+                "rollback_create",
+                "rollback_owned",
+                "crash_create",
+                "crash_owned"
+              ],
+              "flushed_redo": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "standby_results": {
+    ".scratch/namespace-fork/gate-results/fork-boundaries/direct/production-standby/results.json": [
+      {
+        "case": "basic",
+        "exit_code": 255,
+        "elapsed_s": 108.46
+      },
+      {
+        "case": "namespace_fork_local",
+        "exit_code": 1,
+        "elapsed_s": 107.46
+      }
+    ],
+    ".scratch/namespace-fork/gate-results/fork-boundaries/direct-standby-rerun/production-standby/results.json": [
+      {
+        "case": "basic",
+        "exit_code": 0,
+        "elapsed_s": 123.7
+      },
+      {
+        "case": "namespace_fork_local",
+        "exit_code": 0,
+        "elapsed_s": 199.11
+      }
+    ],
+    ".scratch/namespace-fork/gate-results/fork-boundaries/native-rerun/catalog-standby/results.json": [
+      {
+        "case": "catalog_read_view",
+        "exit_code": 0,
+        "elapsed_s": 120.98
+      }
+    ]
+  },
+  "resolved_failures": [
+    {
+      "failure": "UPSERT returned 4109, reproduced on prior production artifact",
+      "fix": "Use existing statement snapshot admission for INSERT ON DUPLICATE KEY UPDATE",
+      "regressions": [
+        "native_dml_boundary_probe.py --minimal",
+        "native_dml_boundary_probe.py"
+      ]
+    },
+    {
+      "failure": "Retired intermediate source cleanup first returned OB_NOT_INIT, then invalid lock argument",
+      "fix": "Use native physical lock API with tablet lock schema version 0",
+      "regressions": [
+        "retired_baseline_restart_probe.py"
+      ]
+    },
+    {
+      "failure": "Creation-identity hook targeted removed SQL path and old untyped directory KV store",
+      "fix": "Attach auxiliary test records to the native layout transaction and existing layout KV store",
+      "regressions": [
+        "shared_transaction_probe.py --faults --creation-identities",
+        "shared_transaction_probe.py --faults --flush-redo --creation-identities"
+      ]
+    },
+    {
+      "failure": "Fixed startup sleep queried standby before SQL readiness",
+      "fix": "Wait for SQL query returning STANDBY; serialize shared test deployment directory",
+      "regressions": [
+        "run_standby_suite.py --case basic --case namespace_fork_local",
+        "run_standby_suite.py --case catalog_read_view"
+      ]
+    }
+  ]
+}

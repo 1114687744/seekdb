@@ -4,6 +4,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "data_plane/access/ob_namespace_access_mode.h"
 #include "namespace/catalog.h"
+#include "storage/physical_tablet_access.h"
 #include <functional>
 #include <unordered_set>
 namespace oceanbase {
@@ -26,7 +27,7 @@ public:
 private:
   friend class NamespaceForkKernelPrototype;
   std::unordered_set<uint64_t> namespaces_;
-  std::unordered_set<uint64_t> tablets_;
+  PhysicalTabletAccess physical_;
   DISALLOW_COPY_AND_ASSIGN(TabletAccessProtection);
 };
 class NamespaceForkKernelPrototype final
@@ -37,8 +38,6 @@ public:
   static void invalidate_replayed_metadata();
   static int begin_namespace_drop(const common::ObString &name, uint64_t &id, bool &done);
   static int finish_namespace_drop(uint64_t id);
-  static int check_baseline_access(const common::ObTabletID &tablet_id,
-                                   TabletAccessProtection &protection);
   static int drain_access(uint64_t namespace_id);
   static int protect_snapshot_tablets(common::ObIArray<common::ObTabletID> &candidates, bool &need_retry);
   // Keeps the dependency decision valid through physical reclamation.
@@ -88,7 +87,6 @@ public:
   static int check_ddl(const share::schema::ObSimpleTableSchemaV2 &schema,
                        share::schema::ObMultiVersionSchemaService &schema_service,
                        const common::ObISQLClient *trans = nullptr);
-  static int schedule_baseline(const ObTablet &tablet);
   // Explicit Namespace operation; no SQL Runtime is needed to create a binding.
   static int materialize_source(uint64_t namespace_id, uint64_t table_id, uint64_t data_tablet_id);
 private:
@@ -117,7 +115,6 @@ private:
 
 
   static int ensure_tablet(const common::ObTabletID &tablet_id);
-  static int schedule_baseline_impl(const ObTablet &tablet, int depth);
 };
 }
 }

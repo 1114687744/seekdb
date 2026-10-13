@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local standby regressions, using the current project and isolated test data."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,13 @@ parser.add_argument('--case', action='append', choices=cases)
 parser.add_argument('--log-dir', type=Path, default=local / 'standby-results/suite')
 args = parser.parse_args()
 args.log_dir.mkdir(parents=True, exist_ok=True)
+
+# This runner shares both the obtest binary and deployment directories across
+# cases. Hold one process lock through deployment, checks and owned cleanup.
+# The lock lives beside those test directories and is released on process exit.
+data_root.parent.mkdir(parents=True, exist_ok=True)
+suite_lock = (data_root.parent / 'suite.lock').open('a')
+fcntl.flock(suite_lock, fcntl.LOCK_EX)
 
 
 def stop_owned():

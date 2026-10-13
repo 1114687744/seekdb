@@ -16,7 +16,7 @@
 
 #define USING_LOG_PREFIX RS
 #include "ob_dependency_ddl_helper.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "common/ob_timeout_ctx.h"
 #include "ob_ddl_operator.h"
 #include "share/schema/ob_dependency_info.h"
@@ -106,7 +106,7 @@ int ObDependencyDDLHelper::batch_execute_insert_or_update_obj_dependency(
 {
   if (dep_objs.empty()) { return OB_SUCCESS; }
   const int64_t deadline = std::min(THIS_WORKER.get_timeout_ts(), ObTimeoutCtx::get_ctx().get_abs_timeout(INT64_MAX));
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, deadline,
+  return observer::with_ddl_schema_catalog(trans, deadline,
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < dep_objs.count(); ++i) {

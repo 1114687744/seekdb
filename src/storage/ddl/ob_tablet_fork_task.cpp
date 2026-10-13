@@ -17,7 +17,7 @@
 #define USING_LOG_PREFIX STORAGE
 
 #include "storage/ddl/ob_tablet_fork_task.h"
-#include "rootserver/fork_table/namespace_fork_kernel_prototype.h"
+#include "storage/physical_tablet_access.h"
 #include "share/rc/ob_server_runtime.h"
 #include "storage/ls/ob_ls.h"
 #include "storage/tx_storage/ob_ls_service.h"
@@ -408,7 +408,7 @@ ObTabletForkCtx::ObTabletForkCtx()
     created_sstable_handles_(),
     created_sstable_handles_lock_(),
     row_inserted_(0),
-    prototype_access_(std::make_unique<TabletAccessProtection>())
+    physical_access_()
 {
 }
 
@@ -424,7 +424,7 @@ ObTabletForkCtx::~ObTabletForkCtx()
   created_sstable_handles_.reset();
   range_allocator_.reset();
   allocator_.reset();
-  prototype_access_->reset();
+  physical_access_.reset();
 }
 
 bool ObTabletForkCtx::is_valid() const
@@ -462,47 +462,60 @@ int ObTabletForkCtx::get_created_sstable(const int64_t idx, ObTableHandleV2 &tab
 int ObTabletForkCtx::init(const ObTabletForkParam &param)
 {
   int ret = OB_SUCCESS;
-  bool is_satisfied = false;
-  if (OB_UNLIKELY(is_inited_)) {
-    ret = OB_INIT_TWICE;
-    LOG_WARN("init twice", K(ret));
-  } else if (OB_UNLIKELY(!param.is_valid())) {
-    ret = OB_INVALID_ARGUMENT;
-    LOG_WARN("invalid arg", K(ret), K(param));
-  } else if (NamespaceForkKernelPrototype::is_encoded_id(param.dest_tablet_id_.id())
-      && OB_FAIL(NamespaceForkKernelPrototype::check_baseline_access(param.dest_tablet_id_, *prototype_access_))) {
-  } else if (FALSE_IT([&] {
-      if (NamespaceForkKernelPrototype::is_encoded_id(param.dest_tablet_id_.id())) {
-        DEBUG_SYNC(FORK_TABLE_BUILD_DATA);
-      }
-    }())) {
-  } else if (OB_FAIL(ObTabletForkUtil::check_satisfy_fork_condition(param, is_satisfied))) {
-  } else if (!is_satisfied) {
-    ret = OB_NEED_RETRY;
-    if (REACH_TIME_INTERVAL(5L * 1000L * 1000L)) { // 5s
-      LOG_INFO("fork condition not satisfied yet, need retry", K(param));
+  bool ready = false;
+  if (is_inited_) { ret = OB_INIT_TWICE; }
+  else if (!param.is_valid()) { ret = OB_INVALID_ARGUMENT; }
+  else if (OB_FAIL(ObTabletForkUtil::check_satisfy_fork_condition(param, ready))) {
+  } else if (!ready) { ret = OB_NEED_RETRY; }
+  else {
+    // Capture file references before releasing the retention/reclamation
+    // fence. Later logical deletion or MVCC advancement cannot invalidate
+    // this task's inputs; physical leases keep both tablet objects alive.
+    PhysicalReclamationGuard capture;
+    ret = capture.error();
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(physical_access_.acquire(param.dest_tablet_id_))) {
+    } else if (OB_FAIL(physical_access_.acquire(param.source_tablet_id_))) {
+    } else if (OB_FAIL(share::server_service<ObLSService>()->get_ls(ls_))) {
+    } else if (OB_FAIL(ObDDLStorageUtil::ddl_get_tablet(ls_, param.dest_tablet_id_,
+        dst_tablet_handle_, ObMDSGetTabletMode::READ_ALL_COMMITED))) {
+    } else if (dst_tablet_handle_.get_obj()->is_empty_shell()) {
+      ret = OB_TABLET_NOT_EXIST;
     } else {
+      const auto &fork = dst_tablet_handle_.get_obj()->get_tablet_meta().fork_info_;
+      if (!fork.is_valid() || fork.is_complete()
+          || fork.get_fork_src_tablet_id() != param.source_tablet_id_
+          || fork.get_fork_snapshot_version() != param.fork_snapshot_version_) {
+        ret = OB_STATE_NOT_MATCH;
+      }
     }
-  } else if (OB_FAIL(::oceanbase::share::server_service<::oceanbase::storage::ObLSService>()->get_ls(ls_))) {
-  } else if (OB_FAIL(ObDDLStorageUtil::ddl_get_tablet(ls_,
-      param.source_tablet_id_, src_tablet_handle_, ObMDSGetTabletMode::READ_ALL_COMMITED))) {
-  } else if (OB_FAIL(src_tablet_handle_.get_obj()->fetch_table_store(snapshot_table_store_))) {
-  } else if (OB_ISNULL(snapshot_table_store_.get_member())) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("snapshot table store is null", K(ret), K(param));
-  } else if (FALSE_IT(table_store_iterator_.reset())) {
-  } else if (OB_FAIL(const_cast<ObTabletTableStore *>(snapshot_table_store_.get_member())->get_read_tables(
-      param.fork_snapshot_version_,
-      *src_tablet_handle_.get_obj(),
-      table_store_iterator_,
-      ObGetReadTablesMode::NORMAL))) {
-  } else if (OB_FAIL(ObDDLStorageUtil::ddl_get_tablet(ls_,
-      param.dest_tablet_id_, dst_tablet_handle_, ObMDSGetTabletMode::READ_ALL_COMMITED))) {
-  } else {
-    complement_data_ret_ = OB_SUCCESS;
-    is_inited_ = true;
+    if (OB_SUCC(ret)) {
+      ret = ObDDLStorageUtil::ddl_get_tablet(ls_, param.source_tablet_id_,
+          src_tablet_handle_, ObMDSGetTabletMode::READ_ALL_COMMITED);
+    }
+    if (OB_SUCC(ret)) {
+      if (src_tablet_handle_.get_obj()->is_empty_shell()
+          || src_tablet_handle_.get_obj()->get_multi_version_start() > param.fork_snapshot_version_) {
+        ret = OB_SNAPSHOT_DISCARDED;
+      } else {
+        ret = src_tablet_handle_.get_obj()->fetch_table_store(snapshot_table_store_);
+      }
+    }
+    if (OB_SUCC(ret)) {
+      if (snapshot_table_store_.get_member() == nullptr) { ret = OB_ERR_UNEXPECTED; }
+      else {
+        table_store_iterator_.reset();
+        ret = const_cast<ObTabletTableStore *>(snapshot_table_store_.get_member())->get_read_tables(
+            param.fork_snapshot_version_, *src_tablet_handle_.get_obj(),
+            table_store_iterator_, ObGetReadTablesMode::NORMAL);
+      }
+    }
+    if (OB_SUCC(ret)) {
+      complement_data_ret_ = OB_SUCCESS;
+      is_inited_ = true;
+    }
   }
-  
+  if (OB_SUCC(ret)) { DEBUG_SYNC(FORK_TABLE_BUILD_DATA); }
   return ret;
 }
 
@@ -1324,6 +1337,57 @@ int ObTabletForkMergeTask::update_table_store_with_batch_tables(
   }
 
   return ret;
+}
+
+int ObTabletForkUtil::schedule_baseline(const ObTablet &tablet, int depth) {
+  if (depth >= 64) { return OB_SIZE_OVERFLOW; }
+  const auto &meta = tablet.get_tablet_meta();
+  if (tablet.is_empty_shell()
+      || !meta.fork_info_.is_valid() || meta.fork_info_.is_complete()) { return OB_SUCCESS; }
+  int ret = OB_SUCCESS;
+  PhysicalTabletAccess admission;
+  {
+    PhysicalPublicationGuard access;
+    ret = access.error();
+    if (OB_SUCC(ret)) { ret = admission.acquire(meta.tablet_id_); }
+  }
+  if (OB_FAIL(ret)) { return ret; }
+  ObArenaAllocator allocator("ForkBaseline");
+  ObStorageSchema *storage_schema = nullptr;
+  if (meta.create_table_id_ == OB_INVALID_ID) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(tablet.load_storage_schema(allocator, storage_schema))) {
+  } else if (OB_ISNULL(storage_schema)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObTabletForkParam param; bool ready = false;
+    // Creation identity and the physical schema survive logical DROP.
+    param.table_id_ = meta.create_table_id_;
+    param.schema_version_ = storage_schema->get_schema_version();
+    // Stable DAG identity only; no rootserver DDL task is created.
+    param.task_id_ = meta.tablet_id_.id();
+    param.source_tablet_id_ = meta.fork_info_.get_fork_src_tablet_id();
+    param.dest_tablet_id_ = meta.tablet_id_; param.fork_snapshot_version_ = meta.fork_info_.get_fork_snapshot_version();
+    param.data_format_version_ = DATA_CURRENT_VERSION;
+    if (OB_FAIL(ObTabletForkUtil::check_satisfy_fork_condition(param, ready))) {
+    } else if (!ready) {
+      // A later copy cannot finish until its source has taken over its own
+      // baseline. Drive that source even if its current SQL object was dropped.
+      ObTabletHandle source;
+      ret = ObTabletCreateDeleteHelper::check_and_get_tablet(
+          ObTabletMapKey(param.source_tablet_id_), source, 0,
+          ObMDSGetTabletMode::READ_WITHOUT_CHECK,
+          transaction::ObTransVersion::MAX_TRANS_VERSION);
+      if (OB_SUCC(ret)) { ret = schedule_baseline(*source.get_obj(), depth + 1); }
+    } else if (ready) {
+      ret = compaction::ObScheduleDagFunc::schedule_tablet_fork_dag(param, false);
+      if (ret == OB_EAGAIN || ret == OB_SIZE_OVERFLOW) { ret = OB_SUCCESS; }
+      else { LOG_INFO("PROTOTYPE_V3_BASELINE_SCHEDULE", K(ret), K(param)); }
+    }
+  }
+  // A crash needs no independent task journal: the committed tablet's incomplete fork
+  // mark retries here; the existing table-store update persists the completed baseline.
+  return (ret == OB_ITER_END || ret == OB_ENTRY_NOT_EXIST) ? OB_SUCCESS : ret;
 }
 
 int ObTabletForkUtil::check_satisfy_fork_condition(

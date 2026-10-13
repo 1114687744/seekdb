@@ -20,7 +20,7 @@
 #include "share/ob_share_util.h"
 // TODO, move basic structs to ob_schema_struct.h
 #include "observer/schema/ob_schema_retrieve_utils.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "namespace/namespace.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 #include "share/rc/ob_server_runtime.h"
@@ -159,7 +159,7 @@ int with_schema_catalog(ObISQLClient &client, const ObRefreshSchemaStatus &statu
 {
   const int64_t deadline = std::min(THIS_WORKER.get_timeout_ts(),
       ObTimeoutCtx::get_ctx().get_abs_timeout(INT64_MAX));
-  return observer::NativeSchemaCatalog::with_read_client(
+  return observer::with_read_schema_catalog(
       client, deadline, status.snapshot_timestamp_, operation);
 }
 } // namespace
@@ -962,7 +962,7 @@ int ObSchemaServiceSQLImpl::get_table_schema_from_inner_table(
       // including writes made earlier by this DDL's native owner.
       if (schema_status.snapshot_timestamp_ > 0) { ret = OB_INVALID_ARGUMENT; }
       else {
-        ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql_client, THIS_WORKER.get_timeout_ts(),
+        ret = observer::with_ddl_schema_catalog(sql_client, THIS_WORKER.get_timeout_ts(),
             [&](observer::NativeSchemaCatalog &catalog) {
           ObArenaAllocator allocator(ObModIds::OB_SCHEMA);
           ObTableSchema *definition = nullptr;
@@ -988,7 +988,7 @@ int ObSchemaServiceSQLImpl::get_full_table_schema_from_inner_table(
   if (!check_inner_stat()) { return OB_NOT_INIT; }
   // A weak historical timestamp requires a separately protected directory view.
   if (schema_status.snapshot_timestamp_ > 0) { return OB_INVALID_ARGUMENT; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, THIS_WORKER.get_timeout_ts(),
+  return observer::with_ddl_schema_catalog(trans, THIS_WORKER.get_timeout_ts(),
       [&](observer::NativeSchemaCatalog &catalog) {
     ObTableSchema *definition = nullptr;
     int ret = catalog.get_table(table_id, INT64_MAX - 1, allocator, definition);

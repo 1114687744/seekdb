@@ -21,8 +21,8 @@ def edit(path, anchor, code):
     path.write_text(text)
 
 
-edit('src/rootserver/fork_table/namespace_fork_kernel_prototype.cpp',
-     'int NamespaceForkKernelPrototype::schedule_baseline_impl(const ObTablet &tablet, int depth) {\n',
+edit('src/storage/ddl/ob_tablet_fork_task.cpp',
+     'int ObTabletForkUtil::schedule_baseline(const ObTablet &tablet, int depth) {\n',
      '''  if (const char *path = getenv("SEEKDB_BASELINE_PAUSE")) {
     FILE *input = fopen(path, "r");
     if (input) {

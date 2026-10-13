@@ -32,6 +32,7 @@ if args.action == 'enable':
         '#include "' + str(Path(__file__).resolve().with_name('catalog_gc_test_hook.h')) + '"\n'
         '#include "storage/instance_meta/instance_meta_store.h"\n'
         '#include "storage/tx/ob_trans_service.h"\n'
+        '#include "query/session/ob_inner_sql_connection_access.h"\n'
         '#include "rootserver/fork_table/namespace_tablet_access.h"\n'
         '#include "rootserver/fork_table/instance_namespace_metadata.h"\n'
         '#include "storage/compaction/ob_freeze_info_mgr.h"\n'

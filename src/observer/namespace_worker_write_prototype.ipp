@@ -33,58 +33,20 @@ using namespace data_plane;
 using namespace transaction;
 using namespace transaction::tablelock;
 using namespace blocksstable;
+// The caller's plan and row iterators stay native and outlive their execution.
 struct WritePrepareRequest {
   StorageSpaceHandle storage_space;
-  uint64_t table_id;
   const ObDmlWriteSpec &spec;
-  const ObTableSchema &logical_schema;
-  const std::shared_ptr<ObSchemaGetterGuard> &schema_guard;
+  const ObDmlTablePlan &plan;
   const ObTxReadSnapshot &snapshot;
   const concurrent_control::ObWriteFlag &write_flag;
-  const std::vector<uint64_t> &columns;
 };
 int prepare_in_process_write(const WritePrepareRequest &request,
-                             const ObTxDesc &view, uint64_t &handle);
-struct WriteCells {
-  ObArenaAllocator allocator{ObMemAttr("NsWriteCells")};
-  std::vector<ObObj> cells;
-  std::vector<bool> lob_headers;
-  size_t bytes;
-  explicit WriteCells(size_t initial_bytes) : bytes(initial_bytes) {}
-  int append(const ObObj &value, bool has_lob_header) {
-    const int64_t size = value.get_serialize_size();
-    if (size < 0 || bytes > MAX_SQL_MESSAGE - 8
-        || static_cast<size_t>(size) > MAX_SQL_MESSAGE - bytes - 8) {
-      return OB_SIZE_OVERFLOW;
-    }
-    ObObj copied;
-    int ret = ob_write_obj(allocator, value, copied);
-    if (!ret) {
-      cells.push_back(copied);
-      lob_headers.push_back(has_lob_header);
-      bytes += static_cast<size_t>(size) + 8;
-    }
-    return ret;
-  }
-};
-struct WriteBatch : WriteCells {
-  char operation;
-  uint64_t handle;
-  uint64_t tablet_id;
-  uint64_t rows = 0;
-  int64_t lock_timeout = 0;
-  ObRowLockMode lock_mode = ObRowLockMode::NONE;
-  ObDuplicateReturnMode duplicate_mode = ObDuplicateReturnMode::ALL;
-  std::vector<uint64_t> updated_columns;
-  WriteBatch(char op, uint64_t h, uint64_t tablet)
-      : WriteCells(49), operation(op), handle(h), tablet_id(tablet) {}
-};
-struct WriteResult : WriteCells {
-  uint64_t rows = 0;
-  WriteResult() : WriteCells(25) {}
-};
-int write_in_process_batch(const ObTxDesc &view, const WriteBatch &batch,
-                           int64_t &affected, WriteResult &duplicates);
+                            const ObTxDesc &view, uint64_t &handle);
+using NativeWriteOperation = std::function<int(ObIDmlService &, const ObTabletID &,
+                                               ObTxDesc &, const ObDmlExecution &)>;
+int invoke_in_process_write(const ObTxDesc &view, uint64_t handle,
+    const ObTabletID &tablet, bool skip_flush_redo, const NativeWriteOperation &operation);
 
 int route_tablet_id(uint64_t ns, common::ObTabletID &tablet_id)
 {

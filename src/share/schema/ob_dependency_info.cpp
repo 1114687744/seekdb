@@ -16,7 +16,7 @@
 
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_dependency_info.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "common/ob_timeout_ctx.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 #include "share/schema/schema_catalog_fields.h"
@@ -141,7 +141,7 @@ int ObDependencyInfo::delete_schema_object_dependency(ObISQLClient &trans,
     else { ret = exec.exec_delete(OB_ALL_DEPENDENCY_TNAME, row, affected); }
     return ret;
   }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, dependency_deadline(),
+  return observer::with_ddl_schema_catalog(trans, dependency_deadline(),
       [&](observer::NativeSchemaCatalog &catalog) { return catalog.erase_dependencies(dep_obj_id, dep_obj_type); });
 }
 
@@ -163,7 +163,7 @@ int ObDependencyInfo::insert_schema_object_dependency(ObISQLClient &trans, bool 
     if (OB_SUCC(ret) && !is_single_row(affected) && !is_double_row(affected)) { ret = OB_ERR_UNEXPECTED; }
     return ret;
   }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, dependency_deadline(),
+  return observer::with_ddl_schema_catalog(trans, dependency_deadline(),
       [&](observer::NativeSchemaCatalog &catalog) { return catalog.write_dependency(*this, is_replace); });
 }
 
@@ -352,7 +352,7 @@ int ObDependencyInfo::collect_ref_infos(uint64_t dep_obj_id, ObISQLClient &clien
     ObIArray<ObDependencyInfo> &deps)
 {
   deps.reset();
-  return observer::NativeSchemaCatalog::with_read_client(client, dependency_deadline(), 0,
+  return observer::with_read_schema_catalog(client, dependency_deadline(), 0,
       [&](observer::NativeSchemaCatalog &catalog) { return catalog.get_references(dep_obj_id, deps); });
 }
 
@@ -360,7 +360,7 @@ int ObDependencyInfo::collect_dep_infos(uint64_t ref_obj_id, ObISQLClient &clien
     ObIArray<ObDependencyInfo> &deps)
 {
   deps.reset();
-  return observer::NativeSchemaCatalog::with_read_client(client, dependency_deadline(), 0,
+  return observer::with_read_schema_catalog(client, dependency_deadline(), 0,
       [&](observer::NativeSchemaCatalog &catalog) {
     return catalog.get_dependents(ref_obj_id, ObObjectType::INVALID, deps);
   });
@@ -369,7 +369,7 @@ int ObDependencyInfo::collect_dep_infos(uint64_t ref_obj_id, ObISQLClient &clien
 int ObDependencyInfo::collect_all_dep_objs(uint64_t ref_obj_id, ObISQLClient &client,
     ObIArray<std::pair<uint64_t, ObObjectType>> &objs)
 {
-  return observer::NativeSchemaCatalog::with_read_client(client, dependency_deadline(), 0,
+  return observer::with_read_schema_catalog(client, dependency_deadline(), 0,
       [&](observer::NativeSchemaCatalog &catalog) {
     ObSEArray<uint64_t, 8> pending;
     int ret = pending.push_back(ref_obj_id);
@@ -396,7 +396,7 @@ int ObDependencyInfo::collect_all_dep_objs(uint64_t ref_obj_id, ObISQLClient &cl
 int ObDependencyInfo::collect_all_dep_objs(uint64_t ref_obj_id, ObObjectType ref_obj_type,
     ObISQLClient &client, ObIArray<CriticalDepInfo> &objs)
 {
-  return observer::NativeSchemaCatalog::with_read_client(client, dependency_deadline(), 0,
+  return observer::with_read_schema_catalog(client, dependency_deadline(), 0,
       [&](observer::NativeSchemaCatalog &catalog) {
     ObSEArray<std::pair<uint64_t, ObObjectType>, 8> pending;
     int ret = pending.push_back({ref_obj_id, ref_obj_type});
@@ -760,7 +760,7 @@ int ObReferenceObjTable::batch_execute_delete_obj_dependency(const DependencyObj
     ObMySQLTransaction &trans)
 {
   if (dep_objs.empty()) { return OB_SUCCESS; }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, dependency_deadline(),
+  return observer::with_ddl_schema_catalog(trans, dependency_deadline(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < dep_objs.count(); ++i) {
@@ -901,7 +901,7 @@ int ObDependencyInfo::insert_dependency_infos(ObMySQLTransaction &trans,
     }
     return ret;
   }
-  return observer::NativeSchemaCatalog::with_ddl_transaction(trans, dependency_deadline(),
+  return observer::with_ddl_schema_catalog(trans, dependency_deadline(),
       [&](observer::NativeSchemaCatalog &catalog) {
     int ret = OB_SUCCESS;
     for (int64_t i = 0; OB_SUCC(ret) && i < dep_infos.count(); ++i) {

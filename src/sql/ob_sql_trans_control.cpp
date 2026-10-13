@@ -751,9 +751,12 @@ int ObSqlTransControl::can_do_plain_insert(ObSQLSessionInfo *session,
         K(ObSQLUtils::is_nested_sql(&exec_ctx)), K(session->get_tx_isolation()));
   } else if (plan->is_plain_insert()) {
     can_plain_insert = true;
-  } else if (plan->get_insertup_can_do_gts_opt() && session->is_user_session()) {
-    can_plain_insert = true;
   }
+
+  // INSERT ... ON DUPLICATE KEY UPDATE reads existing rows after its tentative
+  // inserts roll back. Keep it on the statement-snapshot path so that its
+  // snapshot and protected directory view are acquired and retained together.
+  // Only a plain insert can omit that read view.
 
   if (OB_SUCC(ret)) {
     if (plan->get_insertup_can_do_gts_opt()) {

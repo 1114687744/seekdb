@@ -1,6 +1,5 @@
 // Namespace fork management and physical tablet materialization.
 #define USING_LOG_PREFIX STORAGE
-#include "query/session/ob_inner_sql_connection_access.h"
 #include "rootserver/fork_table/namespace_fork_kernel_prototype.h"
 #include "namespace/catalog.h"
 #include "namespace/namespace.h"
@@ -26,7 +25,8 @@
 #include "storage/ob_storage_schema.h"
 #include "storage/ob_tablet_autoincrement_service.h"
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
-#include "storage/tablelock/ob_lock_inner_connection_util.h"
+#include "storage/tablelock/ob_table_lock_rpc_struct.h"
+#include "storage/tx/ob_trans_service.h"
 #include "storage/tx_storage/ob_access_service.h"
 #include "storage/compaction/ob_freeze_info_mgr.h"
 #include "storage/tx_storage/ob_ls_service.h"
@@ -61,8 +61,8 @@ ObMultiVersionSchemaService *directory_schema_service()
 }
 ObMySQLProxy *directory_sql_proxy()
 {
-  // Shared physical tablet DDL and the instance snapshot clock use the
-  // explicitly selected Namespace 1 SQL context.
+  // Initial installation reads the existing SQL snapshot watermark before
+  // publishing the instance directory. Physical cleanup uses native owners.
   return observer::namespace_worker_prototype::namespace_sql_proxy(1);
 }
 InstanceMetaStore *directory_kv_store()
@@ -81,19 +81,6 @@ int64_t directory_deadline()
 // drains its own work, while GC excludes any tablet still used by any reader.
 std::mutex access_mutex;
 std::unordered_map<uint64_t, int64_t> namespace_accesses;
-std::unordered_map<uint64_t, int64_t> tablet_accesses;
-std::mutex physical_reclamation_mutex;
-int exclude_active_tablets(ObIArray<ObTabletID> &candidates, bool &need_retry)
-{
-  ObArray<ObTabletID> idle;
-  int ret = OB_SUCCESS;
-  std::lock_guard<std::mutex> lock(access_mutex);
-  for (int64_t i = 0; OB_SUCC(ret) && i < candidates.count(); ++i) {
-    if (tablet_accesses.count(candidates.at(i).id()) != 0) { need_retry = true; }
-    else { ret = idle.push_back(candidates.at(i)); }
-  }
-  return ret ? ret : candidates.assign(idle);
-}
 // check_table_access runs on every storage scan/DML open; a roots() SQL per
 // open dominated branch-worker cold schema refresh. The namespace registry is
 // only mutated by begin/finish_namespace_drop in this process, so a LIVE entry
@@ -119,56 +106,6 @@ void invalidate_namespace_state(uint64_t id) {
   std::unique_lock<std::shared_mutex> lock(namespace_state_mutex);
   namespace_state_cache.erase(id);
 }
-// Physical reclamation excludes source publication. Shared nesting
-// allows materialization and DDL helpers to compose without a reader registry.
-std::shared_timed_mutex metadata_mutex;
-thread_local int metadata_depth = 0;
-class MetadataReadGuard final {
-public:
-  MetadataReadGuard() : held_(false), ret_(OB_SUCCESS) {
-    if (!metadata_depth) {
-      while (!metadata_mutex.try_lock_shared_for(std::chrono::milliseconds(1))) {
-        if (OB_SUCCESS != (ret_ = THIS_WORKER.check_status())) { return; }
-      }
-    }
-    ++metadata_depth; held_ = true;
-  }
-  ~MetadataReadGuard() { if (held_ && --metadata_depth == 0) { metadata_mutex.unlock_shared(); } }
-  int error() const { return ret_; }
-private:
-  bool held_;
-  int ret_;
-  MetadataReadGuard(const MetadataReadGuard &) = delete;
-  MetadataReadGuard &operator=(const MetadataReadGuard &) = delete;
-};
-// Serialize the short resolve/register and dependency-publication windows with
-// GC. Long-lived readers hold resource counts, not this mutex. Busy candidates
-// are skipped; unrelated readers never stall this collector.
-class PhysicalReclamationGuard final
-{
-public:
-  PhysicalReclamationGuard()
-      : serial_(physical_reclamation_mutex, std::try_to_lock), held_(false), ret_(OB_EAGAIN)
-  {
-    if (!serial_.owns_lock()) { return; }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-    while (!metadata_mutex.try_lock_for(std::chrono::milliseconds(1))) {
-      if (std::chrono::steady_clock::now() >= deadline) { return; }
-    }
-    held_ = true;
-    ++metadata_depth;
-    ret_ = OB_SUCCESS;
-  }
-  ~PhysicalReclamationGuard() { release_publication(); }
-  void release_publication() {
-    if (held_) { --metadata_depth; metadata_mutex.unlock(); held_ = false; }
-  }
-  int error() const { return ret_; }
-private:
-  std::unique_lock<std::mutex> serial_;
-  bool held_;
-  int ret_;
-};
 uint64_t encoded(uint64_t db, uint64_t local) {
   return NamespaceObjectKey{db, local}.storage_id();
 }
@@ -502,7 +439,7 @@ int NamespaceForkKernelPrototype::begin_namespace_drop(const ObString &name, uin
   done = false; id = 0;
   auto *store = directory_kv_store();
   if (store == nullptr) { return OB_NOT_INIT; }
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
+  PhysicalPublicationGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
   rootserver::InstanceNamespaceDirectory directory(*store);
   rootserver::InstanceNamespaceRecord record;
   int ret = directory.find_named(std::string(name.ptr(), name.length()),
@@ -537,36 +474,10 @@ int NamespaceForkKernelPrototype::finish_namespace_drop(uint64_t id) {
   auto *store = directory_kv_store();
   auto *access_service = share::server_service<ObAccessService>();
   if (store == nullptr || access_service == nullptr) { return OB_NOT_INIT; }
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
+  PhysicalPublicationGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
   rootserver::InstanceNamespaceDirectory directory(*store);
   int ret = directory.finish_drop(id, access_service->storage_schema_store(), directory_deadline());
   if (OB_SUCC(ret)) { invalidate_namespace_state(id); }
-  return ret;
-}
-int NamespaceForkKernelPrototype::check_baseline_access(
-    const ObTabletID &tablet_id, TabletAccessProtection &protection) {
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
-  if (!is_encoded_id(tablet_id.id())) { return OB_SUCCESS; }
-  const uint64_t ns = database_of(tablet_id.id());
-  int ret = acquire_namespace(ns, protection);
-  if (OB_SUCC(ret)) { ret = protect_tablet_sources(tablet_id, protection); }
-  if (OB_FAIL(ret)) { return ret; }
-  // A baseline DAG is only valid on a tablet its namespace still owns. DROP
-  // drains active accesses before deleting the source roots, so an admitted DAG
-  // always finishes against a valid binding.
-  int64_t state = 0;
-  bool owned = false;
-  uint64_t table = OB_INVALID_ID;
-  ret = load_kv_tablet_ownership(ns, local_of(tablet_id.id()), owned, table, &state);
-  if (OB_SUCC(ret) && (state != 0 || !owned)) {
-    // A retired intermediate copy may still supply descendants. Completing
-    // its baseline lets those descendants eventually release the whole chain.
-    ObArray<ObTabletID> candidate;
-    bool retained = false;
-    if (OB_FAIL(candidate.push_back(tablet_id))) {
-    } else if (OB_FAIL(protect_snapshot_tablets(candidate, retained))) {
-    } else if (!candidate.empty()) { ret = OB_ENTRY_NOT_EXIST; }
-  }
   return ret;
 }
 TabletAccessProtection::~TabletAccessProtection() { reset(); }
@@ -585,46 +496,21 @@ int NamespaceForkKernelPrototype::acquire_namespace(uint64_t id,
 int NamespaceForkKernelPrototype::protect_tablet_sources(const ObTabletID &tablet,
     TabletAccessProtection &protection)
 {
-  ObTabletID current = tablet;
-  ObSEArray<uint64_t, 8> chain;
-  int ret = OB_SUCCESS;
-  while (OB_SUCC(ret) && current.is_valid()) {
-    if (has_exist_in_array(chain, current.id())) { return OB_STATE_NOT_MATCH; }
-    if (chain.count() >= 64) { return OB_SIZE_OVERFLOW; }
-    if (OB_FAIL(chain.push_back(current.id()))) { break; }
-    if (protection.tablets_.insert(current.id()).second) {
-      std::lock_guard<std::mutex> lock(access_mutex);
-      ++tablet_accesses[current.id()];
-    }
-    ObTabletHandle handle;
-    ret = ObTabletCreateDeleteHelper::check_and_get_tablet(ObTabletMapKey(current),
-        handle, 0, ObMDSGetTabletMode::READ_WITHOUT_CHECK,
-        transaction::ObTransVersion::MAX_TRANS_VERSION);
-    if (ret == OB_TABLET_NOT_EXIST || ret == OB_ENTRY_NOT_EXIST) { return OB_SUCCESS; }
-    if (OB_FAIL(ret) || handle.get_obj()->is_empty_shell()) { break; }
-    const auto &fork = handle.get_obj()->get_tablet_meta().fork_info_;
-    if (!fork.is_valid() || fork.is_complete()) { break; }
-    current = fork.get_fork_src_tablet_id();
-  }
-  return ret;
+  return protection.physical_.acquire(tablet);
 }
 
 void NamespaceForkKernelPrototype::release_access(TabletAccessProtection &protection)
 {
-  if (protection.namespaces_.empty() && protection.tablets_.empty()) { return; }
-  std::lock_guard<std::mutex> lock(access_mutex);
-  for (uint64_t id : protection.namespaces_) {
-    auto found = namespace_accesses.find(id);
-    OB_ASSERT(found != namespace_accesses.end() && found->second > 0);
-    if (--found->second == 0) { namespace_accesses.erase(found); }
+  {
+    std::lock_guard<std::mutex> lock(access_mutex);
+    for (uint64_t id : protection.namespaces_) {
+      auto found = namespace_accesses.find(id);
+      OB_ASSERT(found != namespace_accesses.end() && found->second > 0);
+      if (--found->second == 0) { namespace_accesses.erase(found); }
+    }
+    protection.namespaces_.clear();
   }
-  for (uint64_t id : protection.tablets_) {
-    auto found = tablet_accesses.find(id);
-    OB_ASSERT(found != tablet_accesses.end() && found->second > 0);
-    if (--found->second == 0) { tablet_accesses.erase(found); }
-  }
-  protection.namespaces_.clear();
-  protection.tablets_.clear();
+  protection.physical_.reset();
 }
 
 int NamespaceForkKernelPrototype::drain_access(uint64_t namespace_id)
@@ -650,7 +536,7 @@ int NamespaceForkKernelPrototype::prepare_access(uint64_t namespace_id, uint64_t
       || (mode == data_plane::ObNamespaceAccessMode::UNFENCED && is_inner_table(table_id))) {
     return prepare(tablet);
   }
-  MetadataReadGuard access;
+  PhysicalPublicationGuard access;
   int ret = access.error();
   if (OB_SUCC(ret)) { ret = acquire_namespace(namespace_id, protection); }
   if (OB_SUCC(ret)) { ret = check_table_access(table_id, tablet, read_only, mode); }
@@ -761,7 +647,7 @@ int NamespaceForkKernelPrototype::load_physical_retention(PhysicalSnapshotRetent
   auto *store = directory_kv_store();
   if (store == nullptr) { return OB_NOT_INIT; }
   // This is a collector entry, not an operation nested in source publication.
-  if (metadata_depth != 0) { return OB_STATE_NOT_MATCH; }
+  if (PhysicalPublicationGuard::is_held()) { return OB_STATE_NOT_MATCH; }
   PhysicalReclamationGuard fence;
   int ret = fence.error();
   const int64_t deadline = std::min(directory_deadline(),
@@ -922,7 +808,7 @@ int NamespaceForkKernelPrototype::reclaim_unreferenced_tablets(
     }
   }
   if (OB_SUCC(ret)) { ret = protect_snapshot_tablets(candidates, need_retry); }
-  if (OB_SUCC(ret)) { ret = exclude_active_tablets(candidates, need_retry); }
+  if (OB_SUCC(ret)) { ret = PhysicalTabletAccess::exclude_active(candidates, need_retry); }
   if (OB_SUCC(ret) && !candidates.empty()) { ret = reclaim(candidates); }
   return ret;
 }
@@ -1011,7 +897,7 @@ int NamespaceForkKernelPrototype::complete_initial_baseline(uint64_t id, int64_t
           if (OB_SUCC(ret) && tablet.get_obj()->is_empty_shell()) { ret = OB_STATE_NOT_MATCH; }
           if (OB_SUCC(ret) && !tablet.get_obj()->get_tablet_meta().fork_info_.is_complete()) {
             pending = true;
-            ret = schedule_baseline(*tablet.get_obj());
+            ret = ObTabletForkUtil::schedule_baseline(*tablet.get_obj());
           }
         }
       }
@@ -1074,29 +960,45 @@ int NamespaceForkKernelPrototype::collect_dropped_namespace_tablets(uint64_t &ph
   bool deferred = false;
   if (!candidates.empty()
       && OB_FAIL(protect_snapshot_tablets(candidates, deferred))) { return ret; }
-  if (OB_FAIL(exclude_active_tablets(candidates, deferred))) { return ret; }
+  if (OB_FAIL(PhysicalTabletAccess::exclude_active(candidates, deferred))) { return ret; }
 
   if (!candidates.empty()) {
-    ObMySQLTransaction trans;
-    if (OB_SUCC(ret)) { ret = trans.start(directory_sql_proxy()); }
-    if (OB_SUCC(ret)) {
-      ObLockAloneTabletRequest locks;
-      locks.lock_mode_ = EXCLUSIVE;
-      locks.op_type_ = ObTableLockOpType::IN_TRANS_COMMON_LOCK;
-      locks.timeout_us_ = 5 * 1000 * 1000L;
-      if (OB_FAIL(locks.tablet_ids_.assign(candidates))) {
-      } else if (OB_FAIL(query::ObInnerSQLConnectionAccess::lock_tablet(
-              locks, trans.get_connection()))) {
-      } else {
-        ret = query::ObInnerSQLConnectionAccess::with_native_transaction(
-            trans.get_connection(), [&](transaction::ObTxDesc &native) {
-          return rootserver::ObTabletDrop::register_delete(native, candidates);
+    auto *access = share::server_service<ObAccessService>();
+    auto *transactions = share::server_service<transaction::ObTransService>();
+    if (access == nullptr || transactions == nullptr) {
+      ret = OB_NOT_INIT;
+    } else {
+      NativeInnerTable native(*access, *transactions);
+      NativeInnerTable::Transaction trans;
+      const int64_t deadline = directory_deadline();
+      ret = native.begin(trans, deadline);
+      if (OB_SUCC(ret)) {
+        ret = native.with_native_transaction(trans, [&](transaction::ObTxDesc &owner) {
+          int rc = OB_SUCCESS;
+          ObTableLockOwnerID lock_owner;
+          lock_owner.set_default();
+          // The candidates are physical objects. Use the same lock primitive
+          // as LOCK_ALONE_TABLET, with no Namespace schema or SQL connection.
+          // A busy object retries next maintenance round; partial locks roll
+          // back with this transaction before releasing the publication fence.
+          for (int64_t i = 0; rc == OB_SUCCESS && i < candidates.count(); ++i) {
+            ObLockID id;
+            ObLockParam param;
+            rc = get_lock_id(candidates.at(i), id);
+            if (rc == OB_SUCCESS) {
+              rc = param.set(id, EXCLUSIVE, lock_owner, IN_TRANS_COMMON_LOCK,
+                  0 /*no table schema*/, false /*deadlock avoidance*/, true /*try lock*/, deadline);
+            }
+            if (rc == OB_SUCCESS) { rc = access->lock_obj(owner, param); }
+          }
+          if (rc == OB_SUCCESS) { rc = rootserver::ObTabletDrop::register_delete(owner, candidates); }
+          return rc;
         });
       }
-    }
-    if (trans.is_started()) {
-      const int end = trans.end(OB_SUCC(ret));
-      if (OB_SUCC(ret)) { ret = end; }
+      if (trans.is_active()) {
+        const int end = OB_SUCC(ret) ? native.commit(trans) : native.rollback(trans);
+        if (OB_SUCC(ret)) { ret = end; }
+      }
     }
   }
   fence.release_publication();
@@ -1204,7 +1106,7 @@ int NamespaceForkKernelPrototype::control_namespace(const ObString &source, cons
     id = OB_INVALID_ID;
     return collect_metadata();
   }
-  MetadataReadGuard publication;
+  PhysicalPublicationGuard publication;
   if (publication.error() != OB_SUCCESS) { return publication.error(); }
   auto *access = share::server_service<ObAccessService>();
   if (access == nullptr) { return OB_NOT_INIT; }
@@ -1261,7 +1163,7 @@ int NamespaceForkKernelPrototype::is_tablet_owned(
   }
   int ret = local_object_id(namespace_id, tablet_id.id(), local_tablet_id);
   if (OB_FAIL(ret)) { return ret; }
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
+  PhysicalPublicationGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
   uint64_t table = OB_INVALID_ID;
   return load_kv_tablet_ownership(namespace_id, local_tablet_id, owned, table);
 }
@@ -1275,7 +1177,7 @@ int NamespaceForkKernelPrototype::owned_storage_tablets(
       || directory_kv_store() == nullptr) {
     return OB_INVALID_ARGUMENT;
   }
-  MetadataReadGuard access;
+  PhysicalPublicationGuard access;
   if (access.error() != OB_SUCCESS) { return access.error(); }
   InstanceMetaStore::Transaction tx;
   int ret = directory_kv_store()->begin(tx, directory_deadline(), true);
@@ -1307,7 +1209,7 @@ int NamespaceForkKernelPrototype::table_id_for_tablet(const ObTabletID &tablet, 
   if (!is_encoded_id(tablet.id()) || directory_kv_store() == nullptr) {
     return OB_INVALID_ARGUMENT;
   }
-  MetadataReadGuard access;
+  PhysicalPublicationGuard access;
   if (access.error() != OB_SUCCESS) { return access.error(); }
   bool owned = false;
   return load_kv_tablet_ownership(database_of(tablet.id()), local_of(tablet.id()), owned, table_id);
@@ -1319,63 +1221,11 @@ int NamespaceForkKernelPrototype::check_ddl(const ObSimpleTableSchemaV2 &schema,
       || is_encoded_id(schema.get_database_id())) { return OB_INVALID_ARGUMENT; }
   return OB_SUCCESS;
 }
-int NamespaceForkKernelPrototype::schedule_baseline(const ObTablet &tablet) {
-  return schedule_baseline_impl(tablet, 0);
-}
-int NamespaceForkKernelPrototype::schedule_baseline_impl(const ObTablet &tablet, int depth) {
-  if (depth >= 64) { return OB_SIZE_OVERFLOW; }
-  const auto &meta = tablet.get_tablet_meta();
-  if (!is_encoded_id(meta.tablet_id_.id()) || tablet.is_empty_shell()
-      || !meta.fork_info_.is_valid() || meta.fork_info_.is_complete()) { return OB_SUCCESS; }
-  if (directory_kv_store() == nullptr) { return OB_NOT_INIT; }
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
-  int ret = OB_SUCCESS;
-  TabletAccessProtection admission;
-  ret = check_baseline_access(meta.tablet_id_, admission);
-  if (ret == OB_ENTRY_NOT_EXIST) { return OB_SUCCESS; }
-  if (ret != OB_SUCCESS) { return ret; }
-  ObArenaAllocator allocator("NsForkBaseline");
-  ObStorageSchema *storage_schema = nullptr;
-  if (meta.create_table_id_ == OB_INVALID_ID) {
-    ret = OB_ERR_UNEXPECTED;
-  } else if (OB_FAIL(tablet.load_storage_schema(allocator, storage_schema))) {
-  } else if (OB_ISNULL(storage_schema)) {
-    ret = OB_ERR_UNEXPECTED;
-  } else {
-    ObTabletForkParam param; bool ready = false;
-    // Creation identity and the physical schema survive logical DROP.
-    param.table_id_ = meta.create_table_id_;
-    param.schema_version_ = storage_schema->get_schema_version();
-    // Stable DAG identity only; no rootserver DDL task is created.
-    param.task_id_ = meta.tablet_id_.id();
-    param.source_tablet_id_ = meta.fork_info_.get_fork_src_tablet_id();
-    param.dest_tablet_id_ = meta.tablet_id_; param.fork_snapshot_version_ = meta.fork_info_.get_fork_snapshot_version();
-    param.data_format_version_ = DATA_CURRENT_VERSION;
-    if (OB_FAIL(ObTabletForkUtil::check_satisfy_fork_condition(param, ready))) {
-    } else if (!ready) {
-      // A later copy cannot finish until its source has taken over its own
-      // baseline. Drive that source even if its current SQL object was dropped.
-      ObTabletHandle source;
-      ret = ObTabletCreateDeleteHelper::check_and_get_tablet(
-          ObTabletMapKey(param.source_tablet_id_), source, 0,
-          ObMDSGetTabletMode::READ_WITHOUT_CHECK,
-          transaction::ObTransVersion::MAX_TRANS_VERSION);
-      if (OB_SUCC(ret)) { ret = schedule_baseline_impl(*source.get_obj(), depth + 1); }
-    } else if (ready) {
-      ret = compaction::ObScheduleDagFunc::schedule_tablet_fork_dag(param, false);
-      if (ret == OB_EAGAIN || ret == OB_SIZE_OVERFLOW) { ret = OB_SUCCESS; }
-      else { LOG_INFO("PROTOTYPE_V3_BASELINE_SCHEDULE", K(ret), K(param)); }
-    }
-  }
-  // A crash needs no independent task journal: the committed tablet's incomplete fork
-  // mark retries here; the existing table-store update persists the completed baseline.
-  return (ret == OB_ITER_END || ret == OB_ENTRY_NOT_EXIST) ? OB_SUCCESS : ret;
-}
 int NamespaceForkKernelPrototype::acquire_read_view(uint64_t namespace_id,
     const std::function<int(SCN &)> &acquire, ns::NamespaceCatalogViews::Handle &view,
     const ns::NamespaceCatalogViews::Handle &previous)
 {
-  MetadataReadGuard publication;
+  PhysicalPublicationGuard publication;
   if (publication.error() != OB_SUCCESS) { return publication.error(); }
   auto *store = directory_kv_store();
   if (store == nullptr) { return OB_NOT_INIT; }
@@ -1478,7 +1328,7 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
     if (exists) {
       auto *lifecycle = observer::namespace_worker_prototype::namespace_schema_lifecycle(db);
       if (lifecycle != nullptr && lifecycle->is_bootstrapping()) { return OB_SUCCESS; }
-      MetadataReadGuard access;
+      PhysicalPublicationGuard access;
       if (access.error() != OB_SUCCESS) { return access.error(); }
       bool owned = false;
       uint64_t table = OB_INVALID_ID;
@@ -1490,7 +1340,7 @@ int NamespaceForkKernelPrototype::ensure_tablet(const ObTabletID &tablet_id) {
   } // Do not pin an uncommitted tablet while waiting for its creator's row lock.
   LOG_INFO("PROTOTYPE_V4_DIRECTORY_SLOW_PATH", K(tablet_id));
   if (directory_kv_store() == nullptr) { return OB_NOT_INIT; }
-  MetadataReadGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
+  PhysicalPublicationGuard access; if (access.error() != OB_SUCCESS) { return access.error(); }
   struct MaterializeItem {
     ns::CatalogTabletSource source;
     uint64_t local_tablet = 0;

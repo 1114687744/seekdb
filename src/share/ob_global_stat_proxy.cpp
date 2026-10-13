@@ -21,7 +21,7 @@
 #include "share/inner_table/ob_inner_table_schema_constants.h"
 #include "share/ob_share_util.h" // ObShareUtil::get_rs_default_timeout_ctx
 #include "common/ob_timeout_ctx.h" // ObTimeoutCtx
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 
 namespace oceanbase
@@ -51,7 +51,7 @@ int advance_native_schema_watermark(ObCoreTableProxy &table,
     ObTimeoutCtx ctx;
     if (OB_FAIL(ObShareUtil::get_rs_default_timeout_ctx(ctx))) {
     } else {
-      ret = observer::NativeSchemaCatalog::with_ddl_transaction(*table.get_sql_client(),
+      ret = observer::with_ddl_schema_catalog(*table.get_sql_client(),
           ctx.get_abs_timeout(), [&](observer::NativeSchemaCatalog &catalog) {
         return catalog.advance_schema_watermark(kind, value);
       });
@@ -68,7 +68,7 @@ int read_native_schema_watermarks(ObCoreTableProxy &table,
     ObTimeoutCtx ctx;
     if (OB_FAIL(ObShareUtil::get_rs_default_timeout_ctx(ctx))) {
     } else {
-      ret = observer::NativeSchemaCatalog::with_read_client(*table.get_sql_client(),
+      ret = observer::with_read_schema_catalog(*table.get_sql_client(),
           ctx.get_abs_timeout(), OB_INVALID_VERSION, [&](observer::NativeSchemaCatalog &catalog) {
         return catalog.get_schema_watermarks(out);
       });

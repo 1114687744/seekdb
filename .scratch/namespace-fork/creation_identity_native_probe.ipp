@@ -28,7 +28,7 @@ static int record_creation_identity(InstanceMetaStore::Transaction &tx,
   }
   uint64_t id = tablet.id();
   if (ret == OB_SUCCESS) {
-    ret = directory_kv_store()->put(tx, IDENTITY_PROBE_COLLECTION,
+    ret = share::server_service<ObAccessService>()->storage_schema_store().put(tx, IDENTITY_PROBE_COLLECTION,
         ObString(sizeof(id), reinterpret_cast<const char *>(&id)),
         ObString(sizeof(expected), reinterpret_cast<const char *>(&expected)));
   }
@@ -40,7 +40,9 @@ static int record_creation_identity(InstanceMetaStore::Transaction &tx,
 static int verify_creation_identities()
 {
   if (getenv("SEEKDB_CREATION_IDENTITY_PROBE") == nullptr) { return OB_SUCCESS; }
-  auto &store = *directory_kv_store();
+  // The directory now uses typed native tables. The test's auxiliary KV rows
+  // belong to the remaining layout KV store and share its native DDL owner.
+  auto &store = share::server_service<ObAccessService>()->storage_schema_store();
   InstanceMetaStore::Transaction tx;
   std::vector<std::pair<uint64_t, int64_t>> expected;
   int ret = store.begin(tx, ObTimeUtility::current_time() + 120000000, true);

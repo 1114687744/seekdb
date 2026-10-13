@@ -32,8 +32,8 @@ db_p.prepare_agent;
 db_s=OBI(cluster=1,proxy_num=0,primary=db_p);
 db_s.reboot;
 
-# 等待集群初始化完成
-sleep 5;
+# Wait for replay/bootstrap to admit SQL before inspecting either role.
+db_s.check_until_timeout select count(*) from oceanbase.__all_virtual_server_stat where role = 'STANDBY', 1, 120;
 --enable_all_result_log
 
 #################################################################################################

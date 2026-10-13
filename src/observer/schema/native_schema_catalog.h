@@ -11,7 +11,6 @@
 #include "share/schema/ob_schema_service.h"
 
 namespace oceanbase {
-namespace common { class ObISQLClient; }
 namespace share { namespace schema {
 class ObTableSchema;
 class ObColumnSchemaV2;
@@ -56,15 +55,6 @@ public:
   NativeSchemaCatalog(uint64_t namespace_id, storage::ObAccessService &,
                       transaction::ObTransService &);
   ~NativeSchemaCatalog();
-  // Execute in an active DDL owner and retain the directory operation through
-  // commit/rollback. This rejects a standalone SQL proxy; it never starts an
-  // independent transaction. Namespace is the owner's explicit target.
-  static int with_ddl_transaction(common::ObISQLClient &, int64_t deadline,
-      const std::function<int(NativeSchemaCatalog &)> &);
-  // Legacy client adapter for a single consistent read, or a DDL owner's
-  // own writes. An explicit old SCN must already have a retained directory view.
-  static int with_read_client(common::ObISQLClient &, int64_t deadline, int64_t snapshot,
-      const std::function<int(NativeSchemaCatalog &)> &);
   int begin_read(int64_t deadline, bool weak = false);
   // An old snapshot must already be protected by this view's owner.
   int begin_read(int64_t deadline, const ns::NamespaceCatalogViews::Handle &view);

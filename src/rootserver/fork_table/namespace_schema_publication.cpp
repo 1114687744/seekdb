@@ -12,7 +12,7 @@
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tablet/ob_tablet.h"
 #include "common/mysqlclient/ob_mysql_transaction.h"
-#include "observer/schema/native_schema_catalog.h"
+#include "observer/schema/sql_schema_catalog.h"
 #include "observer/namespace_worker_protocol_prototype.h"
 #include <map>
 #include <set>
@@ -295,7 +295,7 @@ int NamespaceSchemaPublication::stage(common::ObMySQLTransaction &sql,
     }
   };
   if (ret == OB_SUCCESS && !pending.empty()) {
-    ret = observer::NativeSchemaCatalog::with_ddl_transaction(sql, THIS_WORKER.get_timeout_ts(),
+    ret = observer::with_ddl_schema_catalog(sql, THIS_WORKER.get_timeout_ts(),
         [&](observer::NativeSchemaCatalog &catalog) {
       int rc = OB_SUCCESS;
       while (rc == OB_SUCCESS && !pending.empty()) {

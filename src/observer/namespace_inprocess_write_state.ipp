@@ -1,213 +1,72 @@
 // Included inside oceanbase::observer::namespace_worker_prototype.
 struct EngineWrite {
-  ObArenaAllocator allocator{ObMemAttr("NsRemoteWrite")};
-  std::shared_ptr<ObSchemaGetterGuard> schema_guard;
+  ObArenaAllocator allocator{ObMemAttr("NsNativeWrite")};
   ns::TabletAccess access;
-  uint64_t logical_table_id = OB_INVALID_ID;
+  // Same lifetime contract as ObIDmlService: the SQL owner retains the plan
+  // until its execution is released, including across savepoint re-acquisition.
+  const ObDmlTablePlan *plan = nullptr;
   data_plane::ObNamespaceAccessMode access_mode_ = data_plane::ObNamespaceAccessMode::UNBOUND;
-  ObDmlTablePlan plan{allocator};
   ObTimeZoneInfo timezone;
   ObDmlWriteSpec spec;
   ObTxReadSnapshot snapshot;
   concurrent_control::ObWriteFlag write_flag;
   ObWriteContext context;
-  ObDmlExecution execution; // Released before context, plan and allocator.
-  ObSEArray<uint64_t, 2> columns;
+  ObDmlExecution execution; // Released before context, access and allocator.
   StorageSpaceHandle storage_space;
-  const ObTableSchema *schema = nullptr;
 
   int prepare(const WritePrepareRequest &request,
               data_plane::ObNamespaceAccessMode access_mode, ObTxDesc &tx) {
-    const uint64_t table = request.table_id;
-    if (request.spec.tz_info_ == nullptr) { return OB_INVALID_ARGUMENT; }
-    // This in-process request borrows a pinned definition. No schema is
-    // serialized, and the SQL plan supplies each batch's logical tablet.
-    int ret = OB_SUCCESS;
+    const auto table = request.plan.get_data_table();
+    if (request.spec.tz_info_ == nullptr || !table.is_valid()
+        || request.plan.get_col_descs().empty()
+        || table.get_table_id() != request.spec.table_id_
+        || table.get_schema_version() != request.spec.schema_version_) {
+      return OB_INVALID_ARGUMENT;
+    }
     storage_space = request.storage_space;
     spec = request.spec;
-    access_mode_ = request.storage_space.is_global()
+    plan = &request.plan;
+    access_mode_ = storage_space.is_global()
         ? data_plane::ObNamespaceAccessMode::UNFENCED : access_mode;
-    logical_table_id = table;
-    const auto &logical_schema = request.logical_schema;
-    const uint64_t namespace_id = storage_space.tablet_namespace_id();
     spec.timeout_ = std::min<int64_t>(spec.timeout_, THIS_WORKER.get_timeout_ts());
-    if (OB_FAIL(timezone.assign(*request.spec.tz_info_))) { return ret; }
+    int ret = timezone.assign(*spec.tz_info_);
     spec.tz_info_ = &timezone;
-    if (OB_FAIL(snapshot.assign(request.snapshot))) { return ret; }
+    if (OB_SUCC(ret)) { ret = snapshot.assign(request.snapshot); }
     write_flag = request.write_flag;
-    const int64_t count = request.columns.size();
-    if (count == 0 || count > OB_MAX_COLUMN_NUMBER) {
-      fprintf(stderr, "PROTOTYPE_V17_WRITE_PREPARE ns=%llu table=%llu columns=%llu stage=validate ret=%d\n",
-          (unsigned long long)namespace_id, (unsigned long long)table, (unsigned long long)count,
-          ret);
-      return OB_NOT_SUPPORTED;
-    }
-    if ((!is_inner_table(table) && spec.schema_version_ <= 0)
-            || logical_schema.get_table_id() != table
-            || logical_schema.get_schema_version() < 0
-            || (spec.schema_version_ > 0
-                && logical_schema.get_schema_version() != spec.schema_version_)) {
-      ret = OB_INVALID_ARGUMENT;
-    } else {
-      schema_guard = request.schema_guard;
-      schema = &logical_schema;
-    }
-    if (!ret) {
-      // The request carries the exact schema pinned by the worker's SchemaGuard.
-      // Asking storage to validate it against the shared process SchemaService
-      // would reintroduce a second, stale namespace schema authority.
-      spec.check_schema_version_ = false;
-    }
-    if (ret) {
-      fprintf(stderr, "PROTOTYPE_V17_WRITE_PREPARE ns=%llu table=%llu stage=schema ret=%d\n",
-          (unsigned long long)namespace_id, (unsigned long long)table, ret);
-      return ret;
-    }
-    if (!schema || schema->get_schema_version() != spec.schema_version_) {
-      fprintf(stderr, "PROTOTYPE_V17_WRITE_PREPARE ns=%llu table=%llu stage=version requested=%lld actual=%lld ret=%d\n",
-          (unsigned long long)namespace_id, (unsigned long long)table, (long long)spec.schema_version_,
-          (long long)(schema ? schema->get_schema_version() : OB_INVALID_VERSION), OB_SCHEMA_EAGAIN);
-      return OB_SCHEMA_EAGAIN;
-    }
-    for (int64_t i = 0; !ret && i < count; ++i) {
-      const uint64_t id = request.columns[i];
-      const auto *column = schema->get_column_schema(id);
-      if (!column || has_exist_in_array(columns, id)) { ret = OB_INVALID_ARGUMENT; }
-      else { ret = columns.push_back(id); }
-    }
-    if (ret) {
-      fprintf(stderr, "PROTOTYPE_V17_WRITE_PREPARE ns=%llu table=%llu stage=columns ret=%d\n",
-          (unsigned long long)namespace_id, (unsigned long long)table, ret);
-      return ret;
-    }
-    if (!ret) { ret = plan.build(schema, spec.schema_version_, columns); }
-    if (!ret) { ret = acquire(tx); }
-    if (ret) {
-      fprintf(stderr, "PROTOTYPE_V17_WRITE_PREPARE ns=%llu table=%llu stage=native ret=%d\n",
-          (unsigned long long)namespace_id, (unsigned long long)table, ret);
-    }
+    // The query plan already pins the Namespace's definition. Storage's
+    // process-wide schema lookup must not select another schema authority.
+    spec.check_schema_version_ = false;
+    if (OB_SUCC(ret)) { ret = acquire(tx); }
     return ret;
   }
 
   int acquire(ObTxDesc &tx) {
     int ret = OB_SUCCESS;
     if (context.is_valid()) { return ret; }
-    if (!ret) { ret = share::server_service<ObIWriteContextService>()->acquire_write_context(
+    if (OB_SUCC(ret)) { ret = share::server_service<ObIWriteContextService>()->acquire_write_context(
         spec.timeout_, tx, snapshot, spec.branch_id_, write_flag, context); }
-    if (!ret) { ret = share::server_service<ObIDmlService>()->prepare_execution(
-        spec, plan, snapshot, allocator, context, write_flag, execution); }
+    if (OB_SUCC(ret)) { ret = share::server_service<ObIDmlService>()->prepare_execution(
+        spec, *plan, snapshot, allocator, context, write_flag, execution); }
     return ret;
   }
 
-  // Native store ctxs merge write state into the tx descriptor only when
-  // released. Savepoint rollback decisions depend on that state, so the 'B'
-  // handler releases all open contexts first; the next batch re-acquires.
+  // Context release publishes native write state to the owner. Savepoint
+  // rollback calls this before deciding whether storage was touched.
   void release_context() {
     execution.reset();
     context.reset();
     access.reset();
   }
 
-  int batch(const WriteBatch &request, ObTxDesc &tx,
-            int64_t &affected, WriteResult &returned) {
-    const char operation = request.operation;
-    const uint64_t namespace_id = storage_space.tablet_namespace_id();
-    const uint64_t tablet_id = request.tablet_id, count = request.rows;
-    const bool update = operation == 'U';
-    if (!ObTabletID(tablet_id).is_valid() || count == 0
-        || count > (update ? 64 : 32) || (update && count % 2)
-        || request.cells.size() != count * columns.count()
-        || request.lob_headers.size() != request.cells.size()) { return OB_INVALID_ARGUMENT; }
-    int ret = access.prepare_write(namespace_id, logical_table_id,
-        ObTabletID(tablet_id), access_mode_);
-    if (OB_FAIL(ret)) { return ret; }
-    const ObTabletID tablet = access.tablet();
+  int invoke(const ObTabletID &tablet, ObTxDesc &tx, bool skip_flush_redo,
+             const NativeWriteOperation &operation) {
+    int ret = access.prepare_write(storage_space.tablet_namespace_id(),
+        plan->get_data_table().get_table_id(), tablet, access_mode_);
     if (OB_SUCC(ret)) { ret = acquire(tx); }
-    if (OB_FAIL(ret)) { return ret; }
-    const int64_t lock_timeout = request.lock_timeout;
-    const ObRowLockMode lock_mode = request.lock_mode;
-    if (operation == 'L' && lock_mode != ObRowLockMode::NONE
-        && lock_mode != ObRowLockMode::WRITE) { return OB_INVALID_ARGUMENT; }
-    ObSEArray<uint64_t, 2> updated_columns;
-    const uint64_t updated_count = request.updated_columns.size();
-    if (updated_count > uint64_t(columns.count())
-        || (update || operation == 'f' ? updated_count == 0 : updated_count != 0)) { return OB_INVALID_ARGUMENT; }
-    for (uint64_t i = 0; i < updated_count; ++i) {
-      const uint64_t column = request.updated_columns[i];
-      if (!has_exist_in_array(columns, column)
-          || has_exist_in_array(updated_columns, column)) { return OB_INVALID_ARGUMENT; }
-      int ret = updated_columns.push_back(column);
-      if (ret) { return ret; }
+    if (OB_SUCC(ret)) {
+      execution.set_skip_flush_redo(skip_flush_redo);
+      ret = operation(*share::server_service<ObIDmlService>(), access.tablet(), tx, execution);
     }
-    const auto duplicate_mode = request.duplicate_mode;
-    if (duplicate_mode != ObDuplicateReturnMode::ALL && duplicate_mode != ObDuplicateReturnMode::ONE) { return OB_INVALID_ARGUMENT; }
-    class Rows final : public ObDatumRowIterator {
-    public:
-      const std::vector<ObObj> &cells;
-      const std::vector<bool> &lob_headers;
-      int64_t width;
-      size_t position = 0;
-      // UPDATE's old row must remain alive while storage obtains its new row.
-      ObDatumRow rows[2];
-      Rows(const std::vector<ObObj> &values, const std::vector<bool> &headers, int64_t columns)
-          : cells(values), lob_headers(headers), width(columns) {}
-      int get_next_row(ObDatumRow *&out) override {
-        if (position == cells.size()) { return OB_ITER_END; }
-        ObDatumRow &row = rows[(position / width) % 2];
-        int ret = OB_SUCCESS;
-        for (int64_t i = 0; !ret && i < width; ++i) {
-          const size_t index = position++;
-          ret = row.storage_datums_[i].from_obj_enhance(cells[index]);
-          if (!ret && lob_headers[index]) { row.storage_datums_[i].set_has_lob_header(); }
-        }
-        row.row_flag_.set_flag(DF_INSERT); out = &row; return ret;
-      }
-    } rows(request.cells, request.lob_headers, columns.count());
-    ret = rows.rows[0].init(columns.count());
-    if (!ret) { ret = rows.rows[1].init(columns.count()); }
-    auto *service = share::server_service<ObIDmlService>();
-    if (!ret && operation == 'f') {
-      ObDatumRowIterator *duplicates = nullptr;
-      ret = service->insert_rows_fetch_duplicates(tablet, tx, execution, columns, updated_columns,
-                                                 &rows, duplicate_mode, affected, duplicates);
-      struct ReleaseDuplicates { ObIDmlService *service; ObDatumRowIterator *rows;
-        ~ReleaseDuplicates() { if (rows) { service->free_duplicate_rows_iterator(rows); } }
-      } release{service, duplicates};
-      if (!ret || ret == OB_ERR_PRIMARY_KEY_DUPLICATE) {
-        const int storage_ret = ret;
-        int64_t duplicate_count = 0; ret = OB_SUCCESS;
-        ObDatumRow *row = nullptr;
-        while (duplicates && !ret && !(ret = duplicates->get_next_row(row))) {
-          if (!row || row->get_column_count() != updated_columns.count()
-              || duplicate_count >= 32) { ret = OB_SIZE_OVERFLOW; break; }
-          for (int64_t i = 0; !ret && i < updated_columns.count(); ++i) {
-            ObObj cell;
-            const auto &descriptors = plan.get_col_descs();
-            const ObColDesc *column = nullptr;
-            for (int64_t j = 0; !column && j < descriptors.count(); ++j) {
-              if (descriptors.at(j).col_id_ == updated_columns.at(i)) { column = &descriptors.at(j); }
-            }
-            ret = column ? row->storage_datums_[i].to_obj_enhance(cell, column->col_type_) : OB_INVALID_ARGUMENT;
-            if (!ret) {
-              ret = returned.append(cell, row->storage_datums_[i].has_lob_header());
-            }
-          }
-          ++duplicate_count;
-        }
-        if (ret == OB_ITER_END) { ret = OB_SUCCESS; }
-        if (!ret) {
-          returned.rows = duplicate_count;
-          ret = storage_ret;
-        }
-      }
-    } else if (!ret && update) { ret = service->update_rows(tablet, tx, execution, columns, updated_columns, &rows, affected); }
-    else if (!ret && operation == 'D') { ret = service->delete_rows(tablet, tx, execution, columns, &rows, affected); }
-    else if (!ret && operation == 'L') { ret = service->lock_rows(tablet, tx, execution, lock_timeout, lock_mode, &rows, affected); }
-    else if (!ret && operation == 'p') { ret = service->put_rows(tablet, tx, execution, columns, &rows, affected); }
-    else if (!ret) { ret = service->insert_rows(tablet, tx, execution, columns, &rows, affected); }
-    fprintf(stderr, "PROTOTYPE_V15_WRITE_BATCH op=%c tx=%lld rows=%llu affected=%lld ret=%d\n",
-        operation, (long long)tx.get_tx_id().get_id(),
-        (unsigned long long)(update ? count / 2 : count), (long long)affected, ret);
     return ret;
   }
 };
@@ -270,17 +129,12 @@ struct EngineWrites {
     }
     return ret;
   }
-  int batch(const ObTxDesc &view, const WriteBatch &request,
-            int64_t &affected, WriteResult &duplicates) {
-    if (!tx || tx->get_tx_id() != view.get_tx_id()) { return OB_INVALID_ARGUMENT; }
-    if (request.operation != 'I' && request.operation != 'U'
-        && request.operation != 'D' && request.operation != 'L'
-        && request.operation != 'p' && request.operation != 'f') {
-      return OB_INVALID_ARGUMENT;
-    }
-    auto it = writes.find(request.handle);
+  int invoke(const ObTxDesc &view, uint64_t handle, const ObTabletID &tablet,
+             bool skip_flush_redo, const NativeWriteOperation &operation) {
+    if (!tx || tx->get_tx_id() != view.get_tx_id() || !operation) { return OB_INVALID_ARGUMENT; }
+    auto it = writes.find(handle);
     return it == writes.end() ? OB_INVALID_ARGUMENT
-        : it->second->batch(request, *tx, affected, duplicates);
+        : it->second->invoke(tablet, *tx, skip_flush_redo, operation);
   }
 };
 
