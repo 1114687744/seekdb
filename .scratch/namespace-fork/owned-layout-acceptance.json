@@ -1,0 +1,829 @@
+{
+  "scope": "Owned-layout goals 1/2/3, composite focused acceptance; not full profile or full mysqltest/sysbench",
+  "baseline": "02699902741361dcd937be7b3ed1e17af839e162",
+  "head_before_final_commit": "1bc06d0a7ac8dc7a2b1d043c0a28e3fcb2690718",
+  "production_diff_from_head_sha256": "7f4f1d1f14881ded384cc871e858b7d9ce1a344bf6cdb46c268c7b46f02b2648",
+  "production_binary": {
+    "path": "build_release/src/observer/seekdb",
+    "sha256": "20578725e34033c739b94a04eb8d01e42345f025fc3d52bc7313440a3a55244a"
+  },
+  "native_binaries": {
+    "v17": "e9873862c2cdc5f3405adf100f9e4f37cb633f0a615b0ffee237ef32f76a59a5",
+    "v19": "e0a7c342d29f9c79d09a21e0587331d8378ea6f014c20ee0e6d3726fd9af40f5"
+  },
+  "standby": [
+    {
+      "case": "basic",
+      "exit_code": 0,
+      "elapsed_s": 117.24
+    },
+    {
+      "case": "namespace_fork_local",
+      "exit_code": 0,
+      "elapsed_s": 178.63
+    },
+    {
+      "case": "standby_sstable_replay",
+      "exit_code": 0,
+      "elapsed_s": 140.72
+    }
+  ],
+  "logs": [
+    {
+      "path": "/tmp/owned-layout-four-gates-v9/bootstrap-native-kv.log",
+      "meaning": "passed prefix; final forced-redo recovery failure fixed below",
+      "sha256": "eed8a27d90e3f01082acd8b308bd6cd047b75e3092497c61da38d99e0679f995",
+      "bytes": 159922,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "local_schema_mini",
+          "version": 1791888622150320
+        },
+        {
+          "event": "PASS",
+          "case": "local_schema_fork",
+          "version": 1791888644174056
+        },
+        {
+          "event": "PASS",
+          "case": "local_schema_fork_wide",
+          "version": 1791888673262488
+        },
+        {
+          "event": "PASS",
+          "case": "meta_layout",
+          "owner": "initial",
+          "cold_parent": false,
+          "actual_meta_major": true,
+          "latest_head_not_substituted": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "meta_layout",
+          "owner": "child",
+          "cold_parent": false,
+          "actual_meta_major": true,
+          "latest_head_not_substituted": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "meta_layout",
+          "owner": "child",
+          "cold_parent": true,
+          "actual_meta_major": true,
+          "latest_head_not_substituted": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "sstable_layout",
+          "compact_mixed": false,
+          "parent_g": 1282,
+          "initial_v": 1791888876641104,
+          "parent_v": 1791888877061320,
+          "child_v": 1791888892589056,
+          "source_drop": true,
+          "ddl_index": true,
+          "actual_rewrites": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "sstable_layout",
+          "compact_mixed": true,
+          "parent_g": 1282,
+          "initial_v": 1791888930508904,
+          "parent_v": 1791888930794064,
+          "child_v": 1791888949728016,
+          "source_drop": true,
+          "ddl_index": true,
+          "actual_rewrites": true,
+          "crash_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "row_layout_replay",
+          "batch_insert": true,
+          "single_update": true,
+          "row_lock": true,
+          "replay_dump_recovery": true
+        },
+        {
+          "event": "PASS",
+          "case": "physical_merge_layout",
+          "frozen": 1791889166487109006,
+          "post_freeze_ddl": true,
+          "post_freeze_mini": true,
+          "independent_branches": true
+        },
+        {
+          "event": "PASS",
+          "case": "independent_namespace_local_global_indexes",
+          "frozen": 1791889329252344016,
+          "root_version": 1791889198639896,
+          "child_version": 1791889198771680
+        },
+        {
+          "event": "PASS",
+          "case": "child_global_index_report_fault",
+          "fault": "missing",
+          "frozen": 1791889357734614039,
+          "tablet": 4611686430744448325
+        },
+        {
+          "event": "PASS",
+          "case": "child_global_index_report_fault",
+          "fault": "schema_version",
+          "frozen": 1791889388956109013,
+          "tablet": 4611686430744448325
+        },
+        {
+          "event": "PASS",
+          "case": "child_global_index_report_fault",
+          "fault": "row_count",
+          "frozen": 1791889417363768006,
+          "tablet": 4611686430744448325
+        },
+        {
+          "event": "PASS",
+          "case": "post_freeze_same_count_partition_replacement",
+          "frozen": 1791889452962507023
+        },
+        {
+          "event": "PASS",
+          "case": "namespace_historical_checksum",
+          "native": true
+        },
+        {
+          "event": "PASS",
+          "case": "independent_groups_and_owners",
+          "frozen": 1791889642545518052
+        },
+        {
+          "event": "PASS",
+          "case": "missing_input_restart_revalidates",
+          "frozen": 1791889642545518052
+        },
+        {
+          "event": "PASS",
+          "case": "completion_publication_restart",
+          "frozen": 1791889642545518052
+        },
+        {
+          "event": "PASS",
+          "case": "checksum_group_recovery"
+        },
+        {
+          "event": "PASS",
+          "case": "medium_layout_target",
+          "forced_old": false
+        },
+        {
+          "event": "PASS",
+          "case": "medium_layout_target",
+          "forced_old": true
+        },
+        {
+          "event": "PASS",
+          "case": "cold_catalog_materialization",
+          "runtime_slots_loaded": 0,
+          "wrong_incarnation_rejected": true,
+          "main_lob_atomic": true
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_typed",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_indexed",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_plain",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_watermark",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_versions",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_part",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_dependency",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_operations",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_trigger",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_constraint",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_range_part",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_list_part",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_part2",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_drop_index",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_mock_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_mock_fk_multi",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_old_mock_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_self_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_drop_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_old_fk",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_history",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_dropped",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_generated",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "native_schema_catalog_lob",
+          "inherited_history": true,
+          "runtime_slots_loaded": 0
+        },
+        {
+          "event": "PASS",
+          "case": "shared_transaction",
+          "faults": true,
+          "atomic_lob_unit": true,
+          "rollback": true,
+          "crash_recovery": true,
+          "concurrent_creation": true
+        },
+        {
+          "event": "PASS",
+          "case": "shared_transaction_selected",
+          "flushed_redo": false,
+          "recovered_committed_retry": true
+        }
+      ],
+      "tail": [
+        "    first_packet = self.connection._read_packet()",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/connections.py\", line 782, in _read_packet",
+        "    packet.raise_for_error()",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/protocol.py\", line 219, in raise_for_error",
+        "    err.raise_mysql_exception(self._data)",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/err.py\", line 150, in raise_mysql_exception",
+        "    raise errorclass(errno, errval)",
+        "pymysql.err.OperationalError: (4012, 'Timeout, query has reached the maximum query timeout: 10000000(us), maybe you can adjust the session variable ob_query_timeout or query_timeout hint, and try again.')"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v11-resume/bootstrap-native-kv.log",
+      "meaning": "passed resumed shared-transaction suffix",
+      "sha256": "f6c040ed1fb2d96d65a292633d618f7210f4f72fa056a082a12f55ad541b9f1e",
+      "bytes": 48753,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "shared_transaction",
+          "faults": true,
+          "atomic_lob_unit": true,
+          "rollback": true,
+          "crash_recovery": true,
+          "concurrent_creation": true
+        },
+        {
+          "event": "PASS",
+          "case": "shared_transaction_selected",
+          "flushed_redo": false,
+          "recovered_committed_retry": true
+        },
+        {
+          "event": "PASS",
+          "case": "shared_transaction_selected",
+          "flushed_redo": true,
+          "recovered_committed_retry": true
+        }
+      ],
+      "tail": [
+        "{\"event\": \"physical_creation_versions_verified\", \"tablets\": 524, \"authority\": \"pre_crash_native_commit\", \"persisted_mds_tablets\": 470}",
+        "{\"event\": \"atomic_state\", \"namespace\": 6, \"committed\": true, \"mappings\": [], \"physical\": [[4611686843061308737, 1, 1, 0], [4611686843061308738, 1, 1, 0], [4611686843061308739, 1, 1, 0]], \"sources\": [[[500003, 4611686843061308737, 2000136, 200001, 200002, 200003], 0], [[500004, 4611686843061308738, 2000136, 200001, 200002, 200003], 0], [[500005, 4611686843061308739, 2000136, 200001, 200002, 200003], 0]]}",
+        "{\"event\": \"sql\", \"sql\": \"SELECT id,v,LENGTH(b) FROM nstrunc_repro.t1 ORDER BY id\", \"rows\": [[1, 11, 12000], [1000001, 12, 8], [1000002, 13, 13]]}",
+        "{\"event\": \"PASS\", \"case\": \"shared_transaction_selected\", \"selected\": [\"rollback_create\", \"rollback_owned\", \"crash_create\", \"crash_owned\"], \"flushed_redo\": true, \"recovered_committed_retry\": true}",
+        "{\"event\": \"stopped\", \"pid\": 662390, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_shared_transaction_363ziyij/data.tar.gz\", \"bytes\": 6658549}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v12.log",
+      "meaning": "bootstrap/sql passed; direct dependency comparison failed across RC snapshots",
+      "sha256": "65bad4913af037d813b9b8b184d92b524fe94dc050f266b161577ba5c1090b3d",
+      "bytes": 324,
+      "events": [],
+      "tail": [
+        "PROFILE owned-layout (native catalog and locally owned physical descriptions)",
+        "RUN bootstrap /tmp/owned-layout-four-gates-v12/bootstrap.log",
+        "PASS bootstrap",
+        "RUN sql /tmp/owned-layout-four-gates-v12/sql.log",
+        "PASS sql",
+        "RUN direct /tmp/owned-layout-four-gates-v12/direct.log",
+        "FAIL direct: /tmp/owned-layout-four-gates-v12/direct.log"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v12/direct.log",
+      "meaning": "owned-layout prefix passed; test snapshot corrected below",
+      "sha256": "37489841f0edc4c0d445e7fe69831b7b82af360c2a4b1aeaffa0081be8bdf7bd",
+      "bytes": 37635,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "owned_layout_replay_and_dump"
+        },
+        {
+          "event": "PASS",
+          "case": "owned_layout_concurrent_install_and_rollback"
+        },
+        {
+          "event": "PASS",
+          "case": "owned_layout_divergent_fork"
+        }
+      ],
+      "tail": [
+        "    run(args.binary)",
+        "  File \"/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/native_schema_catalog_ddl_probe.py\", line 692, in run",
+        "    dependency_evidence = exercise_dependencies(lambda statement: experiment.sql(statement, child), prepared=True)",
+        "  File \"/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/native_schema_catalog_ddl_probe.py\", line 481, in exercise_dependencies",
+        "    rows = dependency_rows(query, [new_v1, v2])",
+        "  File \"/home/nijia.nj/.herdr/worktrees/seekdb/herdr-fork/.scratch/namespace-fork/native_schema_catalog_ddl_probe.py\", line 424, in dependency_rows",
+        "    assert indexed == rows, (rows, indexed)",
+        "AssertionError: (((8, 500188, 0, 1791891558967232, 1791891558967272, 8, 500259, 1791891558818192, 500188, 0, None, None, None), (8, 500259, 0, 1791891559177368, 1791891559177429, 1, 500260, 1791891559108560, 500259, 0, None, None, None)), ((8, 500188, 0, 1791891559261696, 1791891559261739, 8, 500259, 1791891559054696, 500188, 0, None, None, None), (8, 500259, 0, 1791891559177368, 1791891559177429, 1, 500260, 1791891559108560, 500259, 0, None, None, None)))"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v12-resume.log",
+      "meaning": "direct resumed and passed",
+      "sha256": "08595165f10507771b783c72c8f030878bee07860dde69021aa62c01752d7634",
+      "bytes": 224,
+      "events": [],
+      "tail": [
+        "PROFILE owned-layout (native catalog and locally owned physical descriptions)",
+        "RESUME direct at native_schema_catalog_ddl_probe.py",
+        "RUN direct /tmp/owned-layout-four-gates-v12-resume/direct.log",
+        "PASS direct",
+        "PASS selected gates"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v12-resume/direct.log",
+      "meaning": "direct DDL/index/fork/restart/checksum/standby passed",
+      "sha256": "4006f07f3a439da77f3062554e7b7cb6b29a1645dacbc37606f0ca47c9468648",
+      "bytes": 918395,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "native_catalog_ddl_sql_indexes_and_fork"
+        },
+        {
+          "event": "PASS",
+          "case": "native_catalog_ddl_crash_recovery"
+        },
+        {
+          "event": "PASS",
+          "case": "native_catalog_trigger_execution_after_restart"
+        },
+        {
+          "event": "PASS",
+          "case": "native_catalog_mock_parent_resolution_after_restart"
+        },
+        {
+          "event": "PASS",
+          "case": "fork_service_latency",
+          "result": "/tmp/owned-layout-four-gates-v12-resume/fork-service-latency-results.json"
+        },
+        {
+          "event": "PASS",
+          "case": "detached_child_restart_plain_index_lob",
+          "child_alive": true,
+          "post_restart_write": true,
+          "pin_retained": false,
+          "mixed_source": false
+        },
+        {
+          "event": "PASS",
+          "case": "detached_child_restart_plain_index_lob",
+          "child_alive": true,
+          "post_restart_write": true,
+          "pin_retained": false,
+          "mixed_source": true
+        },
+        {
+          "event": "PASS",
+          "case": "retired_baseline_restart",
+          "intermediate_namespace_deleted": true,
+          "source_table_dropped": true,
+          "sources_reclaimed": true
+        },
+        {
+          "event": "PASS",
+          "case": "inprocess_direct",
+          "ddl": true,
+          "partition": true,
+          "index": true,
+          "lob": true,
+          "fulltext": true,
+          "ivf": true,
+          "ivf_pq": true,
+          "ivf_sq8": true,
+          "empty_hnsw": true,
+          "source_drop": true,
+          "ddl_redefinition": true,
+          "check_constraint": true,
+          "auto_increment": true,
+          "fork_table": true,
+          "cache_lifecycle": true,
+          "interrupted_heap_recovery": true,
+          "restart": true
+        },
+        {
+          "event": "PASS",
+          "case": "independent_namespace_local_global_indexes",
+          "frozen": 1791892384015527009,
+          "root_version": 1791892253863512,
+          "child_version": 1791892254105184
+        },
+        {
+          "event": "PASS",
+          "case": "namespace_historical_checksum",
+          "native": false
+        }
+      ],
+      "tail": [
+        "{\"event\": \"PASS\", \"case\": \"namespace_historical_checksum\", \"native\": false}",
+        "{\"event\": \"stopped\", \"pid\": 726224, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_namespace_checksum_on1ez63l/data.tar.gz\", \"bytes\": 13775140}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend",
+        "{\"case\": \"basic\", \"exit_code\": 0, \"elapsed_s\": 117.24}",
+        "{\"case\": \"namespace_fork_local\", \"exit_code\": 0, \"elapsed_s\": 178.63}",
+        "{\"case\": \"standby_sstable_replay\", \"exit_code\": 0, \"elapsed_s\": 140.72}"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-four-gates-v12-tls.log",
+      "meaning": "TLS passed",
+      "sha256": "c2fce39a67bdd2a0a7331f10e9266f29494632615aa3f327322d5c2af63df8ff",
+      "bytes": 160,
+      "events": [],
+      "tail": [
+        "PROFILE owned-layout (native catalog and locally owned physical descriptions)",
+        "RUN tls /tmp/owned-layout-four-gates-v12-tls/tls.log",
+        "PASS tls",
+        "PASS selected gates"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-ddl-cost9.log",
+      "meaning": "8000 partitions, two owners, four DDL statements passed",
+      "sha256": "acbf0cb0ba247213e751945a1c9879531018f587fc5e3f5fc3bf430d7b4c9295",
+      "bytes": 3345,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "ddl_publication_cost",
+          "partitions": 8000,
+          "owners": 2,
+          "statements": 4
+        }
+      ],
+      "tail": [
+        "{\"event\": \"sql\", \"sql\": \"UPDATE publication_cost.t SET v=11 WHERE id=1\", \"rows\": []}",
+        "{\"event\": \"sql\", \"sql\": \"SELECT * FROM publication_cost.t WHERE id=1\", \"rows\": [[1, 11, 7]]}",
+        "{\"event\": \"sql\", \"sql\": \"SELECT * FROM publication_cost.t WHERE id=1\", \"rows\": [[1, 10, 7]]}",
+        "{\"event\": \"PASS\", \"case\": \"ddl_publication_cost\", \"partitions\": 8000, \"owners\": 2, \"statements\": 4}",
+        "{\"event\": \"stopped\", \"pid\": 573007, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_ddl_publication_cost_abxzmf6n/data.tar.gz\", \"bytes\": 8869632}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-shared-flush9.log",
+      "meaning": "reproduced aborted CREATE retry timeout before fix",
+      "sha256": "f5e02fea7ab7fb767922bc21817a66ada1df4ad21fc1df9a09949e6abaa3274e",
+      "bytes": 10601,
+      "events": [],
+      "tail": [
+        "    first_packet = self.connection._read_packet()",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/connections.py\", line 782, in _read_packet",
+        "    packet.raise_for_error()",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/protocol.py\", line 219, in raise_for_error",
+        "    err.raise_mysql_exception(self._data)",
+        "  File \"/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/err.py\", line 150, in raise_mysql_exception",
+        "    raise errorclass(errno, errval)",
+        "pymysql.err.OperationalError: (4012, 'Timeout, query has reached the maximum query timeout: 10000000(us), maybe you can adjust the session variable ob_query_timeout or query_timeout hint, and try again.')"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-shared-flush10.log",
+      "meaning": "all four original forced-redo rollback/crash cases passed after fix",
+      "sha256": "71fcdf567d97dafd9e5ffbd701bd2fa9704ce0ef3973d0d725ddbde71fd353d2",
+      "bytes": 14874,
+      "events": [
+        {
+          "event": "PASS",
+          "case": "shared_transaction_selected",
+          "flushed_redo": true,
+          "recovered_committed_retry": true
+        }
+      ],
+      "tail": [
+        "{\"event\": \"physical_creation_versions_verified\", \"tablets\": 524, \"authority\": \"pre_crash_native_commit\", \"persisted_mds_tablets\": 470}",
+        "{\"event\": \"atomic_state\", \"namespace\": 6, \"committed\": true, \"mappings\": [], \"physical\": [[4611686843061308737, 1, 1, 0], [4611686843061308738, 1, 1, 0], [4611686843061308739, 1, 1, 0]], \"sources\": [[[500003, 4611686843061308737, 2000136, 200001, 200002, 200003], 0], [[500004, 4611686843061308738, 2000136, 200001, 200002, 200003], 0], [[500005, 4611686843061308739, 2000136, 200001, 200002, 200003], 0]]}",
+        "{\"event\": \"sql\", \"sql\": \"SELECT id,v,LENGTH(b) FROM nstrunc_repro.t1 ORDER BY id\", \"rows\": [[1, 11, 12000], [1000001, 12, 8], [1000002, 13, 13]]}",
+        "{\"event\": \"PASS\", \"case\": \"shared_transaction_selected\", \"selected\": [\"rollback_create\", \"rollback_owned\", \"crash_create\", \"crash_owned\"], \"flushed_redo\": true, \"recovered_committed_retry\": true}",
+        "{\"event\": \"stopped\", \"pid\": 630830, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_shared_transaction_n6e1yqqj/data.tar.gz\", \"bytes\": 6650257}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-catalog-drop-red13b.log",
+      "meaning": "reproduced premature schema tablet reclamation",
+      "sha256": "a9895d998c98ff56ee6ae0aa3e8065b0666d3773f19b47a3b26ef086b8821acf",
+      "bytes": 1802,
+      "events": [],
+      "tail": [
+        "{\"event\": \"stopped\", \"pid\": 682666, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_native_catalog_drop_retention_d7zsgg1c/data.tar.gz\", \"bytes\": 10945163}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend",
+        "Traceback (most recent call last):",
+        "  File \".scratch/namespace-fork/native_catalog_drop_retention_probe.py\", line 68, in <module>",
+        "    assert len(current) == 2 and all(row[1:] == (3, 1, 0) for row in current), (",
+        "AssertionError: ('schema tablet reclaimed while historical F is still required', 1791891461237932029, ((4611686430744248332, 3, 1, 1), (4611686430744248333, 3, 1, 0)))"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-catalog-drop14.log",
+      "meaning": "retention passed; release failed before renewal demand fix",
+      "sha256": "a0eeb3cdc6350f3dfaac3040db5a8ce969657f993e2602849a77bdfbaed99869",
+      "bytes": 1956,
+      "events": [
+        {
+          "event": "catalog_tablets_retained",
+          "frozen": 1791892103158274065,
+          "seconds": 16
+        }
+      ],
+      "tail": [
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend",
+        "Traceback (most recent call last):",
+        "  File \".scratch/namespace-fork/native_catalog_drop_retention_probe.py\", line 74, in <module>",
+        "    wait_for(lambda: not state() or all(row[3] == 1 for row in state()),",
+        "  File \".scratch/namespace-fork/native_catalog_drop_retention_probe.py\", line 27, in wait_for",
+        "    raise AssertionError(message)",
+        "AssertionError: schema tablets were retained after F completed"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-native-retention14b.log",
+      "meaning": "first two retention phases passed; startup reload EAGAIN later fixed",
+      "sha256": "789ad7736235aa31b83cb11a43fa64671839bebd3865d3990f5f5a6fbfd7c018",
+      "bytes": 2255,
+      "events": [
+        {
+          "event": "layout_retention_verified",
+          "recovered": 0,
+          "evidence": "LAYOUT_RETENTION_PASS recovered=0 F=1791892293235309021 active=1791892293257259013 durable=1791892293235309021 original_history=1 mini_minor=1 released=0 handoff=0\n"
+        },
+        {
+          "event": "layout_retention_verified",
+          "recovered": 1,
+          "evidence": "LAYOUT_RETENTION_RELEASE original_history=1 current=12 old_F_discarded=1\n\nLAYOUT_RETENTION_PASS recovered=1 F=1791892293235309021 active=1791892334302750000 durable=1791892328034925023 original_history=1 mini_minor=1 released=1 handoff=1\n"
+        }
+      ],
+      "tail": [
+        "  File \".scratch/namespace-fork/run_layout_retention_probe.py\", line 54, in <module>",
+        "    main()",
+        "  File \".scratch/namespace-fork/run_layout_retention_probe.py\", line 37, in main",
+        "    raise AssertionError(output[-10000:])",
+        "AssertionError: LAYOUT_RETENTION_FAIL line=75 ret=-4023 expr=freezes.reload_for_test()",
+        "",
+        "LAYOUT_RETENTION_RELEASE_RECOVERED original_history=1 current=12",
+        ""
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-native-retention17.log",
+      "meaning": "all original history MVCC/recovery/handoff/release phases passed",
+      "sha256": "dddcab91a6b2c67bb381d41cfa8469185551c94e550b351a9c53c5688dc78e02",
+      "bytes": 2301,
+      "events": [
+        {
+          "event": "layout_retention_verified",
+          "recovered": 0,
+          "evidence": "LAYOUT_RETENTION_PASS recovered=0 F=1791892742176041033 active=1791892745418485001 durable=1791892742176041033 original_history=1 mini_minor=1 released=0 handoff=0\n"
+        },
+        {
+          "event": "layout_retention_verified",
+          "recovered": 1,
+          "evidence": "LAYOUT_RETENTION_RELEASE original_history=1 current=12 old_F_discarded=1\n\nLAYOUT_RETENTION_PASS recovered=1 F=1791892742176041033 active=1791892783139061000 durable=1791892776869745013 original_history=1 mini_minor=1 released=1 handoff=1\n"
+        },
+        {
+          "event": "layout_retention_verified",
+          "recovered": 2,
+          "evidence": "LAYOUT_RETENTION_RELEASE_RECOVERED original_history=1 current=12\n"
+        },
+        {
+          "event": "PASS",
+          "case": "layout_retention",
+          "no_old_reader": true,
+          "mini_minor": true,
+          "crash_recovery": true,
+          "release_after_completion": true,
+          "paused_broadcast_without_freeze_row": true,
+          "concurrent_reader_handoff": true,
+          "original_history": true,
+          "mvcc_boundary_advanced": true,
+          "release_crash_recovery": true
+        }
+      ],
+      "tail": [
+        "{\"event\": \"crash_for_recovery\", \"pid\": 762880}",
+        "{\"event\": \"setup\", \"binary\": \"/data/1/nijia.nj/test/owned-layout-artifacts/seekdb-catalog-recycle-probe-v17\", \"base\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_layout_retention_fbvdjfbd\", \"pid\": 769548, \"port\": 18409}",
+        "{\"event\": \"layout_retention_verified\", \"recovered\": 2, \"evidence\": \"LAYOUT_RETENTION_RELEASE_RECOVERED original_history=1 current=12\\n\"}",
+        "{\"event\": \"PASS\", \"case\": \"layout_retention\", \"no_old_reader\": true, \"mini_minor\": true, \"crash_recovery\": true, \"release_after_completion\": true, \"paused_broadcast_without_freeze_row\": true, \"concurrent_reader_handoff\": true, \"original_history\": true, \"mvcc_boundary_advanced\": true, \"release_crash_recovery\": true}",
+        "{\"event\": \"stopped\", \"pid\": 769548, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_layout_retention_fbvdjfbd/data.tar.gz\", \"bytes\": 6280945}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-catalog-drop19.log",
+      "meaning": "drop + page GC + late historical read + release passed",
+      "sha256": "a47f7e58ad015137faf29be25e589ab7794cf369f4459edf9673edf98e81927d",
+      "bytes": 2115,
+      "events": [
+        {
+          "event": "catalog_tablets_retained",
+          "frozen": 1791893425941443032,
+          "seconds": 16
+        },
+        {
+          "event": "historical_catalog_read_after_drop",
+          "evidence": "NATIVE_CATALOG_DROPPED_READ ns=3 table=500003 F=1791893425941443032 V=1791893312431000 ret=0"
+        },
+        {
+          "event": "PASS",
+          "case": "native_catalog_drop_retention",
+          "frozen": 1791893425941443032,
+          "protected_without_active_reader": true,
+          "released_after_completion": true
+        }
+      ],
+      "tail": [
+        "{\"event\": \"catalog_tablets_retained\", \"frozen\": 1791893425941443032, \"tablets\": [4611686430744248332, 4611686430744248333], \"seconds\": 16}",
+        "{\"event\": \"sql\", \"sql\": \"FORK NAMESPACE catalog_retention_read FROM ns1\", \"rows\": []}",
+        "{\"event\": \"historical_catalog_read_after_drop\", \"evidence\": \"NATIVE_CATALOG_DROPPED_READ ns=3 table=500003 F=1791893425941443032 V=1791893312431000 ret=0\"}",
+        "{\"event\": \"PASS\", \"case\": \"native_catalog_drop_retention\", \"frozen\": 1791893425941443032, \"protected_without_active_reader\": true, \"released_after_completion\": true}",
+        "{\"event\": \"stopped\", \"pid\": 792673, \"returncode\": -9}",
+        "{\"event\": \"data_archived\", \"path\": \"/data/1/nijia.nj/test/namespace_fork_PROTOTYPE_native_catalog_drop_retention_kphxy19_/data.tar.gz\", \"bytes\": 16171420}",
+        "/home/nijia.nj/.local/lib/python3.8/site-packages/pymysql/_auth.py:9: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.",
+        "  from cryptography.hazmat.backends import default_backend"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-native-retention-build7.log",
+      "meaning": "full current test-hook build passed",
+      "sha256": "e0a297a5ad2927030a7d9b175b310cf97d057f68e4f6c94828e0e809d6c7a36a",
+      "bytes": 4147,
+      "events": [],
+      "tail": [
+        "[ 96%] Linking CXX static library libob_storage_static.a",
+        "[ 96%] Built target ob_storage_static",
+        "[100%] Built target ob_rootserver",
+        "[100%] Linking CXX static library liboceanbase_static.a",
+        "[100%] Built target oceanbase_static",
+        "[100%] Linking CXX executable seekdb",
+        "[100%] Built target seekdb",
+        "[100%] Built target observer"
+      ]
+    },
+    {
+      "path": "/tmp/owned-layout-catalog-recycle-production-build3.log",
+      "meaning": "final production build passed after removing all hooks",
+      "sha256": "53ad5201b76eeee7565af8e71ba03995313eeb5df84ed6267ecc5a6cfa6d7acf",
+      "bytes": 4147,
+      "events": [],
+      "tail": [
+        "[ 96%] Linking CXX static library libob_storage_static.a",
+        "[ 96%] Built target ob_storage_static",
+        "[100%] Built target ob_rootserver",
+        "[100%] Linking CXX static library liboceanbase_static.a",
+        "[100%] Built target oceanbase_static",
+        "[100%] Linking CXX executable seekdb",
+        "[100%] Built target seekdb",
+        "[100%] Built target observer"
+      ]
+    }
+  ]
+}

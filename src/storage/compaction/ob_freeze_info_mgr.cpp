@@ -22,6 +22,8 @@
 #include "storage/compaction/ob_compaction_schedule_util.h"
 #include "storage/concurrency_control/ob_multi_version_garbage_collector.h"
 #include "storage/tx_storage/ob_ls_service.h"
+#include "storage/tx_storage/ob_access_service.h"
+#include "storage/instance_meta/instance_meta_store.h"
 #include "storage/tx_storage/ob_memstore_freezer.h"
 #include "storage/meta_store/ob_server_storage_meta_service.h"
 #include "storage/compaction/ob_compaction_schedule_util.h"
@@ -392,6 +394,23 @@ int ObFreezeInfoMgr::get_physical_retention(
   if (OB_SUCC(ret)) {
     if (!inited_ || !physical_retention_) { ret = OB_NOT_INIT; }
     else { plan = physical_retention_; }
+  }
+  return ret;
+}
+
+int ObFreezeInfoMgr::get_schema_recycle_scn(share::SCN &snapshot)
+{
+  int ret = get_schema_history_retention(snapshot);
+  if (ret == OB_NOT_INIT) {
+    // Recovery has not restored the durable round yet. Preserve all history.
+    snapshot = SCN::base_scn();
+    ret = OB_SUCCESS;
+  } else if (OB_SUCC(ret)) {
+    share::SCN readers;
+    auto *access = share::server_service<ObAccessService>();
+    if (access == nullptr) { ret = OB_NOT_INIT; }
+    else if (OB_FAIL(access->instance_meta_store().min_retained_snapshot(readers))) {
+    } else if (readers < snapshot) { snapshot = readers; }
   }
   return ret;
 }

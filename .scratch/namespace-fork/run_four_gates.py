@@ -25,7 +25,6 @@ args.log_dir.mkdir(parents=True, exist_ok=True)
 gates = [
     ('bootstrap-native-kv', [
         [local / 'runtime_shrink_probe.py', '--binary', probe],
-        [local / 'run_local_storage_schema_probe.py', '--binary', probe],
         *[[local / 'local_schema_install_probe.py', '--binary', probe, '--case', case]
           for case in ('mini', 'fork', 'fork_wide')],
         *[[local / 'meta_layout_probe.py', '--binary', probe, '--owner', owner]
@@ -34,17 +33,8 @@ gates = [
         [local / 'sstable_layout_probe.py', '--binary', probe],
         [local / 'sstable_layout_probe.py', '--binary', probe, '--compact-mixed'],
         [local / 'row_layout_replay_probe.py', '--binary', probe],
-        [local / 'run_storage_schema_history_probe.py', '--binary', probe],
         [local / 'run_layout_retention_probe.py', '--binary', probe],
-        [local / 'layout_reference_gc_probe.py', '--binary', probe],
-        [local / 'layout_reference_gc_probe.py', '--binary', probe, '--partitions', '8000'],
-        [local / 'layout_reference_gc_probe.py', '--binary', probe, '--inherited'],
-        [local / 'run_standby_suite.py', '--binary', probe, '--case', 'layout_gc',
-         '--log-dir', args.log_dir / 'layout-gc-standby'],
-        [local / 'standby_copy_layout_gc_probe.py', '--binary', probe],
-        [local / 'publication_layout_gc_probe.py', '--binary', probe],
-        [local / 'publication_layout_gc_probe.py', '--binary', probe, '--partitions', '256'],
-        [local / 'run_table_storage_layout_probe.py', '--binary', probe],
+        [local / 'native_catalog_drop_retention_probe.py', '--binary', probe],
         [local / 'physical_merge_layout_probe.py', '--binary', probe],
         [local / 'merge_candidates_probe.py', '--binary', probe],
         [local / 'physical_report_probe.py', '--binary', probe],
@@ -54,10 +44,6 @@ gates = [
         [local / 'medium_layout_target_probe.py', '--binary', probe, '--force-old-target'],
         *[[local / 'freeze_preparation_probe.py', '--binary', probe, '--case', case]
           for case in ('wait', 'before_lock', 'waited_lock', 'locked', 'daily', 'pressure', 'crash', 'delete')],
-        [local / 'ddl_catalog_atomic_probe.py', '--binary', probe, '--owner', 'initial',
-         '--fault', 'abort_crash', '--layout-history'],
-        [local / 'ddl_catalog_atomic_probe.py', '--binary', probe, '--owner', 'child',
-         '--fault', 'commit_crash', '--layout-history'],
         [local / 'catalog_batch_probe.py'],
         [local / 'ddl_publication_cost_probe.py', '--binary', probe],
         [local / 'standby_baseline_progress_probe.py', '--binary', probe],
@@ -164,7 +150,8 @@ if args.profile == 'owned-layout':
                                'local_schema_install_probe.py', 'meta_layout_probe.py',
                                'sstable_layout_probe.py', 'row_layout_replay_probe.py',
                                'physical_merge_layout_probe.py', 'medium_layout_target_probe.py',
-                               'shared_transaction_probe.py', 'ddl_publication_cost_probe.py'},
+                               'shared_transaction_probe.py', 'ddl_publication_cost_probe.py',
+                               'run_layout_retention_probe.py', 'native_catalog_drop_retention_probe.py'},
         'bootstrap': {'quick_startup_probe.py', 'namespace_worker_bootstrap_prototype.py'},
         'sql': {'namespace_sql_worker_prototype.py'},
         'direct': {'owned_layout_probe.py', 'native_schema_catalog_ddl_probe.py',

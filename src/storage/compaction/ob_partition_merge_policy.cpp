@@ -1052,19 +1052,7 @@ int ObPartitionMergePolicy::get_multi_version_start(
     // retention rule. Physical storage uses the creation object's table kind;
     // it neither decodes a Namespace nor activates its schema service.
     share::SCN durable;
-    ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_history_retention, durable);
-    if (ret == OB_NOT_INIT) {
-      durable = share::SCN::base_scn();
-      ret = OB_SUCCESS;
-    }
-    share::SCN readers;
-    if (OB_SUCC(ret) && OB_FAIL(share::server_service<ObAccessService>()->instance_meta_store()
-        .min_retained_snapshot(readers))) {
-    } else if (OB_SUCC(ret) && readers < durable) {
-      // Native catalog views retain their directory snapshot in this store
-      // before validating F. The same lease protects their schema row reads.
-      durable = readers;
-    }
+    ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_recycle_scn, durable);
     if (OB_SUCC(ret)) {
       snapshot_info.update_by_smaller_snapshot(share::SNAPSHOT_FOR_MULTI_VERSION,
           durable.get_val_for_tx());

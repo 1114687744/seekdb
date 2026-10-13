@@ -144,6 +144,9 @@ public:
   // including ones still being committed or replayed. NOT_INIT means recovery
   // has not loaded a complete fence/freeze view; reclamation must not advance.
   int get_schema_history_retention(share::SCN &snapshot);
+  // Reclamation must honor both durable rounds and admitted catalog readers.
+  // Read the durable requirement first to cover the handoff to a new reader.
+  int get_schema_recycle_scn(share::SCN &snapshot);
 
   int64_t get_snapshot_gc_ts();
   share::SCN get_snapshot_gc_scn();

@@ -1,6 +1,33 @@
 // Injected into the test build after fork commits, before any child login.
 static int probe_native_schema_catalog(uint64_t namespace_id, const std::string &name)
 {
+  if (name == "catalog_retention_read") {
+    const char *path = getenv("SEEKDB_CATALOG_RETENTION_READ");
+    if (path != nullptr) {
+      FILE *input = fopen(path, "r");
+      uint64_t owner = 0, table = 0;
+      int64_t frozen = 0, version = 0;
+      if (input == nullptr) { return OB_ERR_UNEXPECTED; }
+      const bool parsed = fscanf(input, "%lu %lu %ld %ld", &owner, &table, &frozen, &version) == 4;
+      fclose(input);
+      if (!parsed) { return OB_INVALID_ARGUMENT; }
+      auto &access = *share::server_service<ObAccessService>();
+      auto &transactions = *share::server_service<transaction::ObTransService>();
+      observer::NativeSchemaCatalog historical(owner, access, transactions);
+      ObArenaAllocator allocator(ObMemAttr("CatalogDropTest"));
+      ObStorageSchema layout;
+      SCN snapshot;
+      int rc = snapshot.convert_for_tx(frozen);
+      if (rc == OB_SUCCESS) { rc = historical.begin_read_at(ObTimeUtility::current_time() + 30000000, snapshot); }
+      if (rc == OB_SUCCESS) { rc = historical.get_storage_schema(table, allocator, layout); }
+      if (rc == OB_SUCCESS && (layout.get_schema_version() != version || layout.is_column_info_simplified())) {
+        rc = OB_ERR_UNEXPECTED;
+      }
+      fprintf(stderr, "NATIVE_CATALOG_DROPPED_READ ns=%lu table=%lu F=%ld V=%ld ret=%d\n",
+          owner, table, frozen, layout.get_schema_version(), rc);
+      return rc;
+    }
+  }
   const char *control = getenv("SEEKDB_NATIVE_SCHEMA_CATALOG_CONTROL");
   if (control == nullptr) { return OB_SUCCESS; }
   FILE *input = fopen(control, "r");

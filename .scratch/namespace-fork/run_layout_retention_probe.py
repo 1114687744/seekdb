@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unfinished freeze retains layout MVCC through mini/minor, crash and release."""
+"""Unfinished freeze retains original schema history MVCC through mini/minor, crash and release."""
 import argparse
 import os
 from pathlib import Path
@@ -17,7 +17,8 @@ def main():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     os.environ['SEEKDB_LAYOUT_RETENTION_PROBE'] = '1'
     experiment = BootstrapExperiment(args.binary, 'layout_retention', prototype=6)
-    experiment.extra_parameters = [('minor_compact_trigger', '2')]
+    experiment.extra_parameters = [('minor_compact_trigger', '2'), ('undo_retention', '0'),
+                                   ('ob_compaction_schedule_interval', '3s')]
     try:
         for recovered in (0, 1, 2):
             cursors = {log.stat().st_ino: log.stat().st_size
@@ -28,12 +29,11 @@ def main():
                 with log.open('rb') as stream:
                     stream.seek(cursors.get(log.stat().st_ino, 0))
                     output += '\n'.join(line.decode(errors='replace') for line in stream
-                                        if b'LAYOUT_RETENTION_' in line or b'LAYOUT_RECLAMATION_' in line)
+                                        if b'LAYOUT_RETENTION_' in line or b'LAYOUT_RETENTION_RELEASE' in line)
             expected = (f'LAYOUT_RETENTION_PASS recovered={recovered} ' if recovered < 2
-                        else 'LAYOUT_RECLAMATION_RECOVERED head_absent=1 bodies_absent=1')
+                        else 'LAYOUT_RETENTION_RELEASE_RECOVERED original_history=1 current=12')
             if ('LAYOUT_RETENTION_FAIL' in output or expected not in output
-                    or (recovered == 1 and 'LAYOUT_RECLAMATION_OLD_BODY V=10 absent=1 current=12' not in output)
-                    or (recovered == 1 and 'LAYOUT_RECLAMATION_RETIRED head_absent=1 bodies_absent=1' not in output)):
+                    or (recovered == 1 and 'LAYOUT_RETENTION_RELEASE original_history=1 current=12 old_F_discarded=1' not in output)):
                 raise AssertionError(output[-10000:])
             experiment.record('layout_retention_verified', recovered=recovered, evidence=output)
             if recovered < 2:
@@ -45,7 +45,7 @@ def main():
         experiment.record('PASS', case='layout_retention', no_old_reader=True,
                           mini_minor=True, crash_recovery=True, release_after_completion=True,
                           paused_broadcast_without_freeze_row=True, concurrent_reader_handoff=True,
-                          unreferenced_body_gc=True, retired_layout_gc=True, reclamation_crash_recovery=True)
+                          original_history=True, mvcc_boundary_advanced=True, release_crash_recovery=True)
     finally:
         experiment.close()
 

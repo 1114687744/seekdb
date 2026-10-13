@@ -416,13 +416,21 @@ def dependency_rows(query, ids):
               'HEX(dep_attrs),HEX(dep_reason),ref_obj_name')
     condition = 'dep_obj_id IN (' + ','.join(map(str, ids)) + ')'
     order = ' ORDER BY dep_obj_type,dep_obj_id,dep_order'
-    rows = query(f'SELECT {fields} FROM oceanbase.__all_dependency WHERE {condition}{order}')
-    refs = sorted({row[6] for row in rows})
-    if refs:
-        indexed = query(f'SELECT {fields} FROM oceanbase.__all_dependency FORCE INDEX(idx_dependency_ref_obj) '
-                        f'WHERE {condition} AND ref_obj_id IN (' + ','.join(map(str, refs)) + ')' + order)
-        assert indexed == rows, (rows, indexed)
-    return rows
+    # View compilation publishes dependency updates in the background. Both
+    # access paths must observe the same snapshot for their comparison to be
+    # evidence of index consistency rather than a race between two RC reads.
+    query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    query('START TRANSACTION READ ONLY')
+    try:
+        rows = query(f'SELECT {fields} FROM oceanbase.__all_dependency WHERE {condition}{order}')
+        refs = sorted({row[6] for row in rows})
+        if refs:
+            indexed = query(f'SELECT {fields} FROM oceanbase.__all_dependency FORCE INDEX(idx_dependency_ref_obj) '
+                            f'WHERE {condition} AND ref_obj_id IN (' + ','.join(map(str, refs)) + ')' + order)
+            assert indexed == rows, (rows, indexed)
+        return rows
+    finally:
+        query('ROLLBACK')
 
 
 def dependency_id(query, name):

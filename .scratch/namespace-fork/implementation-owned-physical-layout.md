@@ -2,7 +2,7 @@
 
 基线：`02699902741361dcd937be7b3ed1e17af839e162`。开始日期：2026-10-13。
 
-用户目标为完整完成以下三项。状态：实施中，尚未验收。
+用户目标为完整完成以下三项。状态：三项实现和定向验收已完成；最终证据与边界见文末“最终验收”。下文实施过程按时间保留，其中的“待完成”表示当时的检查点。
 
 ## 完成条件
 
@@ -129,3 +129,49 @@ v6 剩余故障回归发现真实失败：`shared_transaction_probe.py --faults 
 - 首轮 v11 通过原生历史读取及 mini/minor；第二轮失败于旧夹具删除了全部 freeze 行。旧布局 KV 的特殊合并分支不需要普通 freeze 列表，原生 schema tablet 的 minor 需要。已改成真实状态：有后续 freeze 行，但本地 persisted broadcast 仍停在旧 F；失败现场与日志 `/tmp/owned-layout-native-retention11.log` 保留，修正后验证待完成。
 - 四件套已移除已删除模块的历史正文发布/引用 GC hook 和调用；对应行为由原生目录保留、MDS 安装、SSTable 自带描述、混合重写和备库 SSTable 回放用例承接。原脚本及失败证据仍保留在历史提交中。默认 full 入口尚未重新执行，不声称通过。
 - 物理生命周期审计仍未闭合：当前空壳候选判断检查 weak horizon，物理保留集合含当前目录与活跃视图；需实测“F 尚未完成、Namespace 已删除、随后才打开 F 原生视图”的窗口。候选方案是让 schema tablet 的整体删除也遵守相同持久 F / 活跃读者边界，避免另建历史正文表或持久引用状态；尚未以此替代动态证明。
+
+### 2026-10-13：Namespace 删除与历史目录的物理保护
+
+- 新用例 `native_catalog_drop_retention_probe.py` 在 F 尚未完成、没有活跃历史读者时删除 Namespace。v13 的真实红灯为 `/tmp/owned-layout-catalog-drop-red13b.log`：F=`1791891461237932029`，`__all_table_history` 对应物理 tablet 已变为空壳，而 `__all_column_history` 仍是普通已删除对象。证明只有 MVCC 行保留不足以覆盖 Namespace 删除。
+- `ObFreezeInfoMgr::get_schema_recycle_scn` 集中按“持久要求，然后活跃读者”的顺序取边界；schema 内表的 MVCC 合并和整体空壳回收使用相同结果。对象类型使用已有 create_table_id，不在存储层解析 Namespace。
+- v14 已通过“F 未完成时保留已删除 schema tablet”阶段；释放阶段发现现有 snapshot GC fence 是按需推进的，删除 SCN 比最后一次 fence 更大，结束 F 后仍无法回收。新增删除方对现有 `SnapshotGcScnRenewalState` 的需求登记，触发原有推进器；没有新建任务、持久状态或生命周期更长的缓存。修复后的释放验证待完成。
+
+### 保留回归的测试语义修正
+
+- 原生 schema tablet 可在不同 freeze 边界留下多个 minor 文件，原“文件总数 < 3”断言不成立。现按 SCN 范围证明至少两个本轮真实 dump 已被同一个 minor 输出合并，不以总文件数代替发生过合并。
+- 原生 schema tablet 同时遵守普通 `undo_retention`，默认 1800 秒会掩盖 F pin 的作用，也阻止立即推进 MVCC 水位。测试将 undo_retention 设为 0，隔离并实际检验本轮新增保留要求；生产默认值不改。
+- `/tmp/owned-layout-native-retention14b.log` 的第 0/1 阶段通过：原有 history 行被实际 DELETE 后，mini/minor、第一次崩溃恢复仍在 F 读到 V10；读者接手时能读 V10；释放后两张 schema tablet 的 MVCC 水位均超过 F，旧 F 被拒绝，当前 V12 可读。第三次启动的第一次 reload 遇到 `OB_EAGAIN`，随后系统包重试成功，但测试正确保留并报告了早先失败；需让夹具所有 reload 都遵守已有可重试协议。
+- v12 生产四件套 bootstrap、sql 已通过。direct 中依赖索引比较失败的两个结果分别来自不同 RC 语句，后台视图编译已推进 schema_version/ref_timestamp；比较改在同一只读 RR 事务内。修正后原生 DDL、崩溃恢复、触发器、mock parent 均通过，direct 其余项目和备库仍在运行于 `/tmp/owned-layout-four-gates-v12-resume`。
+
+## 最终验收（2026-10-13）
+
+### 三项目标与当前实现
+
+| 目标 | 当前代码依据 | 动态证据 |
+| --- | --- | --- |
+| 1. 合并与 checksum 使用受保护的原生目录，不装载完整 Namespace 服务 | `NativeSchemaCatalog::begin_read_at/get_storage_schema/load_merge_schema`；`ObSchemaRuntimeService` 的上层回调；`ObChecksumValidator::check_namespace` 在 F 枚举定义及索引关系，当前视图仅证明对象退役 | v9 原生门禁：父子 F 前后 DDL、旧 F major、晚创建 tablet、medium 当前/过旧目标、local/global/FTS 校验及缺失/错误结果、同数量分区替换、重启；冷目录和物化测试记录 `runtime_slots_loaded=0` |
+| 2. 完整描述由 tablet 写入元数据、任务和文件分别持有 | CREATE 同事务写入 `TabletWriteLayout`；`ObDMLRunningCtx` 在行写入前安装较新布局；MDS 日志/检查点恢复；mini 使用本地完整正文；SSTable 元数据保存/复制正文；已删除 `storage_schema_addr_` | v9 mini/fork/fork_wide、父子 meta、混合文件重写和行日志回放；v12 多次默认值修改、并发安装、回滚、三次崩溃恢复、父子不同列类型；三项备库及文件回放测试通过 |
+| 3. 删除派生历史及专用回收机制 | 删除 `StorageSchemaHistory`、history filter、专用物理引用扫描/变化补扫；历史输出从原生 schema history 构造；保留 `TableStorageLayouts` 的对象身份和绑定用途，不保存另一份历史正文 | 当前生产源码无旧类型、旧正文地址和专用扫描引用；完整生产编译通过；上述合并、文件和备库用例均在去历史版本通过 |
+
+### 原生目录保护已闭合
+
+- 行版本：schema 目录及定位所需的根/页/绑定遵守尚未完成 F 与活跃读者的 MVCC 要求。采用持久边界先于活跃读者的采样顺序；启动尚未恢复持久要求时不推进回收。
+- 整个对象：已提交 DELETE 的 Namespace 内表 tablet 变空壳前检查相同边界。原生目录 F 读者尚未出现时也由持久 freeze 要求保护，不依赖当前 Namespace 是否仍在名单中。
+- 释放：被边界挡住的删除向既有 snapshot GC fence 推进器登记需求；F 和读者结束后可回收。没有增加持久 pin 表、永久引用缓存或后台线程。
+- `/tmp/owned-layout-native-retention17.log` 全部通过：真正 DELETE 原始 history 行后，在 mini/minor、两次崩溃恢复中检查 F；持久轮次交接给读者；释放后两张内表 MVCC 边界超过 F，旧 F 被拒绝，最新 V12 仍可读；释放状态再次重启仍成立。
+- `/tmp/owned-layout-catalog-drop19.log` 全部通过：F=`1791893425941443032` 尚未完成且没有历史读者时删除 Namespace，保留 schema tablet；主动执行目录页 GC 后才打开 F，实际读取已删除 Namespace 的表 `500003`，得到完整 V=`1791893312431000`；F 完成后 tablet 变空壳或被回收。早先 v13 的提前回收和 v14 的保留无法释放均有失败记录，当前用例同时约束两者。
+
+### 四件套、成本与失败用例归档
+
+- 本次使用 `run_four_gates.py --profile owned-layout`。原生部分为 v9 已通过前缀、v11 修复后 shared-transaction 尾段，再加 v17/v19 的两项保留替代用例和 v9 的 DDL 成本用例；生产部分为 v12 bootstrap/sql、direct 已通过前缀、修正测试读快照后的 direct 尾段及 TLS。**这是保留失败日志的分段验收，不是单次 full profile 全绿。** 当前 full 注入集合已编译通过，未执行完整 full profile；未跑全量 mysqltest 或 sysbench。
+- 四件套现包含原生目录 MVCC/删除保留回归。旧历史正文发布、正文引用 GC、删除模块的单测入口退出运行清单；其目标分别由原生目录事务/保留、MDS 安装、SSTable 自带描述/混合重写和备库文件回放承接。首次实现中实际失败的回放空指针、FTS 写入超时、简化描述断言、连续强制 redo 的 aborted CREATE 超时以及本轮目录回收失败均已闭环；历史日志和过程记录保留。
+- 三项备库 `basic` / `namespace_fork_local` / `standby_sstable_replay` 均返回 0，耗时 117.24 / 178.63 / 140.72 秒。结果由验收 JSON 备份。
+- 8000 分区、8000 行、5 次采样：fork 中位 4.366 ms；首次登录 262.257 ms；首次点读 87.306 ms；首次写提交 10.257 ms；fork 到首次点读 353.929 ms；全分区聚合 3.145 s。原始记录备份为 `owned-layout-v12-latency.json`。宽表和小事务见 local-schema/owned-layout 用例；8000 分区父子两空间、4 条 DDL 的发布成本用例通过。不同轮次机器负载不同，不据此声称细小差异有统计意义。
+- 最终撤除注入后的生产编译 `/tmp/owned-layout-catalog-recycle-production-build3.log` 通过，`build_release/src/observer/seekdb` SHA256=`20578725e34033c739b94a04eb8d01e42345f025fc3d52bc7313440a3a55244a`。v17/v19 与最终生产源码的差别为测试注入；后续没有修改描述/MDS/SSTable 生产实现。v12 之后的生产增量仅为原生目录回收边界的集中和内表整体回收检查，已由 v17/v19 验证。
+- `owned-layout-acceptance.json` 保存各证据文件的摘要、校验值、通过用例与已修复失败的尾部信息。生产源码未残留测试注入，修改脚本语法检查和 `git diff --check` 通过。
+
+### 已知范围与后续事项
+
+- 当前对 Namespace 内表整类保留，范围比纯 schema 目录更宽；未引入逐表分类优化。
+- 先前记录的 minor Last 标记 `-4016` 问题仍按用户决定留待后续，本次未修改或声称解决。
+- 不进行升级/旧格式兼容；不做 tablet 描述共享化或常驻全局正文缓存。

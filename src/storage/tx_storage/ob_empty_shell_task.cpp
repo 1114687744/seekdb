@@ -23,6 +23,7 @@
 #include "storage/meta_store/ob_server_storage_meta_service.h"
 #include "storage/tx/ob_trans_service.h"
 #include "storage/tx_storage/ob_tablet_gc_service.h"
+#include "storage/compaction/ob_freeze_info_mgr.h"
 
 namespace oceanbase
 {
@@ -280,6 +281,21 @@ int ObTabletEmptyShellHandler::check_candidate_tablet_(
         ret = OB_ERR_UNEXPECTED;
       } else {
         can_become_shell = data.delete_commit_version_ <= new_read_snapshot.get_val_for_tx();
+        if (can_become_shell && common::is_inner_table(tablet.get_tablet_meta().create_table_id_)) {
+          // A future historical catalog read can still need this object even
+          // after its owner disappears from the current directory. Retaining
+          // rows alone cannot protect them once the entire tablet is removed.
+          share::SCN retained;
+          ret = SERVER_CALL_FREEZE_INFO_MGR(get_schema_recycle_scn, retained);
+          can_become_shell = OB_SUCC(ret)
+              && data.delete_commit_version_ <= retained.get_val_for_tx();
+          if (OB_SUCC(ret) && !can_become_shell) {
+            // The GC fence advances on demand. Once F/readers finish, this
+            // DELETE must not wait for unrelated writes to request renewal.
+            share::server_service<ObFreezeInfoMgr>()->get_snapshot_gc_scn_renewal_state()
+                .update_target_scn(data.delete_commit_version_);
+          }
+        }
         need_retry |= !can_become_shell;
       }
     }

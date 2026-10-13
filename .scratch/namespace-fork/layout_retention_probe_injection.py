@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hook durable layout retention checks after Namespace bootstrap."""
+"""Hook durable native catalog retention checks after Namespace bootstrap."""
 import argparse
 from pathlib import Path
 import re
@@ -27,7 +27,7 @@ if args.action == 'enable':
         if text.count(anchor) != 1:
             raise SystemExit('Retention hook moved: ' + anchor)
     text = text.replace(includes, includes + block(
-        '#include "storage/instance_meta/storage_schema_history.h"\n'
+        '#include "observer/schema/native_schema_catalog.h"\n#include "share/schema/schema_catalog_row.h"\n'
         '#include "storage/tx/ob_trans_service.h"\n'
         '#include "storage/compaction/ob_compaction_schedule_util.h"\n'
         '#include "storage/compaction/ob_partition_merge_policy.h"\n'
@@ -44,20 +44,18 @@ if args.action == 'enable':
         '    ret = run_layout_retention_native_probe();\n'
         '  }\n') + ready)
 source.write_text(text)
-policy = local.parents[1] / 'src/storage/compaction/ob_partition_merge_policy.cpp'
+policy = local.parents[1] / 'src/storage/compaction/ob_freeze_info_mgr.cpp'
 text = policy.read_text()
 text = re.sub(r'^[ \t]*// LOCAL_LAYOUT_RETENTION_BEGIN\n.*?^[ \t]*// LOCAL_LAYOUT_RETENTION_END\n',
               '', text, flags=re.M | re.S)
 if args.action == 'enable':
     namespace = 'namespace oceanbase\n{\n'
-    sample = '    if (OB_SUCC(ret) && OB_FAIL(store.min_retained_snapshot(retained))) {\n'
+    sample = '    share::SCN readers;\n'
     if text.count(namespace) != 1 or text.count(sample) != 1:
         raise SystemExit('Retention policy hook moved')
     text = text.replace(namespace, block(
         'namespace oceanbase { namespace storage { int run_layout_retention_sample_hook(); } }\n') + namespace)
     text = text.replace(sample, block(
-        '    if (OB_SUCC(ret) && tablet_id.is_ls_storage_schema_tablet()) {\n'
-        '      ret = storage::run_layout_retention_sample_hook();\n'
-        '    }\n') + sample)
+        '    if (OB_SUCC(ret)) { ret = storage::run_layout_retention_sample_hook(); }\n') + sample)
 policy.write_text(text)
-print('Layout retention probe ' + args.action + 'd')
+print('Native catalog retention probe ' + args.action + 'd')
