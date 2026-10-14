@@ -1,0 +1,13 @@
+{"start": "formal1_async_100k_1000", "pid": 254047, "time": 1792001297.167323}
+{"finish": "formal1_async_100k_1000", "exit_code": 0, "time": 1792001441.4933975}
+{"start": "formal1_delta_100k_1000", "pid": 269769, "time": 1792001442.7575412}
+{"finish": "formal1_delta_100k_1000", "exit_code": 0, "time": 1792001586.4526863}
+{"start": "formal1_immediate_100k_1000", "pid": 285370, "time": 1792001587.7200556}
+{"finish": "formal1_immediate_100k_1000", "exit_code": 0, "time": 1792001732.96824}
+{"start": "formal1_immediate_100k_4000", "pid": 301337, "time": 1792001734.2252383}
+{"finish": "formal1_immediate_100k_4000", "exit_code": 0, "time": 1792001838.6981575}
+{"start": "formal1_delta_100k_4000", "pid": 312816, "time": 1792001839.9593544}
+{"finish": "formal1_delta_100k_4000", "exit_code": 0, "time": 1792001908.9966252}
+{"start": "formal1_async_100k_4000", "pid": 320559, "time": 1792001910.2622294}
+{"finish": "formal1_async_100k_4000", "exit_code": 0, "time": 1792001978.4708827}
+complete

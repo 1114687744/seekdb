@@ -1,0 +1,9 @@
+[
+  {
+    "pid": 320559,
+    "instance": "/data/1/nijia.nj/test/vector-delta-perf-20261015/formal1_async_100k_4000",
+    "thread_affinity_counts": {
+      "48-55": 266
+    }
+  }
+]

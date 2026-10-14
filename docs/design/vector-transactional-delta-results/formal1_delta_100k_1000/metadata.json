@@ -1,0 +1,180 @@
+{
+  "version": [
+    [
+      "5.7.25-OceanBase seekdb-v1.4.0.0"
+    ]
+  ],
+  "ddl": [
+    [
+      "docs",
+      "CREATE TABLE `docs` (\n  `id` bigint(20) DEFAULT NULL,\n  `emb` VECTOR(768) DEFAULT NULL,\n  VECTOR KEY `idx` (`emb`) WITH (DISTANCE=COSINE,TYPE=HNSW,LIB=VSAG,M=16,EF_CONSTRUCTION=200,SYNC_MODE=ASYNC, EF_SEARCH=64) BLOCK_SIZE 16384\n) ORGANIZATION HEAP DEFAULT CHARSET = utf8mb4 ROW_FORMAT = DYNAMIC COMPRESSION = 'zstd_1.3.8' BLOCK_SIZE = 16384 TABLET_SIZE = 134217728 PCTFREE = 0 LOB_INROW_THRESHOLD=78643"
+    ]
+  ],
+  "parameters": [
+    [
+      "observer",
+      "memory_budget",
+      "CAPACITY",
+      "6G",
+      "the logical memory budget used to size caches and buffers. 0 targets 80% of cgroup or physical memory while reserving at least 1G for the system when possible. The minimum automatic value is 1G. Range: 0, [1G,).",
+      "OBSERVER",
+      "CLUSTER",
+      "DEFAULT",
+      "DYNAMIC_EFFECTIVE",
+      "0M",
+      0
+    ],
+    [
+      "observer",
+      "vector_memory_limit",
+      "CAPACITY",
+      "0M",
+      "the maximum memory used by the vector module. 0 derives the limit from effective memory, which is the smaller of physical memory and a finite cgroup memory limit. The automatic value is 50% of effective memory. The Vector allocator enforces this module limit independently of the TxShare aggregate limit. Range: [0M,).",
+      "RUNTIME",
+      "CLUSTER",
+      "DEFAULT",
+      "DYNAMIC_EFFECTIVE",
+      "0M",
+      1
+    ],
+    [
+      "observer",
+      "cpu_count",
+      "INT",
+      "8",
+      "the number of CPU\\'s in the system. If this parameter is set to zero, the number will be set according to sysconf; otherwise, this parameter is used. Range: [0,+\u221e) in integer",
+      "OBSERVER",
+      "CLUSTER",
+      "DEFAULT",
+      "DYNAMIC_EFFECTIVE",
+      "0",
+      0
+    ],
+    [
+      "observer",
+      "log_disk_size",
+      "CAPACITY",
+      "4G",
+      "the size of disk space used by the log files. Range: [0, +\u221e)",
+      "LOGSERVICE",
+      "CLUSTER",
+      "DEFAULT",
+      "DYNAMIC_EFFECTIVE",
+      "0M",
+      0
+    ]
+  ],
+  "plan": [
+    [
+      "======================================================"
+    ],
+    [
+      "|ID|OPERATOR         |NAME     |EST.ROWS|EST.TIME(us)|"
+    ],
+    [
+      "------------------------------------------------------"
+    ],
+    [
+      "|0 |VECTOR INDEX SCAN|docs(idx)|1       |7           |"
+    ],
+    [
+      "======================================================"
+    ],
+    [
+      "Outputs & filters:"
+    ],
+    [
+      "-------------------------------------"
+    ],
+    [
+      "  0 - output([docs.id]), filter(nil), rowset=16"
+    ],
+    [
+      "      access([docs.__pk_increment], [docs.id]), partitions(p0)"
+    ],
+    [
+      "      is_index_back=true, is_global_index=false, "
+    ],
+    [
+      "      range_key([docs.__pk_increment], [docs.__type_17_1792001442840968]), range(MIN,MIN ; MAX,MAX)always true"
+    ]
+  ],
+  "auxiliary_tables": [
+    [
+      "__idx_500003_idx"
+    ],
+    [
+      "__idx_500003_idx_index_id_table"
+    ],
+    [
+      "__idx_500003_idx_index_snapshot_data_table"
+    ]
+  ],
+  "vector_info_before_writes": [
+    [
+      -1,
+      -1,
+      500004,
+      500005,
+      500006,
+      500003,
+      0,
+      0,
+      200002,
+      200003,
+      200004,
+      200001,
+      "is_complete=1;param={type:0, lib:0, dist_algorithm:2, dim:768, m:16, ef_construction:200, ef_search:64, nlist:0, sample_per_nlist:0, extra_info_max_size:0, extra_info_actual_size:0, refine_type:0, bq_bits_query:32, refine_k:\"4.000000000e+00\", bq_use_fht:false, sync_interval_type:2, sync_interval_value:10, sync_mode_async:true, endpoint:\"\", nbits:0, prune:false, refine:false, ob_sparse_drop_ratio_build:\"0.000000000e+00\", window_size:60000, ob_sparse_drop_ratio_search:\"0.000000000e+00\", similarity_threshold:\"0.000000000e+00\"};snap_index_type=9;ref_cnt=3;idle_cnt=0;index=__idx_500003_idx;incr_data.scn=0;vbitmap_data.scn=0;snap_data.scn=0;all_index_mem_used=0;all_index_bitmap_used=0;",
+      "incr_cnt=0;vbitmap_cnt=0;snap_cnt=0;sync_total_cnt=0;sync_fail_cnt=0;"
+    ]
+  ],
+  "port": 15881,
+  "pid": 269769,
+  "database": "vecdelta_formal1_delta_100k_1000",
+  "mode": "async",
+  "data": "/data/1/nijia.nj/test/vector-delta-perf-20261015/data",
+  "rows": 100000,
+  "queries": 100,
+  "rate": 1000,
+  "batch": 100,
+  "readers": 2,
+  "drain_seconds": 30,
+  "settle_seconds": 12,
+  "write_timeout": 600,
+  "output": "/data/1/nijia.nj/test/vector-delta-perf-20261015/results/formal1_delta_100k_1000",
+  "host_cpu_count": 192,
+  "host_load_before": [
+    1.43,
+    2.27,
+    2.3
+  ],
+  "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf",
+  "server_cmdline": [
+    "/data/1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf",
+    "--base-dir=/data/1/nijia.nj/test/vector-delta-perf-20261015/formal1_delta_100k_1000",
+    "-P15881",
+    "--log-level=WARN",
+    "--parameter",
+    "memory_budget=6G",
+    "--parameter",
+    "cpu_count=8",
+    "--parameter",
+    "datafile_size=2G",
+    "--parameter",
+    "datafile_maxsize=8G",
+    "--parameter",
+    "log_disk_size=4G",
+    "--parameter",
+    "max_syslog_file_count=8"
+  ],
+  "server_affinity": [
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55
+  ]
+}

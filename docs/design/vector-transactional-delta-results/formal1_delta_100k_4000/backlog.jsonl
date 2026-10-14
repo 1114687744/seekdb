@@ -1,0 +1,7 @@
+{"time_s": 0.006101049482822418, "committed": 0, "rows": {"__idx_500003_idx": 0, "__idx_500003_idx_index_id_table": 0, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 0}
+{"time_s": 2.294168919324875, "committed": 9200, "rows": {"__idx_500003_idx": 400, "__idx_500003_idx_index_id_table": 8800, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 0}
+{"time_s": 5.720012564212084, "committed": 22900, "rows": {"__idx_500003_idx": 6300, "__idx_500003_idx_index_id_table": 16600, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 0}
+{"time_s": 10.063822250813246, "committed": 40300, "rows": {"__idx_500003_idx": 15000, "__idx_500003_idx_index_id_table": 25200, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 0}
+{"time_s": 20.04400723427534, "committed": 80200, "rows": {"__idx_500003_idx": 37400, "__idx_500003_idx_index_id_table": 42700, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 1}
+{"time_s": 45.229399524629116, "committed": 100000, "rows": {"__idx_500003_idx": 16700, "__idx_500003_idx_index_id_table": 83300, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 13}
+{"time_s": 56.30592338740826, "committed": 100000, "rows": {"__idx_500003_idx": 0, "__idx_500003_idx_index_id_table": 100000, "__idx_500003_idx_index_snapshot_data_table": 0}, "pending_freshness_samples": 5}

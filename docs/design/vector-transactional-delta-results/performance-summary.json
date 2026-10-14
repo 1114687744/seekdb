@@ -1,0 +1,550 @@
+[
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 469.4647677242756,
+      "p95": 642.7149549126625,
+      "p99": 692.1874899417162,
+      "max": 708.1944495439529
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.37758828327059746,
+    "committed": 100000,
+    "elapsed_s": 129.93361162394285,
+    "write_phase_s": 99.9028519243002,
+    "actual_write_rows_s": 1000.97242544961,
+    "write_latency_ms": {
+      "p50": 2.6470888406038284,
+      "p95": 10.794568620622146,
+      "p99": 17.80960910022258,
+      "max": 45.77741026878357
+    },
+    "schedule_lag_ms": {
+      "p50": 0.711614266037941,
+      "p95": 0.8299835026264191,
+      "p99": 0.9406469017267227,
+      "max": 79.93514463305473
+    },
+    "search_qps_during_write": 2360.813484871414,
+    "search_latency_ms": {
+      "p50": 0.4675779491662979,
+      "p95": 0.7258374243974679,
+      "p99": 2.6508998498320544,
+      "max": 158.06131437420845
+    },
+    "recall_stable_prefix": 0.9642869017728878,
+    "stable_prefix_samples": 234589,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.46757981181144714,
+      "p95": 0.7258355617523191,
+      "p99": 2.6508961617946665,
+      "max": 158.06131437420845
+    },
+    "run": "formal1_async_100k_1000",
+    "offered_rate": 1000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 59.99535147473216,
+      "qps": 1903.9808450511284,
+      "latency_ms": {
+        "p50": 0.5223099142313004,
+        "p95": 0.9323112666606891,
+        "p99": 3.40438734740016,
+        "max": 158.06131437420845
+      },
+      "stable_recall": 0.9879750180581737,
+      "samples": 114230
+    },
+    "average_cpu_cores_during_write": 2.008690192995168,
+    "average_cpu_cores_drain_tail": 0.7385870940548469,
+    "peak_rss_mib": 971.28125,
+    "process_write_mib": 327.0390625,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 129.91018832474947,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 53.024835884571075,
+      "p95": 172.13257588446137,
+      "p99": 199.77588057518008,
+      "max": 206.73255994915962
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf"
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 376.6152299940586,
+      "p95": 590.9615885466337,
+      "p99": 663.3678823709488,
+      "max": 687.5656694173813
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.3496532589197159,
+    "committed": 100000,
+    "elapsed_s": 129.93493635207415,
+    "write_phase_s": 99.90390669927001,
+    "actual_write_rows_s": 1000.9618572877159,
+    "write_latency_ms": {
+      "p50": 2.5494322180747986,
+      "p95": 3.523655608296394,
+      "p99": 4.187322333455085,
+      "max": 81.53773471713066
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6874948740005493,
+      "p95": 0.7410041987895966,
+      "p99": 0.815109647810459,
+      "max": 3.1808577477931976
+    },
+    "search_qps_during_write": 1329.4074715195343,
+    "search_latency_ms": {
+      "p50": 0.43806806206703186,
+      "p95": 0.6609730422496795,
+      "p99": 38.58886405825668,
+      "max": 145.35125344991684
+    },
+    "recall_stable_prefix": 0.976079802550391,
+    "stable_prefix_samples": 131274,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.43806806206703186,
+      "p95": 0.6609976291656492,
+      "p99": 38.95647130906461,
+      "max": 145.35125344991684
+    },
+    "run": "formal1_delta_100k_1000",
+    "offered_rate": 1000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 60.000120248645544,
+      "qps": 898.0315335487405,
+      "latency_ms": {
+        "p50": 0.5332436412572861,
+        "p95": 0.6728151813149451,
+        "p99": 59.73905291408302,
+        "max": 140.81833884119987
+      },
+      "stable_recall": 0.9877300381664966,
+      "samples": 53882
+    },
+    "average_cpu_cores_during_write": 1.2786160331151841,
+    "average_cpu_cores_drain_tail": 1.0227703500780587,
+    "peak_rss_mib": 933.078125,
+    "process_write_mib": 348.7578125,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 129.4303484968841,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 33.51699188351631,
+      "p95": 115.01620113849634,
+      "p99": 133.48802208900452,
+      "max": 138.10597732663155
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf"
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 263.14711570739746,
+      "p95": 503.221707418561,
+      "p99": 516.0936117172241,
+      "max": 521.1790539324284
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.30468857288360596,
+    "committed": 100000,
+    "elapsed_s": 130.02080138027668,
+    "write_phase_s": 99.97079725936055,
+    "actual_write_rows_s": 1000.2921127113119,
+    "write_latency_ms": {
+      "p50": 63.33545781672001,
+      "p95": 69.86352242529392,
+      "p99": 71.79918244481087,
+      "max": 85.06087958812714
+    },
+    "schedule_lag_ms": {
+      "p50": 0.619811937212944,
+      "p95": 0.6659256294369698,
+      "p99": 0.7101552560925484,
+      "max": 3.137350082397461
+    },
+    "search_qps_during_write": 371.83858705817596,
+    "search_latency_ms": {
+      "p50": 2.173110842704773,
+      "p95": 20.33485472202301,
+      "p99": 24.58583995699882,
+      "max": 47.05746844410896
+    },
+    "recall_stable_prefix": 0.9966346017422889,
+    "stable_prefix_samples": 35241,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 2.1731816232204437,
+      "p95": 20.336304232478135,
+      "p99": 24.594839066267017,
+      "max": 47.05746844410896
+    },
+    "run": "formal1_immediate_100k_1000",
+    "offered_rate": 1000,
+    "mode": "immediate",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 60.01604636013508,
+      "qps": 172.53719010184886,
+      "latency_ms": {
+        "p50": 10.256540030241013,
+        "p95": 19.528351351618763,
+        "p99": 20.972116664052006,
+        "max": 37.373486906290054
+      },
+      "stable_recall": 0.9910455880752911,
+      "samples": 10355
+    },
+    "average_cpu_cores_during_write": 2.482358484280376,
+    "average_cpu_cores_drain_tail": 1.9314798230661598,
+    "peak_rss_mib": 881.59375,
+    "process_write_mib": 320.203125,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 129.62746309116483,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 100000,
+        "__idx_500003_idx_index_id_table": 0,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {},
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf"
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 514.3165625631809,
+      "p95": 702.8174437582493,
+      "p99": 737.8801684826612,
+      "max": 742.4816228449345
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.23023999109864235,
+    "committed": 100000,
+    "elapsed_s": 55.01239410042763,
+    "write_phase_s": 24.98229943588376,
+    "actual_write_rows_s": 4002.834096863128,
+    "write_latency_ms": {
+      "p50": 4.156505689024925,
+      "p95": 27.289876900613294,
+      "p99": 49.602536968886845,
+      "max": 94.41694617271423
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6885193288326263,
+      "p95": 8.833981864154335,
+      "p99": 30.463313721120354,
+      "max": 70.70890069007874
+    },
+    "search_qps_during_write": 1626.7517769651752,
+    "search_latency_ms": {
+      "p50": 0.44529885053634644,
+      "p95": 3.380258195102213,
+      "p99": 10.801348052918925,
+      "max": 66.88447296619415
+    },
+    "recall_stable_prefix": 0.8933392811623758,
+    "stable_prefix_samples": 39230,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.4453025758266449,
+      "p95": 3.3802114427089673,
+      "p99": 10.8008310571312,
+      "max": 66.88447296619415
+    },
+    "run": "formal1_async_100k_4000",
+    "offered_rate": 4000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9940000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 15.016840361058712,
+      "qps": 1147.1121478170617,
+      "latency_ms": {
+        "p50": 0.5465373396873474,
+        "p95": 4.7219302505254745,
+        "p99": 14.013025909662247,
+        "max": 66.88447296619415
+      },
+      "stable_recall": 0.9709858467545145,
+      "samples": 17226
+    },
+    "average_cpu_cores_during_write": 4.704470370433618,
+    "average_cpu_cores_drain_tail": 0.7469638326246131,
+    "peak_rss_mib": 1017.59765625,
+    "process_write_mib": 324.66796875,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 53.36858621612191,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 63.49429860711098,
+      "p95": 194.44308206439015,
+      "p99": 229.44805130362505,
+      "max": 241.19478836655617
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf"
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 27482.0342566818,
+      "p95": 36132.58295226842,
+      "p99": 37030.89217096567,
+      "max": 37255.76250627637
+    },
+    "freshness_samples": 46,
+    "freshness_censored_positions": [
+      92099,
+      94099,
+      96099,
+      98099,
+      99999
+    ],
+    "sampled_catchup_after_last_commit_s": 31.286511935293674,
+    "committed": 100000,
+    "elapsed_s": 56.306047443300486,
+    "write_phase_s": 24.97746155038476,
+    "actual_write_rows_s": 4003.6094059550087,
+    "write_latency_ms": {
+      "p50": 2.289092168211937,
+      "p95": 3.19389384239912,
+      "p99": 3.837908059358597,
+      "max": 6.456136703491211
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6188806146383286,
+      "p95": 0.6765877828001976,
+      "p99": 0.6926565244793892,
+      "max": 3.1941980123519897
+    },
+    "search_qps_during_write": 223.08111609981307,
+    "search_latency_ms": {
+      "p50": 0.2762172371149063,
+      "p95": 0.9777991101145737,
+      "p99": 82.60272417217472,
+      "max": 8973.525319248438
+    },
+    "recall_stable_prefix": 0.6384345578733617,
+    "stable_prefix_samples": 5417,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.276343896985054,
+      "p95": 0.9856779128313038,
+      "p99": 88.00649706274072,
+      "max": 23759.757086634636
+    },
+    "run": "formal1_delta_100k_4000",
+    "offered_rate": 4000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 14.999649114906788,
+      "qps": 61.401436323247175,
+      "latency_ms": {
+        "p50": 0.4803799092769623,
+        "p95": 2.2740550339221954,
+        "p99": 215.60618653893255,
+        "max": 8973.525319248438
+      },
+      "stable_recall": 0.6596392333709132,
+      "samples": 921
+    },
+    "average_cpu_cores_during_write": 1.1487456939305059,
+    "average_cpu_cores_drain_tail": 1.4641870899263605,
+    "peak_rss_mib": 900.83984375,
+    "process_write_mib": 345.578125,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 56.30592338740826,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 5
+    },
+    "freshness_last_negative_ms": {
+      "p50": 7343.219427391887,
+      "p95": 9331.540383212268,
+      "p99": 9509.095685146749,
+      "max": 9553.48451063037
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf"
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 320.4744942486286,
+      "p95": 495.1081611216068,
+      "p99": 508.41012969613075,
+      "max": 518.485888838768
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.23878683149814606,
+    "committed": 100000,
+    "elapsed_s": 89.369684278965,
+    "write_phase_s": 59.329319920390844,
+    "actual_write_rows_s": 1685.5072691576747,
+    "write_latency_ms": {
+      "p50": 63.081592321395874,
+      "p95": 70.20738031715155,
+      "p99": 71.91335164010525,
+      "max": 80.6179903447628
+    },
+    "schedule_lag_ms": {
+      "p50": 12993.995552882552,
+      "p95": 32016.355786100026,
+      "p99": 33820.79265486449,
+      "max": 34284.19152647257
+    },
+    "search_qps_during_write": 241.8702931241263,
+    "search_latency_ms": {
+      "p50": 5.646862089633942,
+      "p95": 22.532274574041363,
+      "p99": 25.573902279138565,
+      "max": 47.85669595003128
+    },
+    "recall_stable_prefix": 0.9953669503773888,
+    "stable_prefix_samples": 12454,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 5.64800389111042,
+      "p95": 22.53700159490108,
+      "p99": 25.57567872107029,
+      "max": 47.85669595003128
+    },
+    "run": "formal1_immediate_100k_4000",
+    "offered_rate": 4000,
+    "mode": "immediate",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 37.7775159701705,
+      "qps": 160.2275809976365,
+      "latency_ms": {
+        "p50": 11.415235698223114,
+        "p95": 19.935767352581024,
+        "p99": 21.35520413517951,
+        "max": 36.59622371196747
+      },
+      "stable_recall": 0.9912477101567271,
+      "samples": 6053
+    },
+    "average_cpu_cores_during_write": 2.891552501390157,
+    "average_cpu_cores_drain_tail": 1.9295469781426098,
+    "peak_rss_mib": 888.5,
+    "process_write_mib": 320.1328125,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 87.39757130667567,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 100000,
+        "__idx_500003_idx_index_id_table": 0,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {},
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf"
+  }
+]

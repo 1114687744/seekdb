@@ -69,8 +69,9 @@ builds the index only in `optimize()` and injects parallel DML hints. Those defa
 cannot be used unchanged for this experiment. A dedicated streaming harness may
 reuse the dataset and workload shape, with its deviations explicitly reported.
 
-The host also runs unrelated instances. Do not stop them. Record CPU allocation
-and competing load; do not claim an isolated hardware benchmark.
+Local instances share a host with unrelated workloads. Formal measurements use
+6.13.50.37 with fixed CPU affinities. Unrelated remote processes are left running;
+host load is sampled. This is a controlled experiment, not a hardware benchmark.
 
 ## Status (2026-10-15)
 
@@ -87,7 +88,10 @@ and competing load; do not claim an isolated hardware benchmark.
 - Without any ANN query, three inserts were transferred and the background graph
   had three points (GDB `obvectorutil::get_index_number`, returned success).
   Virtual `incr_cnt` is follower synchronization statistics, not a live count.
-- Performance runs are in progress on the user-provided clean host 6.13.50.37.
+- Six formal performance runs completed on the user-provided clean host 6.13.50.37.
+  Results and the decision are in [the results report](vector-transactional-delta-results.md).
+  Each formal arm uses a fresh instance and waits 12 seconds after creating the
+  empty index before writes begin. Earlier cold-start runs are retained separately.
   Server CPU affinity 48–55, client 56–59; 8 configured server CPUs, 6 GiB budget.
   Existing unrelated processes are left running and host load is sampled.
   Binaries were stripped of debug information only. Dependencies and cached
@@ -124,3 +128,61 @@ This prototype reuses ChangeStream's lifecycle holder but does not start its
 fetcher/dispatcher/worker. Their old virtual statistics are not consumer progress.
 The consumer periodically scans schema and durable records; commit notifications
 and production scheduler integration are outside the current proof.
+
+## Additional boundary and design findings
+
+- `snapshot_boundary.py`: open a repeatable-read snapshot immediately after insert,
+  before asynchronous index visibility, then delete from another connection.
+  For 30 seconds the old ordinary read returned the row while ANN returned none,
+  on **both** unmodified master and prototype. This is not a passing completeness
+  test. The earlier successful old-snapshot gate waits for index visibility first.
+  Its semantics must be specified before claiming arbitrary historical ANN reads.
+- The prototype calls `refresh_adp_from_table` for each consumption pass. Its
+  `write_into_delta_mem` holds `incr_data_->mem_data_rwlock_` exclusively across
+  a whole graph insertion batch; ANN takes the corresponding read lock. Existing
+  ChangeStream's graph append uses a different path. This is a concrete contention
+  opportunity, not yet a measured attribution of all latency loss.
+- A local debugger captured both `ReqWorker` and `VecDelta` entering this graph
+  fill path for the same adapter and 1000-row batches. Merely changing the lock
+  to shared would lose the existing protection around duplicate checking and
+  insertion. No such lock weakening was made. The attempted duration probe was
+  interrupted by another breakpoint, so its printed duration is invalid and is
+  not used as performance evidence. Debugger runs are excluded from benchmarks.
+- Production work should give incremental append and recovery clear ownership,
+  bound batch size and lock duration, and ensure adapter metadata is ready without
+  waiting for a periodic maintenance tick. Preserve durable records as the source
+  of work; a notification should only reduce discovery latency.
+
+## Reproducing the experiment
+
+Build from the pinned base using the compile skill. Preserve the unmodified binary
+before building the prototype. `build-manifest.json` records exact source and binary
+hashes; both performance binaries were made with `llvm-strip --strip-debug`.
+
+Focused checks (each needs a fresh database name):
+
+```sh
+python3 unittest/sql/vector_transactional_delta/correctness.py --port 15891 --database vecdelta_correctness --output correctness.json
+python3 unittest/sql/vector_transactional_delta/recovery.py --port 15891 --database vecdelta_recovery --base-dir /data/1/nijia.nj/test/vector-delta-prototype-20261015 --binary /path/to/seekdb-delta3 --output recovery.json
+python3 unittest/sql/vector_transactional_delta/standby.py --primary-port 15921 --standby-port 15931 --database vecdelta_standby --output standby.json
+```
+
+The primary/standby probe follows the existing obtest standby protocol: enable RPC,
+start standby with `--role STANDBY` and `log_restore_source=primary_ip:rpc_port`,
+fence the old primary with `SWITCHOVER TO STANDBY`, promote with `SWITCHOVER TO
+PRIMARY`. It exercises a targeted vector case; the full obtest suite was not run.
+
+Remote layout: `/data/1/nijia.nj/test/vector-delta-perf-20261015` contains `bin`,
+`data`, `python`, `scripts`, `results` and dedicated instance directories. With
+Python modules supplied through `PYTHONPATH`, `perf_matrix.py --root <layout>
+--label <new_label>` runs six fresh instances sequentially. It preserves data and
+logs and stops only the processes it started. A test invocation uses:
+
+```sh
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 taskset -c 56-59 python3.8 stream_bench.py --port 15881 --pid <server_pid> --database vecdelta_example --mode async --rows 100000 --queries 100 --rate 1000 --settle-seconds 12 --data <layout>/data --output <layout>/results/example
+```
+
+`analyze.py <run directories...> --output <json>` also reports the matched 20k–80k
+committed-row window. CPU/RSS describe the combined write plus query workload;
+a lower CPU value with lower query throughput is not evidence of better efficiency.
+The drain phase continues issuing queries and is not an idle measurement.
