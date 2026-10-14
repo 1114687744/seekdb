@@ -1,5 +1,7 @@
 # Namespace 整体架构重构方案
 
+> 2026-10-14 讨论更新：当前确认的状态所有权、共享后台执行和显式上下文传递约束见 [Namespace 状态与后台任务](design-namespace-state-and-task-ownership.md)。实例管理空间与业务 Namespace 统一 SQL 访问模型；下文独立受限元数据 SQL 等内容保留为历史方案，不能当作本轮结论。物理布局历史等旧建议的实施状态应以最新交付记录为准。
+
 日期：2026-09-30。代码核对基线：`f2b9c159a`。状态：架构建议，尚未作为实施计划确认。文档留在本地，不提交。本文回答：综合七类问题，如果重新组织 seekdb，哪些职责应该放在一起，哪些事实应该在一个地方决定。
 
 建议保留独立 Namespace SQL 目录、唯一共享 LS 和 fork 写时复制。主要重构对象是数据目录、逻辑访问到物理访问的转换、持久事务边界及后台状态所有权。实例管理只增加通用元数据存取能力和轻量会话，不复制一套 NamespaceRuntime。
@@ -88,7 +90,7 @@ NamespaceRuntime 表示 Namespace 逻辑对象的生命周期容器；不会再�
 
 所有 Namespace 的物理 tablet 编码规则一致，包括 ID 1；只有 tablet 的上层物理地址转换使用 Namespace 编码。schema_id 不编码 Namespace。实例内部物理 tablet 使用明确的内部资源地址，存储把所有物理 ID 当不透明标识。不能把“未编码 ID”解释为 Namespace 1。
 
-线程局部变量可辅助日志和分配器，owner 必须来自显式上下文。没有 owner 的调用按其接口报错或属于明确 bootstrap 操作，不增加默认根服务。
+Namespace 身份、状态、权限和数据路由全部显式传递；不建立 Namespace 版 MTL，不通过全局变量、TLS、“当前 NS”宏或临时设置并恢复线程上下文的作用域包装取得 owner。日志中的 Namespace 身份也来自显式输入。注册表由实例持有并注入负责解析身份的入口。没有 owner 的调用按其接口报错；bootstrap 也显式提供目标和权限。详见本轮 [上下文传递约束](design-namespace-state-and-task-ownership.md)。
 
 ## 7 Namespace 访问与 fork 的具体接口
 
