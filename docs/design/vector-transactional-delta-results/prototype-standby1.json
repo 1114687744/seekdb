@@ -1,0 +1,18 @@
+[
+  {
+    "check": "standby_replayed_insert_searchable",
+    "time": 1792000815.9621105
+  },
+  {
+    "check": "standby_replayed_update_delete",
+    "time": 1792000818.7726445
+  },
+  {
+    "check": "promotion_resumes_durable_delta_consumption",
+    "time": 1792000819.4404957
+  },
+  {
+    "check": "complete",
+    "time": 1792000819.440868
+  }
+]

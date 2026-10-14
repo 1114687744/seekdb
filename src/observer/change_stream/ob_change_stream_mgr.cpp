@@ -20,6 +20,9 @@
 #include "share/rc/ob_server_runtime.h"
 #include "observer/change_stream/ob_change_stream_mgr.h"
 #include "storage/tx/ob_ts_mgr.h"
+#include "share/ob_server_struct.h"
+#include "data_plane/transaction/ob_i_transaction_service.h"
+#include "observer/vector_index/ob_plugin_vector_index_service.h"
 
 namespace oceanbase
 {
@@ -62,16 +65,14 @@ int ObChangeStreamMgr::init(
     lib::IRunWrapper *run_wrapper)
 {
   int ret = common::OB_SUCCESS;
-  const int64_t worker_thread_count = common::max(common::get_cpu_num(), int64_t{1});
+  UNUSED(log_storage);
+  UNUSED(schema_publish_signal);
+  UNUSED(run_wrapper);
   if (is_inited_) {
     ret = OB_INIT_TWICE;
-  } else if (OB_FAIL(fetcher_.init(
-      &dispatcher_, log_storage, schema_publish_signal, run_wrapper))) {
-  } else if (OB_FAIL(dispatcher_.init())) {
-  } else if (OB_FAIL(worker_.init(worker_thread_count))) {
   } else {
     is_inited_ = true;
-    FLOG_INFO("ObChangeStreamMgr init success (Fetcher/Dispatcher/Worker)", K(worker_thread_count));
+    FLOG_INFO("transactional delta experiment: ChangeStream disabled");
   }
   return ret;
 }
@@ -82,11 +83,16 @@ int ObChangeStreamMgr::start()
   if (!is_inited_) {
     ret = common::OB_NOT_INIT;
   } else {
-    if (OB_FAIL(fetcher_.start())) {
-    } else if (OB_FAIL(dispatcher_.start())) {
-    } else if (OB_FAIL(worker_.start())) {
+    ObPluginVectorIndexService *vectors = server_service<ObPluginVectorIndexService>();
+    auto *transactions = data_plane::query_transaction_service();
+    if (OB_ISNULL(GCTX.schema_service_) || OB_ISNULL(GCTX.sql_proxy_)
+        || OB_ISNULL(vectors) || OB_ISNULL(server_runtime()) || OB_ISNULL(transactions)) {
+      ret = OB_NOT_INIT;
+    } else if (OB_FAIL(delta_consumer_.init(*GCTX.schema_service_, *GCTX.sql_proxy_,
+                                          *vectors, *server_runtime(), *transactions))) {
+    } else if (OB_FAIL(delta_consumer_.start())) {
     } else {
-      LOG_INFO("ObChangeStreamMgr start success (Fetcher/Dispatcher/Worker threads started)");
+      LOG_INFO("transactional vector delta consumer started");
     }
   }
   return ret;
@@ -95,18 +101,14 @@ int ObChangeStreamMgr::start()
 void ObChangeStreamMgr::stop()
 {
   if (is_inited_) {
-    fetcher_.stop();
-    dispatcher_.stop();
-    worker_.stop();
+    delta_consumer_.stop();
   }
 }
 
 void ObChangeStreamMgr::wait()
 {
   if (is_inited_) {
-    fetcher_.wait();
-    dispatcher_.wait();
-    worker_.wait();
+    delta_consumer_.wait();
   }
 }
 
@@ -116,9 +118,7 @@ void ObChangeStreamMgr::destroy()
     stop();
     wait();
 
-    fetcher_.destroy();
-    dispatcher_.destroy();
-    worker_.destroy();
+    delta_consumer_.destroy();
   }
   is_inited_ = false;
 }
@@ -141,13 +141,12 @@ int ObChangeStreamMgr::wait_refresh_scn(
     while (OB_SUCC(ret) && !is_satisfied) {
       SCN current_refresh_scn;
       const int64_t now = ObTimeUtility::current_time();
-      ObCSDispatcher *dispatcher = (OB_NOT_NULL(mgr) ? &mgr->dispatcher_ : nullptr);
       if (now >= abs_timeout_us) {
         ret = OB_TIMEOUT;
       } else if (OB_ISNULL(mgr) || !mgr->is_inited()) {
         ret = OB_NOT_INIT;
       } else if (OB_FAIL(current_refresh_scn.convert_for_tx(
-                     dispatcher->get_refresh_scn()))) {
+                     mgr->delta_consumer_.completed_scn()))) {
       } else if (current_refresh_scn >= safe_visible_scn) {
         is_satisfied = true;
         LOG_INFO("change stream refresh scn caught up",

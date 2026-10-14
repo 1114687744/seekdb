@@ -1355,37 +1355,9 @@ int ObDelUpdLogPlan::collect_related_local_index_ids(IndexDMLInfo &primary_dml_i
   for (int64_t i = 0; OB_SUCC(ret) && i < index_tid_array_size; ++i) {
     if (OB_FAIL(schema_guard->get_table_schema( index_tid_array[i], index_schema))) {
     } else if (index_schema->is_index_local_storage()) {
-      // Skip delta_buffer_table DML maintenance only when ALL conditions hold:
-      // 1. HNSW index (delta_buffer is only used by HNSW, hybrid uses hybrid_log)
-      // 2. Heap table
-      // 3. sync_mode=async
-      bool skip_delta_buffer = false;
-      if (index_schema->is_vec_delta_buffer_type()) {
-        bool is_heap_table = false;
-        bool is_sync_mode_async = false;
-        const ObTableSchema *data_table_schema = nullptr;
-        if (OB_FAIL(schema_guard->get_table_schema(
-                                                   primary_dml_info.ref_table_id_,
-                                                   data_table_schema))) {
-        } else if (OB_NOT_NULL(data_table_schema)) {
-          is_heap_table = data_table_schema->is_heap_organized_table();
-        }
-        if (OB_SUCC(ret)) {
-          share::ObVectorIndexParam vec_index_param;
-          if (OB_FAIL(share::ObVectorIndexUtil::parser_params_from_string(
-              index_schema->get_index_params(),
-              share::ObVectorIndexType::VIT_HNSW_INDEX,
-              vec_index_param,
-              true))) {
-          } else if (vec_index_param.sync_mode_async_) {
-            is_sync_mode_async = true;
-          }
-        }
-        if (OB_SUCC(ret) && is_heap_table && is_sync_mode_async) {
-          skip_delta_buffer = true;
-        }
-      }
-      if (OB_SUCC(ret) && !skip_delta_buffer) {
+      // Async and immediate indexes both persist delta in the main transaction.
+      // Their storage hooks decide whether graph insertion is foreground work.
+      if (OB_SUCC(ret)) {
         //only need to attach local index and primary index in the same DAS Task
         if (primary_dml_info.assignments_.empty()) {
           //is insert or delete, need to add to the related index ids

@@ -1,0 +1,28 @@
+[
+  {
+    "check": "initial_visible",
+    "time": 1792000886.0683644
+  },
+  {
+    "check": "crash_committed_recovered_uncommitted_discarded",
+    "time": 1792000889.8548753
+  },
+  {
+    "check": "rebuild_with_concurrent_updates",
+    "time": 1792000891.5688381,
+    "auxiliary_rows": {
+      "__idx_500024_idx": 0,
+      "__idx_500024_idx_index_id_table": 0,
+      "__idx_500024_idx_index_snapshot_data_table": 1
+    }
+  },
+  {
+    "check": "graceful_restart_after_rebuild",
+    "time": 1792000894.8300328
+  },
+  {
+    "check": "complete",
+    "time": 1792000894.8304687,
+    "rows": 101
+  }
+]

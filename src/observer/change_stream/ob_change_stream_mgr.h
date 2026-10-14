@@ -24,6 +24,7 @@
 #include "observer/change_stream/ob_change_stream_fetcher.h"
 #include "observer/change_stream/ob_change_stream_dispatcher.h"
 #include "observer/change_stream/ob_change_stream_worker.h"
+#include "observer/vector_index/vector_delta_consumer.h"
 namespace oceanbase
 {
 namespace logservice
@@ -82,6 +83,8 @@ private:
   ObCSFetcher fetcher_;
   ObCSDispatcher dispatcher_;
   ObCSWorker worker_;
+  // Experimental lifecycle reuse; Fetcher/Dispatcher/Worker are not started.
+  VectorDeltaConsumer delta_consumer_;
 };
 
 }  // namespace share

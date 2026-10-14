@@ -1,0 +1,15 @@
+[
+  {
+    "check": "initial_visible",
+    "time": 1792000576.5431027
+  },
+  {
+    "check": "crash_committed_recovered_uncommitted_discarded",
+    "time": 1792000587.5790071
+  },
+  {
+    "check": "failure",
+    "time": 1792000587.627422,
+    "error": "OperationalError(4179, 'Calling dbms_vector.refresh when other refresh/rebuild tasks may be running is not allowed')"
+  }
+]

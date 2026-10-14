@@ -1,0 +1,46 @@
+[
+  {
+    "check": "plan",
+    "time": 1791999652.9980898,
+    "rows": [
+      [
+        "======================================================"
+      ],
+      [
+        "|ID|OPERATOR         |NAME     |EST.ROWS|EST.TIME(us)|"
+      ],
+      [
+        "------------------------------------------------------"
+      ],
+      [
+        "|0 |VECTOR INDEX SCAN|docs(idx)|1       |7           |"
+      ],
+      [
+        "======================================================"
+      ],
+      [
+        "Outputs & filters:"
+      ],
+      [
+        "-------------------------------------"
+      ],
+      [
+        "  0 - output([docs.id], [docs.tag]), filter(nil), rowset=16"
+      ],
+      [
+        "      access([docs.__pk_increment], [docs.id], [docs.tag]), partitions(p0)"
+      ],
+      [
+        "      is_index_back=true, is_global_index=false, "
+      ],
+      [
+        "      range_key([docs.__pk_increment], [docs.__type_18_1791999652878818]), range(MIN,MIN ; MAX,MAX)always true"
+      ]
+    ]
+  },
+  {
+    "check": "failure",
+    "time": 1791999693.0874543,
+    "error": "AssertionError(([], [(1, 10), (2, 20)]))"
+  }
+]

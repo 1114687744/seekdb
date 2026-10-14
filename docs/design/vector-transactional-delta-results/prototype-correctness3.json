@@ -1,0 +1,75 @@
+[
+  {
+    "check": "plan",
+    "time": 1792000498.3414125,
+    "rows": [
+      [
+        "======================================================"
+      ],
+      [
+        "|ID|OPERATOR         |NAME     |EST.ROWS|EST.TIME(us)|"
+      ],
+      [
+        "------------------------------------------------------"
+      ],
+      [
+        "|0 |VECTOR INDEX SCAN|docs(idx)|1       |7           |"
+      ],
+      [
+        "======================================================"
+      ],
+      [
+        "Outputs & filters:"
+      ],
+      [
+        "-------------------------------------"
+      ],
+      [
+        "  0 - output([docs.id], [docs.tag]), filter(nil), rowset=16"
+      ],
+      [
+        "      access([docs.__pk_increment], [docs.id], [docs.tag]), partitions(p0)"
+      ],
+      [
+        "      is_index_back=true, is_global_index=false, "
+      ],
+      [
+        "      range_key([docs.__pk_increment], [docs.__type_18_1792000498146630]), range(MIN,MIN ; MAX,MAX)always true"
+      ]
+    ]
+  },
+  {
+    "check": "insert_eventually_visible",
+    "time": 1792000506.2809114
+  },
+  {
+    "check": "uncommitted_and_rolled_back_changes_invisible",
+    "time": 1792000507.2950523
+  },
+  {
+    "check": "update_delete_and_old_repeatable_read",
+    "time": 1792000507.4107463
+  },
+  {
+    "check": "multiple_dml_in_one_transaction",
+    "time": 1792000507.5154774
+  },
+  {
+    "check": "explicit_refresh_barrier",
+    "time": 1792000507.5398784
+  },
+  {
+    "check": "complete",
+    "time": 1792000507.5416832,
+    "rows": [
+      [
+        2,
+        21
+      ],
+      [
+        3,
+        32
+      ]
+    ]
+  }
+]

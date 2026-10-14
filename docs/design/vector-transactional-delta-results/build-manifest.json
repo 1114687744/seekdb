@@ -1,0 +1,22 @@
+{
+  "base": "76f871eb5a84b664d487b03b3412ce50194135b5",
+  "source_sha256": {
+    "src/observer/change_stream/ob_change_stream_mgr.cpp": "ccf2ce9eae5c899a48b356415f36b1977c026ea1845a220f5173b3374632565a",
+    "src/observer/change_stream/ob_change_stream_mgr.h": "da1e1be050b189ae6498763abe70725858fb7fc853204fa4092e902c4d4355e3",
+    "src/observer/observer_source_inventory.bzl": "3e5193c9e3bf5291e29f2cca486859e162ca8076a278366cbbf8788a76f2ba2b",
+    "src/sql/optimizer/ob_del_upd_log_plan.cpp": "0bfa58e001d50107b727b356432a082f058d557f2513528cad547dc4fa55cc1f",
+    "src/storage/ls/ob_ls_tablet_service.cpp": "341b7c9777520010550c6e22f50ea917f49c34ad57ede6032d6ef9fa29f6a947",
+    "src/observer/vector_index/vector_delta_consumer.h": "a11611ad820416b35cbf221a31360eda2ec5be6bdb724dfa43b23012aba83430",
+    "src/observer/vector_index/vector_delta_consumer.cpp": "47abe200a7ffdb1f71b121b281a915b892465ab90745f131f1d1af3e82b79c97"
+  },
+  "binaries": {
+    "seekdb-master-perf": {
+      "size": 165008296,
+      "sha256": "c0d59108f60496ecc7f4ea61e0049d096dce2f21bc81fdcae732db74b879ee01"
+    },
+    "seekdb-delta-perf": {
+      "size": 165011056,
+      "sha256": "468a44927f48ff1efcd322c09c84eb4b9df251dcbc41405febb3f39e0a244684"
+    }
+  }
+}

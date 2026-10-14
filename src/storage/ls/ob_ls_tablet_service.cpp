@@ -3209,6 +3209,25 @@ int ObLSTabletService::insert_vector_index_rows(
 {
   int ret = OB_SUCCESS;
   const ObTableSchemaParam &table_param = run_ctx.dml_param_.table_param_->get_data_table();
+  if (table_param.is_vector_delta_buffer()
+      && share::is_vector_index_sync_mode_async(table_param.get_vec_index_param())) {
+    // VID/op are sufficient to rebuild the visible graph from the main table
+    // at the same MVCC snapshot. Do not acquire an adapter or insert into VSAG
+    // on the foreground path. The delta row commits with the main row.
+    const uint64_t vector_column = table_param.get_vec_vector_col_id();
+    const auto &columns = run_ctx.dml_param_.table_param_->get_col_descs();
+    int64_t vector_idx = OB_INVALID_INDEX;
+    for (int64_t i = 0; i < columns.count(); ++i) {
+      if (columns.at(i).col_id_ == vector_column) { vector_idx = i; break; }
+    }
+    if (vector_idx == OB_INVALID_INDEX) {
+      return OB_ERR_UNEXPECTED;
+    }
+    for (int64_t k = 0; k < row_count; ++k) {
+      rows[k].storage_datums_[vector_idx].set_null();
+    }
+    return OB_SUCCESS;
+  }
   if (table_param.is_vector_delta_buffer()) {
     ObString vec_idx_param = run_ctx.dml_param_.table_param_->get_data_table().get_vec_index_param();
     int64_t vec_dim = run_ctx.dml_param_.table_param_->get_data_table().get_vec_dim();
