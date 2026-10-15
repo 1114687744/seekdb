@@ -26,6 +26,7 @@
 #include "query/vector/ob_vector_query_result.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/lock/ob_tc_rwlock.h"
+#include "lib/lock/ob_mutex.h"
 #include "query/vector/ob_vector_index_serialize.h"
 #include "query/vector/ob_vector_index_util.h"
 #include "query/engine/expr/ob_expr.h"
@@ -46,6 +47,7 @@ namespace share
 struct ObPluginVectorIndexTaskCtx;
 class ObVsagMemContext;
 class ObPluginVectorIndexMgr;
+class VectorDeltaBuildPool;
 
 struct ObVectorIndexInfo
 {
@@ -276,7 +278,8 @@ public:
       batch_allocator_("BATCHALLOC", OB_MALLOC_NORMAL_BLOCK_SIZE),
       search_allocator_{},
       ls_leader_(true),
-      is_sparse_vector_(false) {};
+      is_sparse_vector_(false),
+      build_pool_(nullptr) {};
   ~ObVectorQueryAdaptorResultContext();
   int init_bitmaps();
   int init_prefilter(const int64_t &min, const int64_t &max);
@@ -309,6 +312,7 @@ public:
   void set_flag(ObVectorQueryProcessFlag flag) {flag_ = flag; }
   void set_ls_leader(const bool ls_leader) { ls_leader_ = ls_leader; }
   bool get_ls_leader() { return ls_leader_; }
+  void set_build_pool(VectorDeltaBuildPool *pool) { build_pool_ = pool; }
 
   inline void set_sparse_vector(const bool is_sparse) { is_sparse_vector_ = is_sparse; }
 
@@ -336,6 +340,7 @@ private:
   ObVsagSearchAlloc search_allocator_;
   bool ls_leader_;
   bool is_sparse_vector_;
+  VectorDeltaBuildPool *build_pool_;
 };
 
 class ObVectorQueryConditions {
@@ -426,6 +431,7 @@ struct ObVectorIndexMemData
       extra_info_buf_(nullptr),
       mem_data_rwlock_(),
       bitmap_rwlock_(),
+      append_mutex_(),
       scn_(),
       ref_cnt_(0),
       vid_bound_(),
@@ -474,6 +480,8 @@ public:
   ObVecExtraInfoBuffer *extra_info_buf_; // for hnsw+sq
   TCRWLock mem_data_rwlock_;
   TCRWLock bitmap_rwlock_;
+  // Shared by adapters referring to this graph. Searches do not take this lock.
+  lib::ObMutex append_mutex_;
   SCN scn_;
   uint64_t ref_cnt_;
   ObVidBound vid_bound_;
@@ -729,6 +737,7 @@ public:
   // Background bitmap refresh uses the same table-scan code path as query-time refresh.
   int refresh_bitmap_background();
   int update_incr_bitmap(const int64_t *vids, int64_t count);
+  int prepare_pending_delta(ObVectorQueryAdaptorResultContext *ctx, bool &has_pending);
   int prepare_delta_mem_data(roaring::api::roaring64_bitmap_t *gene_bitmap,
                              ObArray<uint64_t> &i_vids,
                              ObVectorQueryAdaptorResultContext *ctx);
@@ -805,8 +814,8 @@ public:
   int copy_meta_info(ObPluginVectorIndexAdaptor &other);
   int inherit_index_id_watermarks_from(ObPluginVectorIndexAdaptor &other);
 
-  void set_reload_finish(const bool value) { reload_finish_ = value; };
-  bool get_reload_finish() { return reload_finish_; };
+  void set_reload_finish(const bool value) { ATOMIC_STORE(&reload_finish_, value); };
+  bool get_reload_finish() { return ATOMIC_LOAD(&reload_finish_); };
   int get_inc_index_row_cnt(int64_t &count);
   int get_snap_index_row_cnt(int64_t &count);
   common::RWLock& get_query_lock() { return query_lock_; }
@@ -865,6 +874,9 @@ public:
 private:
   void *get_incr_index();
   void *get_snap_index();
+  int append_async_vectors(int count, float *vectors, uint64_t *vids, int64_t dim,
+                           ObVecExtraInfoObj *extra_objs, int64_t extra_column_count,
+                           ObVidBound vid_bound, VectorDeltaBuildPool *build_pool);
   int add_datum_row_into_array(blocksstable::ObDatumRow *datum_row,
                                ObArray<uint64_t> &i_vids,
                                ObArray<uint64_t> &d_vids);

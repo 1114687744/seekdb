@@ -758,6 +758,40 @@ int ObPluginVectorIndexUtils::try_sync_snapshot_memdata(ObPluginVectorIndexAdapt
   return ret;
 }
 
+int ObPluginVectorIndexUtils::append_delta_from_table(
+    ObPluginVectorIndexAdaptor *adapter, SCN snapshot,
+    ObIAllocator &allocator, VectorDeltaBuildPool &build_pool, bool &has_pending)
+{
+  int ret = OB_SUCCESS;
+  has_pending = false;
+  common::ObNewRowIterator *iter = nullptr;
+  ObAccessService *access = server_service<ObAccessService>();
+  storage::ObTableScanParam scan_param;
+  schema::ObTableParam table_param(allocator);
+  int64_t extra_info_size = 0;
+  if (OB_ISNULL(adapter) || OB_ISNULL(access)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(read_local_tablet(adapter, snapshot, INDEX_TYPE_VEC_DELTA_BUFFER_LOCAL,
+                                      allocator, allocator, scan_param, table_param, iter))) {
+  } else if (OB_FAIL(adapter->get_extra_info_actual_size(extra_info_size))) {
+  } else {
+    const int64_t extra_columns = extra_info_size > 0
+        ? get_extra_column_count(table_param, INDEX_TYPE_VEC_DELTA_BUFFER_LOCAL) : 0;
+    ObArenaAllocator temporary("VecDelta", OB_MALLOC_NORMAL_BLOCK_SIZE);
+    ObVectorQueryAdaptorResultContext ctx(extra_columns, &allocator, &temporary);
+    ctx.set_build_pool(&build_pool);
+    if (OB_FAIL(adapter->check_delta_buffer_table_readnext_status(&ctx, iter, snapshot))) {
+    } else if (OB_FAIL(adapter->prepare_pending_delta(&ctx, has_pending))) {
+    } else if (ctx.get_count() > 0 && OB_FAIL(read_vector_info(adapter, allocator, snapshot, ctx))) {
+    }
+  }
+  if (OB_NOT_NULL(iter) && OB_NOT_NULL(access)) {
+    const int revert_ret = access->revert_scan_iter(iter);
+    if (OB_SUCC(ret)) { ret = revert_ret; }
+  }
+  return ret;
+}
+
 int ObPluginVectorIndexUtils::refresh_adp_from_table(
     ObPluginVectorIndexAdaptor *&adapter,
     const bool create_new_adapter,

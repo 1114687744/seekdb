@@ -14,14 +14,13 @@ from stream_bench import connect
 def run(args):
     root = Path(args.root).absolute()
     assert str(root).startswith('/data/1/nijia.nj/test/vector-delta-')
-    matrix = [('async',1000),('delta',1000),('immediate',1000),
-              ('immediate',4000),('delta',4000),('async',4000)]
+    matrix = [(impl, rate) for rate in args.rates for impl in args.implementations]
     failures = []
     for impl,rate in matrix:
         name = f'{args.label}_{impl}_100k_{rate}'
         base = root / name
         assert not base.exists(), str(base)
-        binary = root / 'bin' / ('seekdb-delta-perf' if impl=='delta' else 'seekdb-master-perf')
+        binary = root / 'bin' / (args.delta_binary if impl=='delta' else 'seekdb-master-perf')
         with (root/'results'/f'{name}.start.log').open('w') as log:
             subprocess.run(['taskset','-c','48-55',str(binary),'--base-dir='+str(base),
                             '-P15881','--log-level=WARN','--parameter','memory_budget=6G',
@@ -49,6 +48,12 @@ def run(args):
             print(json.dumps(dict(finish=name,exit_code=result.returncode,time=time.time())),flush=True)
             if result.returncode:
                 failures.append(name)
+            elif impl == 'delta':
+                summary = json.loads((root/'results'/name/'summary.json').read_text())
+                pending = [count for table,count in summary['final']['auxiliary_rows'].items()
+                           if table.endswith('_idx')]
+                if len(pending) != 1 or pending[0] != 0:
+                    failures.append(name)
         finally:
             if pid is None and (base/'run/seekdb.pid').exists():
                 pid=int((base/'run/seekdb.pid').read_text())
@@ -68,6 +73,10 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root',required=True)
     p.add_argument('--label',required=True)
+    p.add_argument('--implementations', nargs='+', choices=['async','delta','immediate'],
+                   default=['async','delta','immediate'])
+    p.add_argument('--rates', nargs='+', type=int, default=[1000,4000])
+    p.add_argument('--delta-binary', default='seekdb-delta-perf')
     args=p.parse_args()
     assert args.label.isalnum()
     run(args)

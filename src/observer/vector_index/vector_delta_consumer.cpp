@@ -32,15 +32,37 @@ int VectorDeltaConsumer::init(ObMultiVersionSchemaService &schemas,
                              ObMySQLProxy &sql_proxy,
                              ObPluginVectorIndexService &vectors,
                              ObServerRuntimeState &runtime,
-                             data_plane::ObITransactionService &transactions)
+                             data_plane::ObITransactionService &transactions,
+                             int64_t max_build_workers)
 {
+  int ret = OB_SUCCESS;
   schemas_ = &schemas;
   sql_proxy_ = &sql_proxy;
   vectors_ = &vectors;
   runtime_ = &runtime;
   transactions_ = &transactions;
   set_run_wrapper(&runtime);
-  return ObThreadPool::init();
+  if (OB_FAIL(build_pool_.init(max_build_workers, &runtime))) {
+  } else if (OB_FAIL(ObThreadPool::init())) {
+    build_pool_.destroy();
+  }
+  return ret;
+}
+
+void VectorDeltaConsumer::wait()
+{
+  // The coordinator must join its current build before stopping the workers.
+  ObThreadPool::wait();
+  build_pool_.stop();
+  build_pool_.wait();
+}
+
+void VectorDeltaConsumer::destroy()
+{
+  stop();
+  wait();
+  build_pool_.destroy();
+  ObThreadPool::destroy();
 }
 
 void VectorDeltaConsumer::run1()
@@ -105,6 +127,7 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
   ObSEArray<ObTabletID, 8> tablets;
   const ObDatabaseSchema *database = nullptr;
   const ObTableSchema *index_id = nullptr;
+  bool has_pending = false;
   int64_t dim = 0;
   ObString params = delta.get_index_params();
   if (OB_FAIL(delta.get_tablet_ids(tablets))) {
@@ -133,12 +156,25 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
           ret = OB_NOT_INIT;
         } else {
           RWLock::RLockGuard query_guard(adapter->get_query_lock());
-          common::ObSpinLockGuard reload_guard(adapter->get_reload_lock());
-          const common::ObLobReadOptions options(*lob);
-          if (OB_FAIL(ObPluginVectorIndexUtils::refresh_adp_from_table(
-                  adapter, false, snapshot, allocator, options))) {
+          if (!writable || !adapter->get_reload_finish()) {
+            // Recovery and standby catch-up also need published index-id rows.
+            common::ObSpinLockGuard reload_guard(adapter->get_reload_lock());
+            const common::ObLobReadOptions options(*lob);
+            if (OB_FAIL(ObPluginVectorIndexUtils::refresh_adp_from_table(
+                    adapter, false, snapshot, allocator, options))) {
+            } else {
+              adapter->set_reload_finish(true);
+              has_pending = true;
+            }
           } else {
-            adapter->set_reload_finish(true);
+            bool tablet_has_pending = false;
+            if (OB_FAIL(ObPluginVectorIndexUtils::append_delta_from_table(
+                    adapter, snapshot, allocator, build_pool_, tablet_has_pending))) {
+            } else {
+              has_pending |= tablet_has_pending;
+            }
+          }
+          if (OB_SUCC(ret) && has_pending) {
             // Disable the stale empty-index shortcut before the transfer. The
             // bitmap progress still only advances over committed index_id rows.
             SCN dirty_scn = snapshot;
@@ -149,7 +185,7 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
       }
     }
   }
-  if (OB_SUCC(ret) && writable && OB_NOT_NULL(index_id)) {
+  if (OB_SUCC(ret) && writable && has_pending && OB_NOT_NULL(index_id)) {
     ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot);
   }
   return ret;

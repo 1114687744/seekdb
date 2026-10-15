@@ -172,9 +172,18 @@ def run(args):
             while not stop.is_set():
                 if process:
                     io = process.io_counters()._asdict()
+                    workers = []
+                    for thread in process.threads():
+                        try:
+                            name = Path(f"/proc/{process.pid}/task/{thread.id}/comm").read_text().strip()
+                        except FileNotFoundError:  # Adaptive worker exited during sampling.
+                            continue
+                        if name.startswith(("VecBuild", "VecDelta", "CSWorker")):
+                            workers.append(dict(thread._asdict(), name=name))
                     resources.append({"time_s": time.monotonic()-start,
                                       "rss": process.memory_info().rss,
                                       "cpu": process.cpu_times()._asdict(), "io": io,
+                                      "background_workers": workers,
                                       "host_load": os.getloadavg()})
                 current = list(writes)
                 for bi in range(inspected, len(current)):
@@ -222,6 +231,10 @@ def run(args):
     conn = connect(args)
     final = {"rows": sql(conn, f"SELECT COUNT(*) FROM `{args.database}`.docs"),
              "vector_info": sql(conn, "SELECT * FROM oceanbase.__all_virtual_vector_index_info")}
+    sql(conn, "SET ob_enable_index_direct_select=1")
+    final["auxiliary_rows"] = {
+        name: sql(conn, f"SELECT COUNT(*) FROM `{args.database}`.`{name}`")[0][0]
+        for (name,) in meta["auxiliary_tables"]}
     final["recall"] = []
     for qi, statement in enumerate(query_sql):
         actual = [int(row[0]) for row in sql(conn, statement)]
@@ -258,7 +271,8 @@ def run(args):
                "stable_prefix_samples": len(stable), "errors": errors, "final": final}
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     print(json.dumps(summary, default=str), flush=True)
-    if errors or state["committed"] != args.rows:
+    if (errors or state["committed"] != args.rows or not final["recall"]
+            or float(np.mean(final["recall"])) < args.minimum_final_recall):
         raise SystemExit(1)
 
 
@@ -276,6 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("--readers", type=int, default=2)
     parser.add_argument("--drain-seconds", type=int, default=30)
     parser.add_argument("--settle-seconds", type=int, default=0)
+    parser.add_argument("--minimum-final-recall", type=float, default=.98)
     parser.add_argument("--write-timeout", type=int, default=600)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()

@@ -50,6 +50,19 @@ def summarize(path):
         last_auxiliary_observation=backlog[-1],
         freshness_last_negative_ms=percentiles(list(last_negative.values())),
         server_affinity=meta['server_affinity'], server_exe=meta['server_exe'])
+    result['final_auxiliary_rows'] = summary['final'].get('auxiliary_rows')
+    result['background_worker_counts'] = {
+        prefix: {
+            'peak_observed': max(sum(t['name'].startswith(prefix) for t in r.get('background_workers', []))
+                                 for r in resources),
+            'last_observed': sum(t['name'].startswith(prefix)
+                                 for t in resources[-1].get('background_workers', []))}
+        for prefix in ('VecBuild', 'VecDelta', 'CSWorker')} if 'background_workers' in resources[0] else None
+    empty = [r for r in backlog if r['time_s'] >= summary['write_phase_s']
+             and any(k.endswith('_idx') for k in r['rows'])
+             and all(v == 0 for k,v in r['rows'].items() if k.endswith('_idx'))]
+    result['delta_empty_observed_after_write_s'] = (
+        empty[0]['time_s'] - summary['write_phase_s'] if empty else None)
     return result
 
 
@@ -62,6 +75,6 @@ if __name__=='__main__':
     Path(a.output).write_text(json.dumps(result,indent=2)+'\n')
     for r in result:
         print(r['run'], 'rows/s',round(r['actual_write_rows_s']), 'write P99',round(r['write_latency_ms']['p99'],2),
-              'search P99',round(r['search_latency_ms']['p99'],2), 'QPS',round(r['search_qps_during_write']),
+              'search P99',round(r['search_started_during_write_latency_ms']['p99'],2), 'QPS',round(r['search_qps_during_write']),
               'recall',round(r['final_recall'],4), 'CPU',round(r['average_cpu_cores_during_write'],2),
               'RSS MiB',round(r['peak_rss_mib']))

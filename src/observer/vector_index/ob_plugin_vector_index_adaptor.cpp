@@ -25,6 +25,7 @@
 #include "sql/das/ob_das_dml_vec_iter.h"
 #include "share/roaringbitmap/ob_rb_memory_mgr.h"
 #include "observer/vector_index/ob_plugin_vector_index_utils.h"
+#include "observer/vector_index/vector_delta_build_pool.h"
 #include "storage/allocator/ob_vector_allocator.h"
 #include "share/schema/ob_multi_version_schema_service.h"
 #include "share/schema/ob_schema_getter_guard.h"
@@ -2136,6 +2137,62 @@ int ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status(ObVecto
   return ret;
 }
 
+int ObPluginVectorIndexAdaptor::append_async_vectors(
+    int count, float *vectors, uint64_t *vids, int64_t dim,
+    ObVecExtraInfoObj *extra_objs, int64_t extra_column_count, ObVidBound vid_bound,
+    VectorDeltaBuildPool *build_pool)
+{
+  int ret = OB_SUCCESS;
+  // Keep the graph alive against replacement, while allowing concurrent search.
+  TCRLockGuard graph_guard(incr_data_->mem_data_rwlock_);
+  lib::ObMutexGuard append_guard(incr_data_->append_mutex_);
+  int append_count = 0;
+  {
+    TCRLockGuard bitmap_guard(incr_data_->bitmap_rwlock_);
+    for (int i = 0; i < count; ++i) {
+      if (!roaring::api::roaring64_bitmap_contains(incr_data_->bitmap_->insert_bitmap_, vids[i])) {
+        if (append_count != i) {
+          vids[append_count] = vids[i];
+          MEMMOVE(vectors + append_count * dim, vectors + i * dim, dim * sizeof(float));
+          if (OB_NOT_NULL(extra_objs)) {
+            for (int64_t j = 0; j < extra_column_count; ++j) {
+              extra_objs[append_count * extra_column_count + j] = extra_objs[i * extra_column_count + j];
+            }
+          }
+        }
+        ++append_count;
+      }
+    }
+  }
+  if (append_count > 0) {
+    char *extra_info_buf = nullptr;
+    int64_t extra_info_size = 0;
+    ObArenaAllocator allocator("VectorAdaptor", OB_MALLOC_NORMAL_BLOCK_SIZE);
+    if (OB_NOT_NULL(extra_objs) && extra_column_count > 0) {
+      if (OB_FAIL(get_extra_info_actual_size(extra_info_size))) {
+      } else if (extra_info_size > 0 && OB_FAIL(ObVecExtraInfo::extra_infos_to_buf(
+                     allocator, extra_objs, extra_column_count, extra_info_size,
+                     append_count, extra_info_buf))) {
+      }
+    }
+    if (OB_SUCC(ret)) {
+      lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+      lib::ObLightBacktraceGuard light_backtrace_guard(false);
+      if (OB_FAIL(build_pool == nullptr
+              ? obvectorutil::add_index(incr_data_->index_, vectors,
+                    reinterpret_cast<int64_t *>(vids), dim, extra_info_buf, append_count)
+              : build_pool->add(incr_data_->index_, vectors,
+                    reinterpret_cast<int64_t *>(vids), dim, extra_info_buf, extra_info_size, append_count))) {
+      } else if (OB_FAIL(update_incr_bitmap(reinterpret_cast<int64_t *>(vids), append_count))) {
+      } else {
+        TCWLockGuard bitmap_guard(incr_data_->bitmap_rwlock_);
+        incr_data_->set_vid_bound(vid_bound);
+      }
+    }
+  }
+  return ret;
+}
+
 int ObPluginVectorIndexAdaptor::write_into_delta_mem(ObVectorQueryAdaptorResultContext *ctx,
                                                      int count,
                                                      float *vectors,
@@ -2150,6 +2207,9 @@ int ObPluginVectorIndexAdaptor::write_into_delta_mem(ObVectorQueryAdaptorResultC
     // do nothing
   } else if (!is_mem_data_init_atomic(VIRT_INC)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (!is_sync_index() && type_ == VIAT_HNSW) {
+    ret = append_async_vectors(count, vectors, vids, ctx->get_dim(),
+                               extra_objs, extra_column_count, vid_bound, ctx->build_pool_);
   } else {
     TCWLockGuard lock_guard(incr_data_->mem_data_rwlock_);
     if (check_if_complete_delta(ctx->bitmaps_->insert_bitmap_, count)) {
@@ -3034,10 +3094,12 @@ bool ObPluginVectorIndexAdaptor::check_if_complete_delta(roaring::api::roaring64
   if (gene_vid_cnt == 0 && count > 0) {
     res = true;
   } else if (is_mem_data_init_atomic(VIRT_INC)) {
+    TCRLockGuard delta_guard(incr_data_->bitmap_rwlock_);
     roaring::api::roaring64_bitmap_t *delta_bitmap = ATOMIC_LOAD(&(incr_data_->bitmap_->insert_bitmap_));
     if (!roaring64_bitmap_is_subset(gene_bitmap, delta_bitmap)) {
       res = true;
     } else if (count > 0 && is_mem_data_init_atomic(VIRT_BITMAP)) { // andnot_bitmap is null, if count = 0, do nothing
+      TCRLockGuard visible_guard(vbitmap_data_->bitmap_rwlock_);
       roaring::api::roaring64_bitmap_t *index_bitmap = ATOMIC_LOAD(&(vbitmap_data_->bitmap_->insert_bitmap_));
       if (!roaring64_bitmap_is_subset(index_bitmap, delta_bitmap)) {
         res = true;
@@ -3047,6 +3109,26 @@ bool ObPluginVectorIndexAdaptor::check_if_complete_delta(roaring::api::roaring64
     res = true;
   }
   return res;
+}
+
+int ObPluginVectorIndexAdaptor::prepare_pending_delta(
+    ObVectorQueryAdaptorResultContext *ctx, bool &has_pending)
+{
+  int ret = OB_SUCCESS;
+  has_pending = false;
+  ObArray<uint64_t> requested_vids;
+  if (OB_ISNULL(ctx) || OB_ISNULL(ctx->bitmaps_)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    has_pending = roaring64_bitmap_get_cardinality(ctx->bitmaps_->insert_bitmap_) > 0
+                  || roaring64_bitmap_get_cardinality(ctx->bitmaps_->delete_bitmap_) > 0;
+    if (has_pending && OB_FAIL(prepare_delta_mem_data(
+            ctx->bitmaps_->insert_bitmap_, requested_vids, ctx))) {
+    } else {
+      ctx->status_ = ctx->get_count() > 0 ? PVQ_COM_DATA : PVQ_LACK_SCN;
+    }
+  }
+  return ret;
 }
 
 int ObPluginVectorIndexAdaptor::prepare_delta_mem_data(roaring::api::roaring64_bitmap_t *gene_bitmap,

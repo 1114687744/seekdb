@@ -5,6 +5,7 @@
 #include "share/ob_thread_pool.h"
 #include "share/scn.h"
 #include "lib/string/ob_string.h"
+#include "observer/vector_index/vector_delta_build_pool.h"
 
 namespace oceanbase
 {
@@ -28,12 +29,15 @@ class VectorDeltaConsumer final : public ObThreadPool
 {
 public:
   VectorDeltaConsumer();
+  ~VectorDeltaConsumer() { destroy(); }
   int init(schema::ObMultiVersionSchemaService &schemas,
            common::ObMySQLProxy &sql_proxy,
            ObPluginVectorIndexService &vectors,
            ObServerRuntimeState &runtime,
-           data_plane::ObITransactionService &transactions);
+           data_plane::ObITransactionService &transactions, int64_t max_build_workers);
   void run1() override;
+  void wait();
+  void destroy();
   uint64_t completed_scn() const { return ATOMIC_LOAD(&completed_scn_); }
 
 private:
@@ -49,6 +53,7 @@ private:
   ObPluginVectorIndexService *vectors_;
   ObServerRuntimeState *runtime_;
   data_plane::ObITransactionService *transactions_;
+  VectorDeltaBuildPool build_pool_;
   uint64_t completed_scn_;
 };
 }

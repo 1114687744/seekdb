@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SHARE
+#include "config_bridge.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/utility/utility.h"
 #include "share/rc/ob_server_runtime.h"
@@ -85,11 +86,14 @@ int ObChangeStreamMgr::start()
   } else {
     ObPluginVectorIndexService *vectors = server_service<ObPluginVectorIndexService>();
     auto *transactions = data_plane::query_transaction_service();
+    const int64_t configured_cpus = config::cpu_count();
+    const int64_t build_workers = common::max(int64_t{1},
+        configured_cpus > 0 ? configured_cpus : common::get_cpu_num());
     if (OB_ISNULL(GCTX.schema_service_) || OB_ISNULL(GCTX.sql_proxy_)
         || OB_ISNULL(vectors) || OB_ISNULL(server_runtime()) || OB_ISNULL(transactions)) {
       ret = OB_NOT_INIT;
     } else if (OB_FAIL(delta_consumer_.init(*GCTX.schema_service_, *GCTX.sql_proxy_,
-                                          *vectors, *server_runtime(), *transactions))) {
+                                          *vectors, *server_runtime(), *transactions, build_workers))) {
     } else if (OB_FAIL(delta_consumer_.start())) {
     } else {
       LOG_INFO("transactional vector delta consumer started");
