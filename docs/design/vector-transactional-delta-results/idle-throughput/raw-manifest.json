@@ -1,0 +1,110 @@
+{
+  "results/idlebase8/no_index_idle.json": {
+    "bytes": 258390,
+    "sha256": "fd486f5873e9669afaefa13246864a0eb182c40f68e0aa4590e518ce533386b2"
+  },
+  "results/idlebase8/writes.json": {
+    "bytes": 149011,
+    "sha256": "bb376e8faf227f74096c03b2a83d7122bc94624db39f7b5aacdbfdf79ec662ef"
+  },
+  "results/idlebase8/summary.json": {
+    "bytes": 26020,
+    "sha256": "7cca8727817824d65ef662982126093e952d7c8658adc1fa75acc0f16af90df5"
+  },
+  "results/idlebase8/empty_index_idle.json": {
+    "bytes": 262571,
+    "sha256": "ab752c21d80eed54a613aea98f4b7f3a4448bbbd40efc7b74157ae9b0a6d190e"
+  },
+  "results/idlebase8b/no_index_idle.json": {
+    "bytes": 259012,
+    "sha256": "b90425b9365e0bb6aed0ed7300f83860a45127625b1fac640e581c6bd35fe18a"
+  },
+  "results/idlebase8b/writes.json": {
+    "bytes": 149044,
+    "sha256": "331539bc557375f62fa71d5ef977f741874ca8f64efbe2ae92a924802e9a56e6"
+  },
+  "results/idlebase8b/summary.json": {
+    "bytes": 38159,
+    "sha256": "1649a4dc05c5cfba24cf255a08dfe23ff55c6a04c2f9bf2cd26b6cdee6a52946"
+  },
+  "results/idlebase8b/loaded_index_idle.json": {
+    "bytes": 267657,
+    "sha256": "d56274ef33f7eba391331a27d96bd7d9c4fc72967d7ed1d3c84e942c3dafa31c"
+  },
+  "results/idlebase8b/empty_index_idle.json": {
+    "bytes": 270103,
+    "sha256": "7a7655ebdad91dfbcec66c257d62ed4638001c9fd340419f9acfa8e1ce28a49b"
+  },
+  "results/idledelta8/no_index_idle.json": {
+    "bytes": 261027,
+    "sha256": "4a43e2438ab229aab4c1354b152a9be9e7f1375caf52c6f3028bf53cdf5bb647"
+  },
+  "results/idledelta8/writes.json": {
+    "bytes": 148980,
+    "sha256": "d77df753c1c232d6d395c2e12e8e63817d332e69621ba26358a8b4944ae91027"
+  },
+  "results/idledelta8/summary.json": {
+    "bytes": 38175,
+    "sha256": "2aab7a58a1de2e0a1b560963496bcf71fd61b4085153578d265456b9baf50f52"
+  },
+  "results/idledelta8/loaded_index_idle.json": {
+    "bytes": 265817,
+    "sha256": "42ad02f9245387ab492db30805112713bd271afb5e0dde74132e28412ba5ada9"
+  },
+  "results/idledelta8/empty_index_idle.json": {
+    "bytes": 267364,
+    "sha256": "f0db765708801b6ddd222a084a25391f31726e4173fc3c7f2edda4f1ab158b54"
+  },
+  "results/idlebase192/no_index_idle.json": {
+    "bytes": 254990,
+    "sha256": "5c1f56bcf07268600ab2d0e90620affe57021ad779b682b1785026b021744d70"
+  },
+  "results/idlebase192/writes.json": {
+    "bytes": 148609,
+    "sha256": "615ab2155df2d88a2f9d829d61768ee2aceacbc86072fd372030b3275135c5a5"
+  },
+  "results/idlebase192/summary.json": {
+    "bytes": 37978,
+    "sha256": "49203c9bf6a0b2312f0e6dcc9b389ff2eeeb4f72bc9621568a34e5a4a4c55f84"
+  },
+  "results/idlebase192/loaded_index_idle.json": {
+    "bytes": 265133,
+    "sha256": "f08cda8c753a8fa9b770f58d2edaecc18dbc5761a614880a55e2428a404680b9"
+  },
+  "results/idlebase192/empty_index_idle.json": {
+    "bytes": 266249,
+    "sha256": "4d06b74cff90c87746459b2f50357c21a4edee4492de656b659eee638b3400fa"
+  },
+  "results/idledeltaprofile/perf-report.txt": {
+    "bytes": 30879,
+    "sha256": "657a9952b8e548f7c86fbad664080cfec02d98d6de1b55e1b5657a05cefd9ec2"
+  },
+  "results/idledeltaprofile/perf.log": {
+    "bytes": 192,
+    "sha256": "40753da5c51029e5b8a66417f26ec13268dfc29d17e2a2a52d48bd3b2519e0e2"
+  },
+  "results/idledeltaprofile/no_index_idle.json": {
+    "bytes": 91326,
+    "sha256": "b20121182502399f9f9e72a34be13f11fa5879ddd719592747fcb888ffefd23b"
+  },
+  "results/idledeltaprofile/writes.json": {
+    "bytes": 148991,
+    "sha256": "86deb33d14a9c775792a9b10d90505ddda29c5fa99f3e1445063daae9506c4a1"
+  },
+  "results/idledeltaprofile/summary.json": {
+    "bytes": 38565,
+    "sha256": "7774ee8544f33a5de638a8f11916536db8fad6d8f04d0183fbdaa0e40e9935cd"
+  },
+  "results/idledeltaprofile/loaded_index_idle.json": {
+    "bytes": 93006,
+    "sha256": "1814230e34d751c49ac8997b1e443df73ab4c5d47f151cb245f1a146970d87a0"
+  },
+  "results/idledeltaprofile/empty_index_idle.json": {
+    "bytes": 94656,
+    "sha256": "0f64ecc64142d2418bf3b3ccf5db0fd9831b460579bc96fb8b3a37aed0a5bf41"
+  },
+  "results/idledeltaprofile/perf.data": {
+    "bytes": 3841444,
+    "sha256": "f0de1a60d713296e192d51bee034543e2c0c7eaad7ceba20e22b7f2f607b0e86"
+  }
+}

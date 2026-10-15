@@ -1,0 +1,18 @@
+{
+  "source_commit": "37a7bc65b67943043fd2d5a379000cea02dc997e",
+  "harness_sha256": "4e08cada5fa91201cf9464544b0695d5fd75acf27969d2c666d0e4cdc8141689",
+  "binaries": {
+    "seekdb-master-perf": "c0d59108f60496ecc7f4ea61e0049d096dce2f21bc81fdcae732db74b879ee01",
+    "seekdb-master-eight-workers": "632ae4271b8f80d6ba8375eeff73021425dbf55f5e084f8e56d301287240d2ad",
+    "seekdb-delta-perf8": "6efac88db1390e8b7adef72a06fd4687bbd8c7837299c957ad9827957b794084"
+  },
+  "runs": [
+    "idlebase192",
+    "idlebase8b",
+    "idledelta8",
+    "idledeltaprofile"
+  ],
+  "measurement": "process CPU and per-thread CPU deltas from /proc; no client connections during idle",
+  "initial_failed_run": "idlebase8 used the wrong refresh API; discarded as an idle-after-catchup result",
+  "profile_after_cpu_measurement": true
+}

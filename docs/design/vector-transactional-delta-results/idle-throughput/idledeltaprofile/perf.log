@@ -1,0 +1,2 @@
+[ perf record: Woken up 15 times to write data ]
+[ perf record: Captured and wrote 3.519 MB /data/1/nijia.nj/test/vector-delta-perf-20261015/results/idledeltaprofile/perf.data (435 samples) ]

@@ -1,0 +1,413 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 435  of event 'cycles:u'
+# Event count (approx.): 8086827608
+#
+# Overhead  Command   Shared Object       Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+# ........  ........  ..................  ................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    18.86%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObMvccValueIterator::lock_for_read_
+            |
+            ---oceanbase::memtable::ObMvccValueIterator::lock_for_read_
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     7.50%  VecDelta  seekdb-delta-perf8  [.] oceanbase::keybtree::ScanHandle<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get
+            |
+            ---oceanbase::keybtree::ScanHandle<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get
+               oceanbase::keybtree::Iterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::iter_next
+               oceanbase::keybtree::Iterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::scan_batch
+               oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+
+     7.42%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObReadRow::iterate_row
+            |
+            ---oceanbase::memtable::ObReadRow::iterate_row
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     6.05%  VecDelta  seekdb-delta-perf8  [.] oceanbase::blocksstable::ObRowReader::read_memtable_row
+            |
+            ---oceanbase::blocksstable::ObRowReader::read_memtable_row
+               oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+               oceanbase::memtable::ObReadRow::iterate_row_value_
+               oceanbase::memtable::ObReadRow::iterate_row
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+
+     5.79%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::ObMultipleScanMerge::inner_merge_row
+            |
+            ---oceanbase::storage::ObMultipleScanMerge::inner_merge_row
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     5.32%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+            |
+            ---oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+               oceanbase::memtable::ObReadRow::iterate_row_value_
+               oceanbase::memtable::ObReadRow::iterate_row
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     4.46%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::ObLSMeta::get_tablet_change_checkpoint_scn
+            |
+            ---oceanbase::common::ObArenaAllocator::used (inlined)
+               oceanbase::blocksstable::ObRowReader::read_memtable_row
+               oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+               oceanbase::memtable::ObReadRow::iterate_row_value_
+               oceanbase::memtable::ObReadRow::iterate_row
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+
+     3.76%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::ObRowFuse::fuse_row
+            |
+            ---oceanbase::storage::ObRowFuse::fuse_row
+               oceanbase::storage::ObMultipleScanMerge::inner_merge_row
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     3.49%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::ObMultipleScanMerge::supply_consume
+            |
+            ---oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     3.00%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObMvccValueIterator::lock_for_read_inner_
+            |
+            ---oceanbase::memtable::ObMvccValueIterator::lock_for_read_inner_
+               oceanbase::memtable::ObMvccValueIterator::lock_for_read_
+               |          
+                --2.77%--oceanbase::memtable::ObMvccRowIterator::get_next_row
+                          oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+                          oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+                          oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+                          oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+                          oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+                          oceanbase::storage::ObMultipleScanMerge::supply_consume
+                          oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+                          oceanbase::storage::ObMultipleMerge::get_next_row
+                          oceanbase::storage::ObTableScanIterator::get_next_row
+                          oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+                          oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+                          oceanbase::share::VectorDeltaConsumer::consume_index
+                          oceanbase::share::VectorDeltaConsumer::consume_round
+                          oceanbase::share::VectorDeltaConsumer::run1
+                          oceanbase::lib::Threads::run
+                          oceanbase::lib::Thread::run
+
+     2.33%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObMvccRowIterator::get_next_row
+            |
+            ---oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     2.33%  VecDelta  seekdb-delta-perf8  [.] oceanbase::blocksstable::ObClusterColumnReader::read_datum
+            |
+            ---oceanbase::blocksstable::ObClusterColumnReader::read_datum
+               oceanbase::blocksstable::ObRowReader::read_memtable_row
+               oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+               oceanbase::memtable::ObReadRow::iterate_row_value_
+               oceanbase::memtable::ObReadRow::iterate_row
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+
+     2.08%  VecDelta  seekdb-delta-perf8  [.] oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+            |
+            ---oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     1.86%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::return_array_idx
+            |
+            ---oceanbase::storage::return_array_idx
+               oceanbase::blocksstable::ObRowReader::read_memtable_row
+               |          
+                --1.63%--oceanbase::memtable::ObReadRow::fill_in_row_with_tx_node_
+                          oceanbase::memtable::ObReadRow::iterate_row_value_
+                          oceanbase::memtable::ObReadRow::iterate_row
+                          oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row_by_value_iter_
+                          oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+                          oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+                          oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+                          oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+                          oceanbase::storage::ObMultipleScanMerge::supply_consume
+                          oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+                          oceanbase::storage::ObMultipleMerge::get_next_row
+                          oceanbase::storage::ObTableScanIterator::get_next_row
+                          oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+                          oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+                          oceanbase::share::VectorDeltaConsumer::consume_index
+                          oceanbase::share::VectorDeltaConsumer::consume_round
+                          oceanbase::share::VectorDeltaConsumer::run1
+                          oceanbase::lib::Threads::run
+
+     1.62%  VecDelta  seekdb-delta-perf8  [.] oceanbase::storage::ObSimpleRowsMerger<oceanbase::storage::ObBlockStatIterator::ObBlockStatKeyItem, oceanbase::storage::ObBlockStatIterator::ObBlockStatKeyCmp>::empty
+            |
+            ---oceanbase::storage::ObSimpleRowsMerger<oceanbase::storage::ObBlockStatIterator::ObBlockStatKeyItem, oceanbase::storage::ObBlockStatIterator::ObBlockStatKeyCmp>::empty
+
+     1.39%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+            |
+            ---oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     1.18%  VecDelta  seekdb-delta-perf8  [.] oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::scan_batch
+            |
+            ---oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::scan_batch
+               oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+     1.16%  VecDelta  seekdb-delta-perf8  [.] oceanbase::keybtree::Iterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::iter_next
+            |
+            ---oceanbase::keybtree::Iterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::iter_next
+               oceanbase::keybtree::Iterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::scan_batch
+               oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*>::get_next
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+
+     1.16%  VecDelta  seekdb-delta-perf8  [.] oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+            |
+            ---oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next_internal
+               oceanbase::memtable::ObQueryEngine::Iterator<oceanbase::keybtree::BtreeIterator<oceanbase::memtable::ObStoreRowkeyWrapper, oceanbase::memtable::ObMvccRow*> >::next
+               oceanbase::memtable::ObMvccRowIterator::get_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_value_iter_
+               oceanbase::memtable::ObMemtableSingleRowReader::inner_fill_in_next_row_
+               oceanbase::memtable::ObMemtableSingleRowReader::fill_in_next_row
+               oceanbase::memtable::ObMemtableSingleRowReader::get_next_row
+               oceanbase::memtable::ObMemtableScanIterator::inner_get_next_row
+               oceanbase::storage::ObMultipleScanMerge::supply_consume
+               oceanbase::storage::ObMultipleScanMerge::inner_get_next_row
+               oceanbase::storage::ObMultipleMerge::get_next_row
+               oceanbase::storage::ObTableScanIterator::get_next_row
+               oceanbase::share::ObPluginVectorIndexAdaptor::check_delta_buffer_table_readnext_status
+               oceanbase::share::ObPluginVectorIndexUtils::append_delta_from_table
+               oceanbase::share::VectorDeltaConsumer::consume_index
+               oceanbase::share::VectorDeltaConsumer::consume_round
+               oceanbase::share::VectorDeltaConsumer::run1
+               oceanbase::lib::Threads::run
+               oceanbase::lib::Thread::run
+               oceanbase::lib::Thread::__th_start
+
+
+
+#
+# (Tip: For memory address profiling, try: perf mem record / perf mem report)
+#

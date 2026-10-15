@@ -75,7 +75,14 @@ host load is sampled. This is a controlled experiment, not a hardware benchmark.
 
 ## Status (2026-10-15)
 
-- Latest: removed unconditional waits after successful consumption and bounded
+- Latest measurements: [client throughput and true idle CPU](vector-transactional-delta-idle-throughput.md).
+  With eight workers, one unpaced writer achieved 25.3k rows/s on master and
+  23.6–23.7k on the prototype. After catching up on 100k rows, idle process CPU
+  was 0.33% versus 14.5–15.4% of one core. Profiling locates the remaining
+  regression in repeated delta discovery scans over deleted memtable records.
+  Build workers had shrunk to zero. This idle regression is not yet fixed.
+
+- Removed unconditional waits after successful consumption and bounded
   transfer SQL by the current round's observed VID range. See
   [freshness and recall results](vector-transactional-delta-freshness.md), including
   a master control with eight ChangeStream workers. The earlier large write

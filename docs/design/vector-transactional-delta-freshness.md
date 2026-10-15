@@ -3,6 +3,10 @@
 日期：2026-10-15。独立实验分支 `codex/vector-transactional-delta`，基线 master
 `76f871eb5`，最终代码 `37a7bc65b`。延续[动态线程池实验](vector-transactional-delta-adaptive-pool.md)。
 
+后续补测了[不限速客户端吞吐及真正空闲 CPU](vector-transactional-delta-idle-throughput.md)。
+同为 8 个执行器时，原型未显示写入吞吐优势；写过 10 万条并追平后，协调线程
+反复扫描空 delta，产生约 15% 单核 CPU 开销，仍待解决。本页记录活跃负载结果。
+
 ## 1. 为什么之前写入快很多
 
 **不能把此前的差距归因于“事务化 delta 的前台工作更少”。基线本来就是异步构图，

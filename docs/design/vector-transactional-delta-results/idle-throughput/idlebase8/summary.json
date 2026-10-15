@@ -1,0 +1,1006 @@
+{
+  "arguments": {
+    "root": "/data/1/nijia.nj/test/vector-delta-perf-20261015",
+    "label": "idlebase8",
+    "binary": "seekdb-master-eight-workers",
+    "port": 15881,
+    "rows": 100000,
+    "batch": 100,
+    "idle_seconds": 30
+  },
+  "server_command": [
+    "taskset",
+    "-c",
+    "48-55",
+    "/data/1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-eight-workers",
+    "--base-dir=/data/1/nijia.nj/test/vector-delta-perf-20261015/idlebase8",
+    "-P15881",
+    "--log-level=WARN",
+    "--parameter",
+    "memory_budget=6G",
+    "--parameter",
+    "cpu_count=8",
+    "--parameter",
+    "datafile_size=2G",
+    "--parameter",
+    "datafile_maxsize=8G",
+    "--parameter",
+    "log_disk_size=4G"
+  ],
+  "pid": 278172,
+  "affinity": [
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55
+  ],
+  "no_index_idle": {
+    "seconds": 30.003242809325457,
+    "cpu_percent_one_core": 0.23330811420905073,
+    "rss_mib": 175.7265625,
+    "threads": [
+      {
+        "tid": "278224",
+        "name": "CSFetcher",
+        "cpu_percent_one_core": 0.033329730601293066,
+        "voluntary_switches": 6,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278191",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.03332973060129304,
+        "voluntary_switches": 216,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "278252",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.03332973060129304,
+        "voluntary_switches": 211,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "278172",
+        "name": "seekdb-master-e",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 10,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278173",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 33,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278184",
+        "name": "OB_PLOG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 60,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278185",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 35,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278186",
+        "name": "TimerSvr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3482,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278187",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 32,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278188",
+        "name": "qth_mgr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 10,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278189",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 34,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278190",
+        "name": "TimerWK0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 213,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278192",
+        "name": "IO_GETEVENT0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278193",
+        "name": "MemoryDump",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278194",
+        "name": "DDLTransCtr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 0,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278195",
+        "name": "SerScheQueue0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 150,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278196",
+        "name": "ClockGenerator",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2985,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278197",
+        "name": "SignalHandle",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278198",
+        "name": "IO_HEALTH0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278199",
+        "name": "OB_SLOG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278200",
+        "name": "TbltMetaUp0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 150,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278201",
+        "name": "BFBuildTask",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 60,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278202",
+        "name": "DagScheduler",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278203",
+        "name": "MaintainDepInfo",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278204",
+        "name": "DdlBuild",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278205",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278206",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278207",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278208",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278209",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278210",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278211",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278212",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278213",
+        "name": "TxTsWaiter",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 0,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278215",
+        "name": "IOWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 318,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278216",
+        "name": "LogLoop",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278217",
+        "name": "ApplySrv0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 37,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278219",
+        "name": "TFSwap",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278220",
+        "name": "LockWaitMgr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278221",
+        "name": "DeadLockLocal0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278222",
+        "name": "DetectorTimer",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2984,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278223",
+        "name": "DBMSSched",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278225",
+        "name": "CSDispatcher",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278231",
+        "name": "MergeScheduler",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278232",
+        "name": "DDLTaskExecutor",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278233",
+        "name": "DDLTaskExecutor",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278323",
+        "name": "sql-nio-0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 29,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278324",
+        "name": "sql-nio-1",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278325",
+        "name": "sql-nio-2",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278326",
+        "name": "TimerWK0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 211,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278766",
+        "name": "TimerWK1",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 216,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "278767",
+        "name": "TimerWK1",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 216,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279316",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279317",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279318",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279319",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279320",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279321",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      }
+    ],
+    "final_thread_count": 64,
+    "build_workers": 0
+  },
+  "metadata": {
+    "version": [
+      [
+        "5.7.25-OceanBase seekdb-v1.4.0.0"
+      ]
+    ],
+    "ddl": [
+      [
+        "docs",
+        "CREATE TABLE `docs` (\n  `id` bigint(20) DEFAULT NULL,\n  `emb` VECTOR(768) DEFAULT NULL,\n  VECTOR KEY `idx` (`emb`) WITH (DISTANCE=COSINE,TYPE=HNSW,LIB=VSAG,M=16,EF_CONSTRUCTION=200,SYNC_MODE=ASYNC, EF_SEARCH=64) BLOCK_SIZE 16384\n) ORGANIZATION HEAP DEFAULT CHARSET = utf8mb4 ROW_FORMAT = DYNAMIC COMPRESSION = 'zstd_1.3.8' BLOCK_SIZE = 16384 TABLET_SIZE = 134217728 PCTFREE = 0 LOB_INROW_THRESHOLD=78643"
+      ]
+    ],
+    "parameters": [
+      [
+        "observer",
+        "memory_budget",
+        "CAPACITY",
+        "6G",
+        "the logical memory budget used to size caches and buffers. 0 targets 80% of cgroup or physical memory while reserving at least 1G for the system when possible. The minimum automatic value is 1G. Range: 0, [1G,).",
+        "OBSERVER",
+        "CLUSTER",
+        "DEFAULT",
+        "DYNAMIC_EFFECTIVE",
+        "0M",
+        0
+      ],
+      [
+        "observer",
+        "vector_memory_limit",
+        "CAPACITY",
+        "0M",
+        "the maximum memory used by the vector module. 0 derives the limit from effective memory, which is the smaller of physical memory and a finite cgroup memory limit. The automatic value is 50% of effective memory. The Vector allocator enforces this module limit independently of the TxShare aggregate limit. Range: [0M,).",
+        "RUNTIME",
+        "CLUSTER",
+        "DEFAULT",
+        "DYNAMIC_EFFECTIVE",
+        "0M",
+        1
+      ],
+      [
+        "observer",
+        "cpu_count",
+        "INT",
+        "8",
+        "the number of CPU\\'s in the system. If this parameter is set to zero, the number will be set according to sysconf; otherwise, this parameter is used. Range: [0,+\u221e) in integer",
+        "OBSERVER",
+        "CLUSTER",
+        "DEFAULT",
+        "DYNAMIC_EFFECTIVE",
+        "0",
+        0
+      ],
+      [
+        "observer",
+        "log_disk_size",
+        "CAPACITY",
+        "4G",
+        "the size of disk space used by the log files. Range: [0, +\u221e)",
+        "LOGSERVICE",
+        "CLUSTER",
+        "DEFAULT",
+        "DYNAMIC_EFFECTIVE",
+        "0M",
+        0
+      ]
+    ],
+    "plan": [
+      [
+        "======================================================"
+      ],
+      [
+        "|ID|OPERATOR         |NAME     |EST.ROWS|EST.TIME(us)|"
+      ],
+      [
+        "------------------------------------------------------"
+      ],
+      [
+        "|0 |VECTOR INDEX SCAN|docs(idx)|1       |7           |"
+      ],
+      [
+        "======================================================"
+      ],
+      [
+        "Outputs & filters:"
+      ],
+      [
+        "-------------------------------------"
+      ],
+      [
+        "  0 - output([docs.id]), filter(nil), rowset=16"
+      ],
+      [
+        "      access([docs.__pk_increment], [docs.id]), partitions(p0)"
+      ],
+      [
+        "      is_index_back=true, is_global_index=false, "
+      ],
+      [
+        "      range_key([docs.__pk_increment], [docs.__type_17_1792045188297280]), range(MIN,MIN ; MAX,MAX)always true"
+      ]
+    ],
+    "auxiliary_tables": [
+      [
+        "__idx_500003_idx"
+      ],
+      [
+        "__idx_500003_idx_index_id_table"
+      ],
+      [
+        "__idx_500003_idx_index_snapshot_data_table"
+      ]
+    ]
+  },
+  "empty_index_idle": {
+    "seconds": 30.00338415056467,
+    "cpu_percent_one_core": 0.1999774415409431,
+    "rss_mib": 176.55078125,
+    "threads": [
+      {
+        "tid": "278326",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.033329573590157154,
+        "voluntary_switches": 211,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "278172",
+        "name": "seekdb-master-e",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 10,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278173",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 32,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "278184",
+        "name": "OB_PLOG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 60,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278185",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 36,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278186",
+        "name": "TimerSvr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3408,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278187",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 37,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278188",
+        "name": "qth_mgr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 10,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278189",
+        "name": "jemalloc_bg_thd",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 29,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278191",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 211,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278192",
+        "name": "IO_GETEVENT0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278193",
+        "name": "MemoryDump",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278194",
+        "name": "DDLTransCtr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 0,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278195",
+        "name": "SerScheQueue0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 150,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278196",
+        "name": "ClockGenerator",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2985,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278197",
+        "name": "SignalHandle",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278198",
+        "name": "IO_HEALTH0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278199",
+        "name": "OB_SLOG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278200",
+        "name": "TbltMetaUp0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 150,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278201",
+        "name": "BFBuildTask",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 60,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278202",
+        "name": "DagScheduler",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 31,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278203",
+        "name": "MaintainDepInfo",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278204",
+        "name": "DdlBuild",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278205",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278206",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278207",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278208",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278209",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278210",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278211",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278212",
+        "name": "TransTimeWheel",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278213",
+        "name": "TxTsWaiter",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 0,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278215",
+        "name": "IOWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 316,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278216",
+        "name": "LogLoop",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278217",
+        "name": "ApplySrv0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 39,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278219",
+        "name": "TFSwap",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278220",
+        "name": "LockWaitMgr",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 299,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278221",
+        "name": "DeadLockLocal0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278222",
+        "name": "DetectorTimer",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2985,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278223",
+        "name": "DBMSSched",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 2,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278224",
+        "name": "CSFetcher",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 156,
+        "involuntary_switches": 2
+      },
+      {
+        "tid": "278225",
+        "name": "CSDispatcher",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 3,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278231",
+        "name": "MergeScheduler",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278232",
+        "name": "DDLTaskExecutor",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278233",
+        "name": "DDLTaskExecutor",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278252",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 211,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278323",
+        "name": "sql-nio-0",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278324",
+        "name": "sql-nio-1",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 29,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278325",
+        "name": "sql-nio-2",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278765",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 209,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "278767",
+        "name": "TimerWK1",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 211,
+        "involuntary_switches": 4
+      },
+      {
+        "tid": "279311",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 210,
+        "involuntary_switches": 1
+      },
+      {
+        "tid": "279312",
+        "name": "TxLoopWorker",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 212,
+        "involuntary_switches": 2
+      },
+      {
+        "tid": "279316",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279317",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279318",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279319",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "279320",
+        "name": "DAG",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 300,
+        "involuntary_switches": 0
+      },
+      {
+        "tid": "283824",
+        "name": "VectorAsyncTask",
+        "cpu_percent_one_core": 0.0,
+        "voluntary_switches": 30,
+        "involuntary_switches": 0
+      }
+    ],
+    "final_thread_count": 64,
+    "build_workers": 0
+  },
+  "write": {
+    "rows": 100000,
+    "seconds": 3.915969155728817,
+    "client_committed_rows_s": 25536.46262859509,
+    "batch": 100,
+    "client_cpu_s": 1.1014136190000001,
+    "batch_sql_ms": {
+      "p50": 3.2017193734645844,
+      "p95": 5.332527123391628,
+      "p99": 9.043844230473038,
+      "max": 16.971442848443985
+    },
+    "prepare_total_s": 0.5891880467534065,
+    "note": "One synchronous client, no pacing and no concurrent ANN readers; includes client formatting."
+  }
+}
