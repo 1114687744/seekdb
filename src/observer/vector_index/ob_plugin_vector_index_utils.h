@@ -139,7 +139,7 @@ public:
                               ObVectorQueryAdaptorResultContext &ada_ctx);
   static int append_delta_from_table(ObPluginVectorIndexAdaptor *adapter, SCN snapshot,
                                     ObIAllocator &allocator, VectorDeltaBuildPool &build_pool,
-                                    bool &has_pending);
+                                    bool &has_pending, ObVidBound &pending_vids);
   static int read_local_tablet(ObPluginVectorIndexAdaptor* adapter,
                                SCN target_scn,
                                schema::ObIndexType type,

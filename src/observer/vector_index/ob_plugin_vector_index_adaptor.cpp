@@ -3112,7 +3112,7 @@ bool ObPluginVectorIndexAdaptor::check_if_complete_delta(roaring::api::roaring64
 }
 
 int ObPluginVectorIndexAdaptor::prepare_pending_delta(
-    ObVectorQueryAdaptorResultContext *ctx, bool &has_pending)
+    ObVectorQueryAdaptorResultContext *ctx, bool &has_pending, ObVidBound &pending_vids)
 {
   int ret = OB_SUCCESS;
   has_pending = false;
@@ -3120,8 +3120,15 @@ int ObPluginVectorIndexAdaptor::prepare_pending_delta(
   if (OB_ISNULL(ctx) || OB_ISNULL(ctx->bitmaps_)) {
     ret = OB_INVALID_ARGUMENT;
   } else {
-    has_pending = roaring64_bitmap_get_cardinality(ctx->bitmaps_->insert_bitmap_) > 0
-                  || roaring64_bitmap_get_cardinality(ctx->bitmaps_->delete_bitmap_) > 0;
+    // Include deletes and already-loaded inserts. The transfer covers every
+    // durable delta row in this snapshot, not only vectors needing graph work.
+    for (const auto *bitmap : {ctx->bitmaps_->insert_bitmap_, ctx->bitmaps_->delete_bitmap_}) {
+      if (roaring64_bitmap_get_cardinality(bitmap) > 0) {
+        has_pending = true;
+        pending_vids.set_vid(roaring64_bitmap_minimum(bitmap));
+        pending_vids.set_vid(roaring64_bitmap_maximum(bitmap));
+      }
+    }
     if (has_pending && OB_FAIL(prepare_delta_mem_data(
             ctx->bitmaps_->insert_bitmap_, requested_vids, ctx))) {
     } else {

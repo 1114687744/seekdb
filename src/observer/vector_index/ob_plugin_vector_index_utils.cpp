@@ -760,7 +760,8 @@ int ObPluginVectorIndexUtils::try_sync_snapshot_memdata(ObPluginVectorIndexAdapt
 
 int ObPluginVectorIndexUtils::append_delta_from_table(
     ObPluginVectorIndexAdaptor *adapter, SCN snapshot,
-    ObIAllocator &allocator, VectorDeltaBuildPool &build_pool, bool &has_pending)
+    ObIAllocator &allocator, VectorDeltaBuildPool &build_pool, bool &has_pending,
+    ObVidBound &pending_vids)
 {
   int ret = OB_SUCCESS;
   has_pending = false;
@@ -781,7 +782,7 @@ int ObPluginVectorIndexUtils::append_delta_from_table(
     ObVectorQueryAdaptorResultContext ctx(extra_columns, &allocator, &temporary);
     ctx.set_build_pool(&build_pool);
     if (OB_FAIL(adapter->check_delta_buffer_table_readnext_status(&ctx, iter, snapshot))) {
-    } else if (OB_FAIL(adapter->prepare_pending_delta(&ctx, has_pending))) {
+    } else if (OB_FAIL(adapter->prepare_pending_delta(&ctx, has_pending, pending_vids))) {
     } else if (ctx.get_count() > 0 && OB_FAIL(read_vector_info(adapter, allocator, snapshot, ctx))) {
     }
   }

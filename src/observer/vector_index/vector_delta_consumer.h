@@ -16,6 +16,7 @@ namespace share
 class ObServerRuntimeState;
 class ObPluginVectorIndexService;
 class ObPluginVectorIndexAdaptor;
+struct ObVidBound;
 namespace schema
 {
 class ObMultiVersionSchemaService;
@@ -41,13 +42,14 @@ public:
   uint64_t completed_scn() const { return ATOMIC_LOAD(&completed_scn_); }
 
 private:
-  int consume_round();
+  int consume_round(bool &consumed);
   int consume_index(schema::ObSchemaGetterGuard &guard,
                     const schema::ObTableSchema &delta,
-                    const SCN &snapshot, bool writable);
+                    const SCN &snapshot, bool writable, bool &consumed);
   int transfer_delta(const schema::ObTableSchema &delta,
                      const schema::ObTableSchema &index_id,
-                     const common::ObString &database, const SCN &snapshot);
+                     const common::ObString &database, const SCN &snapshot,
+                     const ObVidBound *pending_vids);
   schema::ObMultiVersionSchemaService *schemas_;
   common::ObMySQLProxy *sql_proxy_;
   ObPluginVectorIndexService *vectors_;

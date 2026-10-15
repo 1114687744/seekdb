@@ -737,7 +737,8 @@ public:
   // Background bitmap refresh uses the same table-scan code path as query-time refresh.
   int refresh_bitmap_background();
   int update_incr_bitmap(const int64_t *vids, int64_t count);
-  int prepare_pending_delta(ObVectorQueryAdaptorResultContext *ctx, bool &has_pending);
+  int prepare_pending_delta(ObVectorQueryAdaptorResultContext *ctx, bool &has_pending,
+                            ObVidBound &pending_vids);
   int prepare_delta_mem_data(roaring::api::roaring64_bitmap_t *gene_bitmap,
                              ObArray<uint64_t> &i_vids,
                              ObVectorQueryAdaptorResultContext *ctx);

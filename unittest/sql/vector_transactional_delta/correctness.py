@@ -80,6 +80,25 @@ def run(args):
         sql(c, "CALL dbms_vector.refresh_index('idx','docs','v',1,'FAST')")
         await_rows([(2, 21), (3, 32)])
         record("explicit_refresh_barrier")
+
+        # A later round must revisit older VIDs. Its transfer range is derived
+        # from this round's inserts AND deletes, never a monotonic cursor or
+        # just the set of new graph points.
+        sql(c, "INSERT INTO docs VALUES(100,100,'[100,0,0]')")
+        await_rows([(2, 21), (3, 32), (100, 100)])
+        sql(c, "DELETE FROM docs WHERE id=2")
+        await_rows([(3, 32), (100, 100)])
+        sql(c, "CALL dbms_vector.refresh_index('idx','docs','v',1,'FAST')")
+        sql(c, "SET ob_enable_index_direct_select=1")
+        delta = sql(c, "SELECT a.table_name FROM oceanbase.__all_table a "
+                       "JOIN oceanbase.__all_table t ON a.data_table_id=t.table_id "
+                       "JOIN oceanbase.__all_database d ON t.database_id=d.database_id "
+                       "WHERE d.database_name=DATABASE() AND t.table_name='docs' "
+                       "AND a.table_name LIKE '__idx_%_idx'")
+        assert len(delta) == 1, delta
+        pending = sql(c, f"SELECT COUNT(*) FROM `{delta[0][0]}`")[0][0]
+        assert pending == 0, pending
+        record("delete_only_older_vid_transferred", pending_delta=pending)
         record("complete", rows=sql(c, "SELECT id,tag FROM docs ORDER BY id"))
         reader.close()
     except Exception as exc:

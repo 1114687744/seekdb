@@ -166,11 +166,12 @@ def run(args):
         pending = {}
         inspected = 0
         next_aux = 0.0
+        next_resource = 0.0
         sample_stride = max(1, (args.rows + args.batch - 1) // args.batch // 50)
         sql(conn, "SET ob_enable_index_direct_select=1")
         try:
             while not stop.is_set():
-                if process:
+                if process and time.monotonic() >= next_resource:
                     io = process.io_counters()._asdict()
                     workers = []
                     for thread in process.threads():
@@ -185,6 +186,7 @@ def run(args):
                                       "cpu": process.cpu_times()._asdict(), "io": io,
                                       "background_workers": workers,
                                       "host_load": os.getloadavg()})
+                    next_resource = time.monotonic() + .5
                 current = list(writes)
                 for bi in range(inspected, len(current)):
                     batch = current[bi]
@@ -211,7 +213,7 @@ def run(args):
                                     "committed": state["committed"], "rows": counts,
                                     "pending_freshness_samples": len(pending)})
                     next_aux = time.monotonic() + 2
-                stop.wait(.5)
+                stop.wait(args.probe_interval)
         except Exception as exc:
             errors.append({"phase": "monitor", "error": repr(exc)})
         finally:
@@ -291,6 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--drain-seconds", type=int, default=30)
     parser.add_argument("--settle-seconds", type=int, default=0)
     parser.add_argument("--minimum-final-recall", type=float, default=.98)
+    parser.add_argument("--probe-interval", type=float, default=.5)
     parser.add_argument("--write-timeout", type=int, default=600)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -298,4 +301,6 @@ if __name__ == "__main__":
         parser.error("use a new database name starting with vecdelta_")
     if min(args.rows, args.queries, args.rate, args.batch, args.readers) <= 0 or args.rows < 10:
         parser.error("positive sizes and at least 10 rows are required")
+    if args.probe_interval <= 0:
+        parser.error("probe interval must be positive")
     run(args)

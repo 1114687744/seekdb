@@ -20,7 +20,7 @@ def run(args):
         name = f'{args.label}_{impl}_100k_{rate}'
         base = root / name
         assert not base.exists(), str(base)
-        binary = root / 'bin' / (args.delta_binary if impl=='delta' else 'seekdb-master-perf')
+        binary = root / 'bin' / (args.delta_binary if impl=='delta' else args.baseline_binary)
         with (root/'results'/f'{name}.start.log').open('w') as log:
             subprocess.run(['taskset','-c','48-55',str(binary),'--base-dir='+str(base),
                             '-P15881','--log-level=WARN','--parameter','memory_budget=6G',
@@ -42,6 +42,7 @@ def run(args):
                      '--port','15881','--pid',str(pid),'--database','vecdelta_'+name,
                      '--mode','immediate' if impl=='immediate' else 'async','--rows','100000',
                      '--queries','100','--rate',str(rate),'--settle-seconds','12',
+                     '--probe-interval',str(args.probe_interval),
                      '--data',str(root/'data'),'--output',str(root/'results'/name)]
             with (root/'results'/f'{name}.log').open('w') as log:
                 result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
@@ -77,6 +78,8 @@ if __name__=='__main__':
                    default=['async','delta','immediate'])
     p.add_argument('--rates', nargs='+', type=int, default=[1000,4000])
     p.add_argument('--delta-binary', default='seekdb-delta-perf')
+    p.add_argument('--baseline-binary', default='seekdb-master-perf')
+    p.add_argument('--probe-interval', type=float, default=.5)
     args=p.parse_args()
     assert args.label.isalnum()
     run(args)

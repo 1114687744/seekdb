@@ -69,17 +69,23 @@ void VectorDeltaConsumer::run1()
 {
   lib::set_thread_name("VecDelta");
   while (!has_set_stop()) {
-    const int ret = consume_round();
+    bool consumed = false;
+    const int ret = consume_round(consumed);
     if (ret != OB_SUCCESS && REACH_TIME_INTERVAL(5 * 1000 * 1000)) {
       LOG_WARN("transactional vector delta round deferred", KR(ret));
     }
-    ob_usleep(100 * 1000);
+    // Drain durable work immediately. Sleeping after every nonempty round
+    // delays rows committed while that round was building its graph.
+    if (ret != OB_SUCCESS || !consumed) {
+      ob_usleep(100 * 1000);
+    }
   }
 }
 
-int VectorDeltaConsumer::consume_round()
+int VectorDeltaConsumer::consume_round(bool &consumed)
 {
   int ret = OB_SUCCESS;
+  consumed = false;
   SCN snapshot;
   ObSchemaGetterGuard guard;
   ObSEArray<const ObSimpleTableSchemaV2 *, 64> tables;
@@ -104,7 +110,7 @@ int VectorDeltaConsumer::consume_round()
         int one_ret = guard.get_table_schema(simple->get_table_id(), table);
         if (one_ret == OB_SUCCESS && table != nullptr
             && is_vector_index_sync_mode_async(table->get_index_params())) {
-          one_ret = consume_index(guard, *table, snapshot, writable);
+          one_ret = consume_index(guard, *table, snapshot, writable, consumed);
         }
         if (one_ret != OB_SUCCESS) {
           round_ret = one_ret;
@@ -121,13 +127,15 @@ int VectorDeltaConsumer::consume_round()
 
 int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
                                       const ObTableSchema &delta,
-                                      const SCN &snapshot, const bool writable)
+                                      const SCN &snapshot, const bool writable, bool &consumed)
 {
   int ret = OB_SUCCESS;
   ObSEArray<ObTabletID, 8> tablets;
   const ObDatabaseSchema *database = nullptr;
   const ObTableSchema *index_id = nullptr;
   bool has_pending = false;
+  bool full_transfer = false;
+  ObVidBound pending_vids;
   int64_t dim = 0;
   ObString params = delta.get_index_params();
   if (OB_FAIL(delta.get_tablet_ids(tablets))) {
@@ -165,11 +173,12 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
             } else {
               adapter->set_reload_finish(true);
               has_pending = true;
+              full_transfer = true;
             }
           } else {
             bool tablet_has_pending = false;
             if (OB_FAIL(ObPluginVectorIndexUtils::append_delta_from_table(
-                    adapter, snapshot, allocator, build_pool_, tablet_has_pending))) {
+                    adapter, snapshot, allocator, build_pool_, tablet_has_pending, pending_vids))) {
             } else {
               has_pending |= tablet_has_pending;
             }
@@ -186,19 +195,22 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
     }
   }
   if (OB_SUCC(ret) && writable && has_pending && OB_NOT_NULL(index_id)) {
-    ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot);
+    ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot,
+                         full_transfer ? nullptr : &pending_vids);
+    consumed |= OB_SUCC(ret);
   }
   return ret;
 }
 
 int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
                                        const ObTableSchema &index_id,
-                                       const ObString &database, const SCN &snapshot)
+                                       const ObString &database, const SCN &snapshot,
+                                       const ObVidBound *pending_vids)
 {
   int ret = OB_SUCCESS;
   ObArenaAllocator allocator("VecDeltaSQL");
   ObString db_name, delta_name, id_name;
-  ObSqlString source_columns, destination_columns;
+  ObSqlString source_columns, destination_columns, range_filter;
   ObMySQLTransaction trans;
   using namespace transaction::tablelock;
   if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(allocator, database, db_name))) {
@@ -206,6 +218,26 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
           allocator, delta.get_table_name_str(), delta_name))) {
   } else if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(
           allocator, index_id.get_table_name_str(), id_name))) {
+  }
+  // Restrict both SQL scans to this invocation's observed VID range. Keep
+  // ora_rowscn as the publication boundary; this range is never a durable cursor.
+  if (OB_SUCC(ret) && pending_vids != nullptr) {
+    uint64_t vid_column_id = OB_INVALID_ID;
+    const ObColumnSchemaV2 *vid_column = nullptr;
+    ObString vid_name;
+    if (pending_vids->min_vid_ > pending_vids->max_vid_) {
+      ret = OB_INVALID_ARGUMENT;
+    } else if (OB_FAIL(delta.get_rowkey_info().get_column_id(0, vid_column_id))) {
+    } else if (OB_ISNULL(vid_column = delta.get_column_schema(vid_column_id))) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (!vid_column->is_vec_hnsw_vid_column()
+               && !vid_column->is_hidden_pk_column_id(vid_column_id)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(
+                   allocator, vid_column->get_column_name_str(), vid_name))) {
+    } else if (OB_FAIL(range_filter.append_fmt(" AND `%.*s` BETWEEN %ld AND %ld",
+                   vid_name.length(), vid_name.ptr(), pending_vids->min_vid_, pending_vids->max_vid_))) {
+    }
   }
   for (auto it = index_id.column_begin(); OB_SUCC(ret) && it != index_id.column_end(); ++it) {
     if ((*it)->get_column_name_str().prefix_match(OB_VEC_SCN_COLUMN_NAME_PREFIX)) {
@@ -249,14 +281,14 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
       ObSqlString insert, erase;
       int64_t inserted = 0, erased = 0;
       if (OB_FAIL(insert.append_fmt(
-          "INSERT INTO `%.*s`.`%.*s` (%s) SELECT ora_rowscn%s FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu",
+          "INSERT INTO `%.*s`.`%.*s` (%s) SELECT ora_rowscn%s FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu%s",
           db_name.length(), db_name.ptr(), id_name.length(), id_name.ptr(),
           destination_columns.ptr(), source_columns.ptr(), db_name.length(), db_name.ptr(),
-          delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql()))) {
+          delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql(), pending_vids == nullptr ? "" : range_filter.ptr()))) {
       } else if (OB_FAIL(trans.write(insert.ptr(), inserted))) {
       } else if (inserted > 0) {
-        if (OB_FAIL(erase.append_fmt("DELETE FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu",
-            db_name.length(), db_name.ptr(), delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql()))) {
+        if (OB_FAIL(erase.append_fmt("DELETE FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu%s",
+            db_name.length(), db_name.ptr(), delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql(), pending_vids == nullptr ? "" : range_filter.ptr()))) {
         } else if (OB_FAIL(trans.write(erase.ptr(), erased))) {
         } else if (inserted != erased) {
           ret = OB_ERR_UNEXPECTED;
