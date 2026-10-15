@@ -75,6 +75,12 @@ host load is sampled. This is a controlled experiment, not a hardware benchmark.
 
 ## Status (2026-10-15)
 
+- Design follow-up: [log-based change discovery](vector-transactional-delta-log-discovery.md)
+  evaluates reusing transaction-log reading inside the delta consumer, without
+  adding a foreground shared pending-work registry. It is not implemented.
+  Recovery handoff, incomplete transactions, auxiliary-table log coverage, and
+  the old checkpoint/min_dep_lsn dependency are explicit integration gates.
+
 - Latest measurements: [client throughput and true idle CPU](vector-transactional-delta-idle-throughput.md).
   With eight workers, one unpaced writer achieved 25.3k rows/s on master and
   23.6–23.7k on the prototype. After catching up on 100k rows, idle process CPU
