@@ -1,0 +1,13 @@
+diff --git a/src/observer/change_stream/ob_change_stream_mgr.cpp b/src/observer/change_stream/ob_change_stream_mgr.cpp
+index 6505c52f1..952b5f897 100644
+--- a/src/observer/change_stream/ob_change_stream_mgr.cpp
++++ b/src/observer/change_stream/ob_change_stream_mgr.cpp
+@@ -62,7 +62,7 @@ int ObChangeStreamMgr::init(
+     lib::IRunWrapper *run_wrapper)
+ {
+   int ret = common::OB_SUCCESS;
+-  const int64_t worker_thread_count = common::max(common::get_cpu_num(), int64_t{1});
++  const int64_t worker_thread_count = 8; // Diagnostic control: only change ChangeStream concurrency.
+   if (is_inited_) {
+     ret = OB_INIT_TWICE;
+   } else if (OB_FAIL(fetcher_.init(

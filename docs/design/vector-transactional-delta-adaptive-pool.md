@@ -3,6 +3,9 @@
 日期：2026-10-15。实验分支：`codex/vector-transactional-delta`。
 代码提交：`71c3b60fd`。基线仍为 master `76f871eb5`。
 
+后续已定位并改善可见延迟，补充等线程数对照及召回率复测，见
+[写入、可见延迟与召回率](vector-transactional-delta-freshness.md)。本文保留本轮历史结果。
+
 ## 本轮结论
 
 复用 `ObLinkQueueThreadPool`（`ObSimpleThreadPoolBase`），单个索引也能并行构图。

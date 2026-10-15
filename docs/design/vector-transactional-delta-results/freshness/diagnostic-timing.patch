@@ -1,0 +1,67 @@
+diff --git a/src/observer/vector_index/ob_plugin_vector_index_utils.cpp b/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
+index 0b0166d6a..74cc6e303 100644
+--- a/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
++++ b/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
+@@ -396,6 +396,8 @@ int ObPluginVectorIndexUtils::read_vector_info(ObPluginVectorIndexAdaptor *adapt
+                                                ObVectorQueryAdaptorResultContext &ada_ctx)
+ {
+   INIT_SUCC(ret);
++  const int64_t probe_start = ObTimeUtility::current_time();
++  int64_t probe_build_us = 0;
+   const bool is_hybrid_vector = adapter->is_hybrid_index();
+   uint64_t vid_id_table_table_id = adapter->get_vid_rowkey_table_id();
+   uint64_t data_table_table_id = is_hybrid_vector? adapter->get_embedded_table_id(): adapter->get_data_table_id();
+@@ -520,10 +522,10 @@ int ObPluginVectorIndexUtils::read_vector_info(ObPluginVectorIndexAdaptor *adapt
+         if (OB_SUCC(ret)) {
+           ada_ctx.set_vectors(output_vec_obj);
+           ada_ctx.set_extra_infos(output_extra_info_obj);
++          const int64_t probe_build_start = ObTimeUtility::current_time();
+           if (OB_FAIL(adapter->complete_delta_buffer_table_data(&ada_ctx))) {
+-          } else {
+-            // do nothing, ada_ctx.do_next_batch already called in complete_delta_buffer_table_data
+           }
++          probe_build_us += ObTimeUtility::current_time() - probe_build_start;
+         }
+       }
+     } else if (!adapter->get_is_need_vid()) {
+@@ -567,8 +569,10 @@ int ObPluginVectorIndexUtils::read_vector_info(ObPluginVectorIndexAdaptor *adapt
+ 
+         if (OB_SUCC(ret)) {
+           ada_ctx.set_vectors(output_vec_obj);
++          const int64_t probe_build_start = ObTimeUtility::current_time();
+           if (OB_FAIL(adapter->complete_delta_buffer_table_data(&ada_ctx))) {
+           }
++          probe_build_us += ObTimeUtility::current_time() - probe_build_start;
+         }
+       }
+     }
+@@ -594,6 +598,8 @@ int ObPluginVectorIndexUtils::read_vector_info(ObPluginVectorIndexAdaptor *adapt
+     vid_id_iter = nullptr;
+   }
+ 
++  fprintf(stderr, "[DEBUG-vdlat] read-build count=%ld total_us=%ld build_us=%ld ret=%d\n",
++      ada_ctx.get_count(), ObTimeUtility::current_time() - probe_start, probe_build_us, ret);
+   return ret;
+ }
+ 
+diff --git a/src/observer/vector_index/vector_delta_consumer.cpp b/src/observer/vector_index/vector_delta_consumer.cpp
+index 5d9d5f9a4..25361d577 100644
+--- a/src/observer/vector_index/vector_delta_consumer.cpp
++++ b/src/observer/vector_index/vector_delta_consumer.cpp
+@@ -196,6 +196,7 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
+                                        const ObString &database, const SCN &snapshot)
+ {
+   int ret = OB_SUCCESS;
++  const int64_t probe_start = ObTimeUtility::current_time();
+   ObArenaAllocator allocator("VecDeltaSQL");
+   ObString db_name, delta_name, id_name;
+   ObSqlString source_columns, destination_columns;
+@@ -272,6 +273,8 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
+     const int end_ret = trans.end(OB_SUCC(ret));
+     if (OB_SUCC(ret)) { ret = end_ret; }
+   }
++  fprintf(stderr, "[DEBUG-vdlat] transfer total_us=%ld ret=%d\n",
++      ObTimeUtility::current_time() - probe_start, ret);
+   return ret;
+ }
+ }

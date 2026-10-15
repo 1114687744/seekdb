@@ -1,0 +1,4 @@
+{
+  "status": "not_collected",
+  "reason": "Optional EXPLAIN via an ordinary client cannot resolve the hidden __pk_increment column (1054); transfer SQL uses the internal session visibility flag. Correctness checks completed successfully before this diagnostic error; instance stopped in finally."
+}

@@ -1,0 +1,499 @@
+[
+  {
+    "baseline": "perf5base_async_100k_4000",
+    "candidate": "perf5delta_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 1513.2031366229057,
+        "limit": 807.5699586421251,
+        "passed": false
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.952555431897954,
+        "limit": 0.9620526960784315,
+        "passed": false
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9930000000000001,
+        "limit": 0.9830000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": false
+  },
+  {
+    "baseline": "fresh6_async_100k_4000",
+    "candidate": "fresh6_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 569.15451772511,
+        "limit": 415.0371387600899,
+        "passed": false
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9777596451585907,
+        "limit": 0.9627384313244141,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9940000000000001,
+        "limit": 0.9840000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": false
+  },
+  {
+    "baseline": "fresh8control_async_100k_4000",
+    "candidate": "fresh7_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 604.5591868460178,
+        "limit": 422.3194107413292,
+        "passed": false
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9800968457256641,
+        "limit": 0.9600560184531376,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9940000000000001,
+        "limit": 0.9830000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": false
+  },
+  {
+    "baseline": "fresh8control_async_100k_4000",
+    "candidate": "fresh8_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 197.54039868712425,
+        "limit": 422.3194107413292,
+        "passed": true
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9840352595494614,
+        "limit": 0.9600560184531376,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9930000000000001,
+        "limit": 0.9830000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "baseline": "fresh6_async_100k_4000",
+    "candidate": "fresh8_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 197.54039868712425,
+        "limit": 415.0371387600899,
+        "passed": true
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9840352595494614,
+        "limit": 0.9627384313244141,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9930000000000001,
+        "limit": 0.9840000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "baseline": "fresh8control_async_100k_4000",
+    "candidate": "confirm8_delta_100k_4000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 235.52076891064644,
+        "limit": 422.3194107413292,
+        "passed": true
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9833438212852986,
+        "limit": 0.9600560184531376,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9930000000000001,
+        "limit": 0.9830000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "baseline": "low8_async_100k_1000",
+    "candidate": "low8_delta_100k_1000",
+    "checks": [
+      {
+        "check": "baseline_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "baseline_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "baseline_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_errors",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "candidate_committed",
+        "actual": 100000,
+        "limit": 100000,
+        "passed": true
+      },
+      {
+        "check": "candidate_censored_probes",
+        "actual": [],
+        "limit": [],
+        "passed": true
+      },
+      {
+        "check": "freshness_p95_ms",
+        "actual": 182.80718475580215,
+        "limit": 365.4073275625706,
+        "passed": true
+      },
+      {
+        "check": "recall_20k_to_80k",
+        "actual": 0.9883614927440526,
+        "limit": 0.977578434573872,
+        "passed": true
+      },
+      {
+        "check": "final_recall",
+        "actual": 0.9930000000000001,
+        "limit": 0.9830000000000001,
+        "passed": true
+      },
+      {
+        "check": "candidate_pending_delta",
+        "actual": [
+          0
+        ],
+        "limit": [
+          0
+        ],
+        "passed": true
+      }
+    ],
+    "passed": true
+  }
+]

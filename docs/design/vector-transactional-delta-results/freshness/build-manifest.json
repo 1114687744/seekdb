@@ -1,0 +1,54 @@
+{
+  "source_commit": "37a7bc65b67943043fd2d5a379000cea02dc997e",
+  "binary_built_before_commit": true,
+  "build": "source ~/.bashrc && make -j80 in build_release; objcopy --strip-debug",
+  "source_sha256": {
+    "src/observer/change_stream/ob_change_stream_mgr.cpp": "9bfecfee32903e077101434428af3256dc8a73784fd6d1903440efd7a35ca92f",
+    "src/observer/observer_source_inventory.bzl": "ae2d87e8b73abfa0fbf3eddfa2baad2337afda7d0f2b6e84ff11b7624d746d8f",
+    "src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp": "b4a553248fb3af9d4669287be130bd57acd74cf96424e1a31f9da36adb2fc5ba",
+    "src/observer/vector_index/ob_plugin_vector_index_utils.cpp": "321030957813f0105bd7197d8d43b189ec2aef12c8dcb663cfd89220b0786a3b",
+    "src/observer/vector_index/ob_plugin_vector_index_utils.h": "9e1863bbf2c0d8a83a0a9c43cd744ac1442318eff13110d48078113b682234f7",
+    "src/observer/vector_index/vector_delta_build_pool.cpp": "437e98ebfec642819f24ff36a46760b94be29621ff57b35421b0f44cd85a819f",
+    "src/observer/vector_index/vector_delta_build_pool.h": "b351be0fea5d32b9b330b851d8a37a7f4c93216cdabf2d85132f993ee5a05724",
+    "src/observer/vector_index/vector_delta_consumer.cpp": "33d2f3fa8b9f329251ff1f2113e4818d91bc2a4d99e12bcf7ccc0a4e865f8c46",
+    "src/observer/vector_index/vector_delta_consumer.h": "fec8c1e3ef9bb891d8af160307ef8d999271950225ece4b7995484ead17dc518",
+    "src/query/api/query/vector/ob_vector_index_adaptor.h": "b7d0528f6f2a09b214ef4e35608f00993071f5b2d25446038166de1d5e751ef6",
+    "unittest/sql/vector_transactional_delta/analyze.py": "662e34e37583bc3094503706ff0cc12cb0914c6d5e5467dae3ba62699f3ec51f",
+    "unittest/sql/vector_transactional_delta/perf_matrix.py": "bc945a6c79a97cf38b34c36ce14ce921978dbad78bfffc4a74bcfa95fe8d7252",
+    "unittest/sql/vector_transactional_delta/stream_bench.py": "69c18493febad194ce3ac4df85b7cf43b81a8e915a78fd831f9e9337128789a3",
+    "unittest/sql/vector_transactional_delta/compare.py": "5f5724857d80e331d0182ace14770002972bfffc0f6cf0d4e2e4f06799beff7c",
+    "unittest/sql/vector_transactional_delta/correctness.py": "3c4b0362a36e71490224d84d366ad3e550ce298e6d5970893517f40b615896cc"
+  },
+  "binaries": {
+    "seekdb-master-perf": "c0d59108f60496ecc7f4ea61e0049d096dce2f21bc81fdcae732db74b879ee01",
+    "seekdb-master-eight-workers": "632ae4271b8f80d6ba8375eeff73021425dbf55f5e084f8e56d301287240d2ad",
+    "seekdb-delta-perf6": "443efe25e22b5216f0af4e89c5acefe8a3bdef860bc0c63877a586786e191c40",
+    "seekdb-delta-perf7": "c2e68f29290a47291d14b9b074144eea87e8a5c2b6b33cb9e02f8cfb4130c35f",
+    "seekdb-delta-perf8": "6efac88db1390e8b7adef72a06fd4687bbd8c7837299c957ad9827957b794084",
+    "seekdb-delta-latency-probe3": "61127d69d2d21d571e9461dfc5bc1f02bcad762220173254189fa52ebed0ad0c"
+  },
+  "baseline_commit": "76f871eb5a84b664d487b03b3412ce50194135b5",
+  "diagnostic_master_patch": "master-eight-workers.patch",
+  "intermediate_base_commit": "ed44b77d8",
+  "intermediate_patches": {
+    "seekdb-delta-perf6": [
+      "perf6.patch"
+    ],
+    "seekdb-delta-perf7": [
+      "perf7.patch"
+    ],
+    "seekdb-delta-perf8": [
+      "perf8.patch"
+    ],
+    "seekdb-delta-latency-probe3": [
+      "perf6.patch",
+      "diagnostic-timing.patch"
+    ]
+  },
+  "formal_final_runs": [
+    "fresh8_delta_100k_4000",
+    "confirm8_delta_100k_4000",
+    "low8_delta_100k_1000"
+  ],
+  "diagnostic_timing_excluded_from_performance": true
+}

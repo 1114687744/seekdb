@@ -1,0 +1,90 @@
+diff --git a/src/observer/vector_index/vector_delta_build_pool.cpp b/src/observer/vector_index/vector_delta_build_pool.cpp
+index ef5ab142d..17d71b8f2 100644
+--- a/src/observer/vector_index/vector_delta_build_pool.cpp
++++ b/src/observer/vector_index/vector_delta_build_pool.cpp
+@@ -48,8 +48,9 @@ int VectorDeltaBuildPool::add(void *index, float *vectors, int64_t *vids, int64_
+   Batch batch;
+   ObArenaAllocator allocator("VecBuildTask");
+   Task *tasks = nullptr;
+-  // Avoid dispatching tiny tasks, while allowing one index to use the pool.
+-  const int64_t task_count = min(parallelism_, (count + 63) / 64);
++  // Even a small batch contains expensive graph insertions. Bound concurrency
++  // by the configured pool capacity, rather than delaying it until backlog grows.
++  const int64_t task_count = min(parallelism_, count);
+   if (task_count <= 0 || OB_ISNULL(index) || OB_ISNULL(vectors) || OB_ISNULL(vids)
+       || dim <= 0 || extra_info_size < 0) {
+     ret = OB_INVALID_ARGUMENT;
+diff --git a/src/observer/vector_index/vector_delta_consumer.cpp b/src/observer/vector_index/vector_delta_consumer.cpp
+index 5d9d5f9a4..55b5ef494 100644
+--- a/src/observer/vector_index/vector_delta_consumer.cpp
++++ b/src/observer/vector_index/vector_delta_consumer.cpp
+@@ -69,17 +69,23 @@ void VectorDeltaConsumer::run1()
+ {
+   lib::set_thread_name("VecDelta");
+   while (!has_set_stop()) {
+-    const int ret = consume_round();
++    bool consumed = false;
++    const int ret = consume_round(consumed);
+     if (ret != OB_SUCCESS && REACH_TIME_INTERVAL(5 * 1000 * 1000)) {
+       LOG_WARN("transactional vector delta round deferred", KR(ret));
+     }
+-    ob_usleep(100 * 1000);
++    // Drain durable work immediately. Sleeping after every nonempty round
++    // delays rows committed while that round was building its graph.
++    if (ret != OB_SUCCESS || !consumed) {
++      ob_usleep(100 * 1000);
++    }
+   }
+ }
+ 
+-int VectorDeltaConsumer::consume_round()
++int VectorDeltaConsumer::consume_round(bool &consumed)
+ {
+   int ret = OB_SUCCESS;
++  consumed = false;
+   SCN snapshot;
+   ObSchemaGetterGuard guard;
+   ObSEArray<const ObSimpleTableSchemaV2 *, 64> tables;
+@@ -104,7 +110,7 @@ int VectorDeltaConsumer::consume_round()
+         int one_ret = guard.get_table_schema(simple->get_table_id(), table);
+         if (one_ret == OB_SUCCESS && table != nullptr
+             && is_vector_index_sync_mode_async(table->get_index_params())) {
+-          one_ret = consume_index(guard, *table, snapshot, writable);
++          one_ret = consume_index(guard, *table, snapshot, writable, consumed);
+         }
+         if (one_ret != OB_SUCCESS) {
+           round_ret = one_ret;
+@@ -121,7 +127,7 @@ int VectorDeltaConsumer::consume_round()
+ 
+ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
+                                       const ObTableSchema &delta,
+-                                      const SCN &snapshot, const bool writable)
++                                      const SCN &snapshot, const bool writable, bool &consumed)
+ {
+   int ret = OB_SUCCESS;
+   ObSEArray<ObTabletID, 8> tablets;
+@@ -187,6 +193,7 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
+   }
+   if (OB_SUCC(ret) && writable && has_pending && OB_NOT_NULL(index_id)) {
+     ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot);
++    consumed |= OB_SUCC(ret);
+   }
+   return ret;
+ }
+diff --git a/src/observer/vector_index/vector_delta_consumer.h b/src/observer/vector_index/vector_delta_consumer.h
+index 0230d7b09..1f144e531 100644
+--- a/src/observer/vector_index/vector_delta_consumer.h
++++ b/src/observer/vector_index/vector_delta_consumer.h
+@@ -41,10 +41,10 @@ public:
+   uint64_t completed_scn() const { return ATOMIC_LOAD(&completed_scn_); }
+ 
+ private:
+-  int consume_round();
++  int consume_round(bool &consumed);
+   int consume_index(schema::ObSchemaGetterGuard &guard,
+                     const schema::ObTableSchema &delta,
+-                    const SCN &snapshot, bool writable);
++                    const SCN &snapshot, bool writable, bool &consumed);
+   int transfer_delta(const schema::ObTableSchema &delta,
+                      const schema::ObTableSchema &index_id,
+                      const common::ObString &database, const SCN &snapshot);

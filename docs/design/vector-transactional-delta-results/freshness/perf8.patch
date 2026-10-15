@@ -1,0 +1,254 @@
+diff --git a/src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp b/src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp
+index 1585cf599..fadec9282 100644
+--- a/src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp
++++ b/src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp
+@@ -3112,7 +3112,7 @@ bool ObPluginVectorIndexAdaptor::check_if_complete_delta(roaring::api::roaring64
+ }
+ 
+ int ObPluginVectorIndexAdaptor::prepare_pending_delta(
+-    ObVectorQueryAdaptorResultContext *ctx, bool &has_pending)
++    ObVectorQueryAdaptorResultContext *ctx, bool &has_pending, ObVidBound &pending_vids)
+ {
+   int ret = OB_SUCCESS;
+   has_pending = false;
+@@ -3120,8 +3120,15 @@ int ObPluginVectorIndexAdaptor::prepare_pending_delta(
+   if (OB_ISNULL(ctx) || OB_ISNULL(ctx->bitmaps_)) {
+     ret = OB_INVALID_ARGUMENT;
+   } else {
+-    has_pending = roaring64_bitmap_get_cardinality(ctx->bitmaps_->insert_bitmap_) > 0
+-                  || roaring64_bitmap_get_cardinality(ctx->bitmaps_->delete_bitmap_) > 0;
++    // Include deletes and already-loaded inserts. The transfer covers every
++    // durable delta row in this snapshot, not only vectors needing graph work.
++    for (const auto *bitmap : {ctx->bitmaps_->insert_bitmap_, ctx->bitmaps_->delete_bitmap_}) {
++      if (roaring64_bitmap_get_cardinality(bitmap) > 0) {
++        has_pending = true;
++        pending_vids.set_vid(roaring64_bitmap_minimum(bitmap));
++        pending_vids.set_vid(roaring64_bitmap_maximum(bitmap));
++      }
++    }
+     if (has_pending && OB_FAIL(prepare_delta_mem_data(
+             ctx->bitmaps_->insert_bitmap_, requested_vids, ctx))) {
+     } else {
+diff --git a/src/observer/vector_index/ob_plugin_vector_index_utils.cpp b/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
+index 0b0166d6a..c9612572b 100644
+--- a/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
++++ b/src/observer/vector_index/ob_plugin_vector_index_utils.cpp
+@@ -760,7 +760,8 @@ int ObPluginVectorIndexUtils::try_sync_snapshot_memdata(ObPluginVectorIndexAdapt
+ 
+ int ObPluginVectorIndexUtils::append_delta_from_table(
+     ObPluginVectorIndexAdaptor *adapter, SCN snapshot,
+-    ObIAllocator &allocator, VectorDeltaBuildPool &build_pool, bool &has_pending)
++    ObIAllocator &allocator, VectorDeltaBuildPool &build_pool, bool &has_pending,
++    ObVidBound &pending_vids)
+ {
+   int ret = OB_SUCCESS;
+   has_pending = false;
+@@ -781,7 +782,7 @@ int ObPluginVectorIndexUtils::append_delta_from_table(
+     ObVectorQueryAdaptorResultContext ctx(extra_columns, &allocator, &temporary);
+     ctx.set_build_pool(&build_pool);
+     if (OB_FAIL(adapter->check_delta_buffer_table_readnext_status(&ctx, iter, snapshot))) {
+-    } else if (OB_FAIL(adapter->prepare_pending_delta(&ctx, has_pending))) {
++    } else if (OB_FAIL(adapter->prepare_pending_delta(&ctx, has_pending, pending_vids))) {
+     } else if (ctx.get_count() > 0 && OB_FAIL(read_vector_info(adapter, allocator, snapshot, ctx))) {
+     }
+   }
+diff --git a/src/observer/vector_index/ob_plugin_vector_index_utils.h b/src/observer/vector_index/ob_plugin_vector_index_utils.h
+index a5fbb89fd..6f6a35078 100644
+--- a/src/observer/vector_index/ob_plugin_vector_index_utils.h
++++ b/src/observer/vector_index/ob_plugin_vector_index_utils.h
+@@ -139,7 +139,7 @@ public:
+                               ObVectorQueryAdaptorResultContext &ada_ctx);
+   static int append_delta_from_table(ObPluginVectorIndexAdaptor *adapter, SCN snapshot,
+                                     ObIAllocator &allocator, VectorDeltaBuildPool &build_pool,
+-                                    bool &has_pending);
++                                    bool &has_pending, ObVidBound &pending_vids);
+   static int read_local_tablet(ObPluginVectorIndexAdaptor* adapter,
+                                SCN target_scn,
+                                schema::ObIndexType type,
+diff --git a/src/observer/vector_index/vector_delta_consumer.cpp b/src/observer/vector_index/vector_delta_consumer.cpp
+index 5d9d5f9a4..149912c1a 100644
+--- a/src/observer/vector_index/vector_delta_consumer.cpp
++++ b/src/observer/vector_index/vector_delta_consumer.cpp
+@@ -69,17 +69,23 @@ void VectorDeltaConsumer::run1()
+ {
+   lib::set_thread_name("VecDelta");
+   while (!has_set_stop()) {
+-    const int ret = consume_round();
++    bool consumed = false;
++    const int ret = consume_round(consumed);
+     if (ret != OB_SUCCESS && REACH_TIME_INTERVAL(5 * 1000 * 1000)) {
+       LOG_WARN("transactional vector delta round deferred", KR(ret));
+     }
+-    ob_usleep(100 * 1000);
++    // Drain durable work immediately. Sleeping after every nonempty round
++    // delays rows committed while that round was building its graph.
++    if (ret != OB_SUCCESS || !consumed) {
++      ob_usleep(100 * 1000);
++    }
+   }
+ }
+ 
+-int VectorDeltaConsumer::consume_round()
++int VectorDeltaConsumer::consume_round(bool &consumed)
+ {
+   int ret = OB_SUCCESS;
++  consumed = false;
+   SCN snapshot;
+   ObSchemaGetterGuard guard;
+   ObSEArray<const ObSimpleTableSchemaV2 *, 64> tables;
+@@ -104,7 +110,7 @@ int VectorDeltaConsumer::consume_round()
+         int one_ret = guard.get_table_schema(simple->get_table_id(), table);
+         if (one_ret == OB_SUCCESS && table != nullptr
+             && is_vector_index_sync_mode_async(table->get_index_params())) {
+-          one_ret = consume_index(guard, *table, snapshot, writable);
++          one_ret = consume_index(guard, *table, snapshot, writable, consumed);
+         }
+         if (one_ret != OB_SUCCESS) {
+           round_ret = one_ret;
+@@ -121,13 +127,15 @@ int VectorDeltaConsumer::consume_round()
+ 
+ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
+                                       const ObTableSchema &delta,
+-                                      const SCN &snapshot, const bool writable)
++                                      const SCN &snapshot, const bool writable, bool &consumed)
+ {
+   int ret = OB_SUCCESS;
+   ObSEArray<ObTabletID, 8> tablets;
+   const ObDatabaseSchema *database = nullptr;
+   const ObTableSchema *index_id = nullptr;
+   bool has_pending = false;
++  bool full_transfer = false;
++  ObVidBound pending_vids;
+   int64_t dim = 0;
+   ObString params = delta.get_index_params();
+   if (OB_FAIL(delta.get_tablet_ids(tablets))) {
+@@ -165,11 +173,12 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
+             } else {
+               adapter->set_reload_finish(true);
+               has_pending = true;
++              full_transfer = true;
+             }
+           } else {
+             bool tablet_has_pending = false;
+             if (OB_FAIL(ObPluginVectorIndexUtils::append_delta_from_table(
+-                    adapter, snapshot, allocator, build_pool_, tablet_has_pending))) {
++                    adapter, snapshot, allocator, build_pool_, tablet_has_pending, pending_vids))) {
+             } else {
+               has_pending |= tablet_has_pending;
+             }
+@@ -186,19 +195,22 @@ int VectorDeltaConsumer::consume_index(ObSchemaGetterGuard &guard,
+     }
+   }
+   if (OB_SUCC(ret) && writable && has_pending && OB_NOT_NULL(index_id)) {
+-    ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot);
++    ret = transfer_delta(delta, *index_id, database->get_database_name_str(), snapshot,
++                         full_transfer ? nullptr : &pending_vids);
++    consumed |= OB_SUCC(ret);
+   }
+   return ret;
+ }
+ 
+ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
+                                        const ObTableSchema &index_id,
+-                                       const ObString &database, const SCN &snapshot)
++                                       const ObString &database, const SCN &snapshot,
++                                       const ObVidBound *pending_vids)
+ {
+   int ret = OB_SUCCESS;
+   ObArenaAllocator allocator("VecDeltaSQL");
+   ObString db_name, delta_name, id_name;
+-  ObSqlString source_columns, destination_columns;
++  ObSqlString source_columns, destination_columns, range_filter;
+   ObMySQLTransaction trans;
+   using namespace transaction::tablelock;
+   if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(allocator, database, db_name))) {
+@@ -207,6 +219,26 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
+   } else if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(
+           allocator, index_id.get_table_name_str(), id_name))) {
+   }
++  // Restrict both SQL scans to this invocation's observed VID range. Keep
++  // ora_rowscn as the publication boundary; this range is never a durable cursor.
++  if (OB_SUCC(ret) && pending_vids != nullptr) {
++    uint64_t vid_column_id = OB_INVALID_ID;
++    const ObColumnSchemaV2 *vid_column = nullptr;
++    ObString vid_name;
++    if (pending_vids->min_vid_ > pending_vids->max_vid_) {
++      ret = OB_INVALID_ARGUMENT;
++    } else if (OB_FAIL(delta.get_rowkey_info().get_column_id(0, vid_column_id))) {
++    } else if (OB_ISNULL(vid_column = delta.get_column_schema(vid_column_id))) {
++      ret = OB_ERR_UNEXPECTED;
++    } else if (!vid_column->is_vec_hnsw_vid_column()
++               && !vid_column->is_hidden_pk_column_id(vid_column_id)) {
++      ret = OB_ERR_UNEXPECTED;
++    } else if (OB_FAIL(sql::ObSQLUtils::generate_new_name_with_escape_character(
++                   allocator, vid_column->get_column_name_str(), vid_name))) {
++    } else if (OB_FAIL(range_filter.append_fmt(" AND `%.*s` BETWEEN %ld AND %ld",
++                   vid_name.length(), vid_name.ptr(), pending_vids->min_vid_, pending_vids->max_vid_))) {
++    }
++  }
+   for (auto it = index_id.column_begin(); OB_SUCC(ret) && it != index_id.column_end(); ++it) {
+     if ((*it)->get_column_name_str().prefix_match(OB_VEC_SCN_COLUMN_NAME_PREFIX)) {
+       ObString escaped;
+@@ -249,14 +281,14 @@ int VectorDeltaConsumer::transfer_delta(const ObTableSchema &delta,
+       ObSqlString insert, erase;
+       int64_t inserted = 0, erased = 0;
+       if (OB_FAIL(insert.append_fmt(
+-          "INSERT INTO `%.*s`.`%.*s` (%s) SELECT ora_rowscn%s FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu",
++          "INSERT INTO `%.*s`.`%.*s` (%s) SELECT ora_rowscn%s FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu%s",
+           db_name.length(), db_name.ptr(), id_name.length(), id_name.ptr(),
+           destination_columns.ptr(), source_columns.ptr(), db_name.length(), db_name.ptr(),
+-          delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql()))) {
++          delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql(), pending_vids == nullptr ? "" : range_filter.ptr()))) {
+       } else if (OB_FAIL(trans.write(insert.ptr(), inserted))) {
+       } else if (inserted > 0) {
+-        if (OB_FAIL(erase.append_fmt("DELETE FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu",
+-            db_name.length(), db_name.ptr(), delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql()))) {
++        if (OB_FAIL(erase.append_fmt("DELETE FROM `%.*s`.`%.*s` WHERE ora_rowscn <= %lu%s",
++            db_name.length(), db_name.ptr(), delta_name.length(), delta_name.ptr(), snapshot.get_val_for_sql(), pending_vids == nullptr ? "" : range_filter.ptr()))) {
+         } else if (OB_FAIL(trans.write(erase.ptr(), erased))) {
+         } else if (inserted != erased) {
+           ret = OB_ERR_UNEXPECTED;
+diff --git a/src/observer/vector_index/vector_delta_consumer.h b/src/observer/vector_index/vector_delta_consumer.h
+index 0230d7b09..04324d3c4 100644
+--- a/src/observer/vector_index/vector_delta_consumer.h
++++ b/src/observer/vector_index/vector_delta_consumer.h
+@@ -16,6 +16,7 @@ namespace share
+ class ObServerRuntimeState;
+ class ObPluginVectorIndexService;
+ class ObPluginVectorIndexAdaptor;
++struct ObVidBound;
+ namespace schema
+ {
+ class ObMultiVersionSchemaService;
+@@ -41,13 +42,14 @@ public:
+   uint64_t completed_scn() const { return ATOMIC_LOAD(&completed_scn_); }
+ 
+ private:
+-  int consume_round();
++  int consume_round(bool &consumed);
+   int consume_index(schema::ObSchemaGetterGuard &guard,
+                     const schema::ObTableSchema &delta,
+-                    const SCN &snapshot, bool writable);
++                    const SCN &snapshot, bool writable, bool &consumed);
+   int transfer_delta(const schema::ObTableSchema &delta,
+                      const schema::ObTableSchema &index_id,
+-                     const common::ObString &database, const SCN &snapshot);
++                     const common::ObString &database, const SCN &snapshot,
++                     const ObVidBound *pending_vids);
+   schema::ObMultiVersionSchemaService *schemas_;
+   common::ObMySQLProxy *sql_proxy_;
+   ObPluginVectorIndexService *vectors_;
+diff --git a/src/query/api/query/vector/ob_vector_index_adaptor.h b/src/query/api/query/vector/ob_vector_index_adaptor.h
+index 725925f67..b76bf478c 100644
+--- a/src/query/api/query/vector/ob_vector_index_adaptor.h
++++ b/src/query/api/query/vector/ob_vector_index_adaptor.h
+@@ -737,7 +737,8 @@ public:
+   // Background bitmap refresh uses the same table-scan code path as query-time refresh.
+   int refresh_bitmap_background();
+   int update_incr_bitmap(const int64_t *vids, int64_t count);
+-  int prepare_pending_delta(ObVectorQueryAdaptorResultContext *ctx, bool &has_pending);
++  int prepare_pending_delta(ObVectorQueryAdaptorResultContext *ctx, bool &has_pending,
++                            ObVidBound &pending_vids);
+   int prepare_delta_mem_data(roaring::api::roaring64_bitmap_t *gene_bitmap,
+                              ObArray<uint64_t> &i_vids,
+                              ObVectorQueryAdaptorResultContext *ctx);

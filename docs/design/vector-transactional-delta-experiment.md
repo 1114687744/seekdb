@@ -75,6 +75,13 @@ host load is sampled. This is a controlled experiment, not a hardware benchmark.
 
 ## Status (2026-10-15)
 
+- Latest: removed unconditional waits after successful consumption and bounded
+  transfer SQL by the current round's observed VID range. See
+  [freshness and recall results](vector-transactional-delta-freshness.md), including
+  a master control with eight ChangeStream workers. The earlier large write
+  latency advantage was substantially a scheduling difference, not evidence
+  that foreground transactional delta maintenance is intrinsically cheaper.
+
 - Follow-up: daily delta append now uses the existing adaptive simple thread pool,
   with one coordinator and up to the configured CPU count of build workers. Both
   1000/4000 rows/s runs drained and reached 99.3% final recall. This round ran
