@@ -1,0 +1,450 @@
+[
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 390.50687476992607,
+      "p95": 628.7478674203157,
+      "p99": 666.9988743960857,
+      "max": 669.8436290025711
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.4922162815928459,
+    "committed": 100000,
+    "elapsed_s": 129.93361574038863,
+    "write_phase_s": 99.9023574590683,
+    "actual_write_rows_s": 1000.9773797477372,
+    "write_latency_ms": {
+      "p50": 2.548355609178543,
+      "p95": 10.959482751786702,
+      "p99": 18.675788417458534,
+      "max": 152.34192833304405
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6293933838605881,
+      "p95": 0.7336603477597237,
+      "p99": 0.8333401009440422,
+      "max": 96.19240462779999
+    },
+    "search_qps_during_write": 2367.0112098894742,
+    "search_latency_ms": {
+      "p50": 0.4669167101383209,
+      "p95": 0.723079033195972,
+      "p99": 2.708655223250389,
+      "max": 152.27195248007774
+    },
+    "recall_stable_prefix": 0.9651083417632207,
+    "stable_prefix_samples": 235274,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.4669167101383209,
+      "p95": 0.7230749353766435,
+      "p99": 2.70865447819233,
+      "max": 152.27195248007774
+    },
+    "run": "perf5base_async_100k_1000",
+    "offered_rate": 1000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 59.999015755951405,
+      "qps": 1907.6979606727384,
+      "latency_ms": {
+        "p50": 0.5211196839809418,
+        "p95": 0.8863277733325952,
+        "p99": 3.6126640811562964,
+        "max": 152.27195248007774
+      },
+      "stable_recall": 0.9877672991905218,
+      "samples": 114460
+    },
+    "average_cpu_cores_during_write": 2.010870858672754,
+    "average_cpu_cores_drain_tail": 0.7405528046282888,
+    "peak_rss_mib": 970.95703125,
+    "process_write_mib": 327.02734375,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 129.62528213113546,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 72.86258228123188,
+      "p95": 150.59851072728634,
+      "p99": 155.873089954257,
+      "max": 157.19173476099968
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf",
+    "final_auxiliary_rows": {
+      "__idx_500003_idx": 0,
+      "__idx_500003_idx_index_id_table": 100000,
+      "__idx_500003_idx_index_snapshot_data_table": 0
+    },
+    "background_worker_counts": {
+      "VecBuild": {
+        "peak_observed": 0,
+        "last_observed": 0
+      },
+      "VecDelta": {
+        "peak_observed": 0,
+        "last_observed": 0
+      },
+      "CSWorker": {
+        "peak_observed": 192,
+        "last_observed": 0
+      }
+    },
+    "delta_empty_observed_after_write_s": 1.0390083864331245
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 414.6410673856735,
+      "p95": 632.0913936942816,
+      "p99": 671.4606210589409,
+      "max": 675.9448759257793
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.26500798389315605,
+    "committed": 100000,
+    "elapsed_s": 129.93524153903127,
+    "write_phase_s": 99.90406208857894,
+    "actual_write_rows_s": 1000.9603004063638,
+    "write_latency_ms": {
+      "p50": 2.6837214827537537,
+      "p95": 3.988360427320003,
+      "p99": 4.692738987505434,
+      "max": 6.590612232685089
+    },
+    "schedule_lag_ms": {
+      "p50": 0.694621354341507,
+      "p95": 0.7671467959880828,
+      "p99": 0.8933972194790839,
+      "max": 87.38120272755623
+    },
+    "search_qps_during_write": 2481.1503638382824,
+    "search_latency_ms": {
+      "p50": 0.490579754114151,
+      "p95": 0.7802434265613553,
+      "p99": 0.9966225922107691,
+      "max": 161.03742644190788
+    },
+    "recall_stable_prefix": 0.9806165383056344,
+    "stable_prefix_samples": 246700,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.490579754114151,
+      "p95": 0.7802415639162059,
+      "p99": 0.9966214001178743,
+      "max": 161.03742644190788
+    },
+    "run": "perf5delta_delta_100k_1000",
+    "offered_rate": 1000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 59.999975960701704,
+      "qps": 2060.850825690129,
+      "latency_ms": {
+        "p50": 0.5421191453933716,
+        "p95": 0.7923003286123276,
+        "p99": 0.9656231850385666,
+        "max": 161.03742644190788
+      },
+      "stable_recall": 0.9871816141309653,
+      "samples": 123651
+    },
+    "average_cpu_cores_during_write": 1.9377983643564616,
+    "average_cpu_cores_drain_tail": 0.9061083221585992,
+    "peak_rss_mib": 939.45703125,
+    "process_write_mib": 347.8671875,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 128.46065831556916,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 81.45760744810104,
+      "p95": 165.92589914798737,
+      "p99": 171.6752129793167,
+      "max": 173.11254143714905
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf5",
+    "final_auxiliary_rows": {
+      "__idx_500003_idx": 0,
+      "__idx_500003_idx_index_id_table": 100000,
+      "__idx_500003_idx_index_snapshot_data_table": 0
+    },
+    "background_worker_counts": {
+      "VecBuild": {
+        "peak_observed": 6,
+        "last_observed": 0
+      },
+      "VecDelta": {
+        "peak_observed": 1,
+        "last_observed": 1
+      },
+      "CSWorker": {
+        "peak_observed": 0,
+        "last_observed": 0
+      }
+    },
+    "delta_empty_observed_after_write_s": 1.8145576156675816
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 467.1393185853958,
+      "p95": 707.5699586421251,
+      "p99": 762.7555727958679,
+      "max": 773.8580480217934
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 0.6038507707417011,
+    "committed": 100000,
+    "elapsed_s": 55.0097028054297,
+    "write_phase_s": 24.978649236261845,
+    "actual_write_rows_s": 4003.4190421645635,
+    "write_latency_ms": {
+      "p50": 3.910774365067482,
+      "p95": 28.4462509676814,
+      "p99": 39.81445733457803,
+      "max": 59.71948802471161
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6604436784982681,
+      "p95": 6.6898874938487864,
+      "p99": 16.813469342887394,
+      "max": 35.94497963786125
+    },
+    "search_qps_during_write": 1616.4605066547858,
+    "search_latency_ms": {
+      "p50": 0.44952332973480225,
+      "p95": 3.4771800041198593,
+      "p99": 11.676647812128026,
+      "max": 63.70876729488373
+    },
+    "recall_stable_prefix": 0.8841008800061576,
+    "stable_prefix_samples": 38977,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.4495251923799515,
+      "p95": 3.476943075656898,
+      "p99": 11.676447689533298,
+      "max": 63.70876729488373
+    },
+    "run": "perf5base_async_100k_4000",
+    "offered_rate": 4000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 15.004579044878483,
+      "qps": 1142.517890620292,
+      "latency_ms": {
+        "p50": 0.5488321185112,
+        "p95": 5.0598934292793265,
+        "p99": 14.452485665678964,
+        "max": 63.70876729488373
+      },
+      "stable_recall": 0.9720526960784315,
+      "samples": 17143
+    },
+    "average_cpu_cores_during_write": 4.706114104464468,
+    "average_cpu_cores_drain_tail": 0.7453975537946519,
+    "peak_rss_mib": 1036.375,
+    "process_write_mib": 325.02734375,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 53.84762264788151,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 94.90200504660606,
+      "p95": 241.23411253094673,
+      "p99": 259.6202112734318,
+      "max": 264.21673595905304
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-master-perf",
+    "final_auxiliary_rows": {
+      "__idx_500003_idx": 0,
+      "__idx_500003_idx_index_id_table": 100000,
+      "__idx_500003_idx_index_snapshot_data_table": 0
+    },
+    "background_worker_counts": {
+      "VecBuild": {
+        "peak_observed": 0,
+        "last_observed": 0
+      },
+      "VecDelta": {
+        "peak_observed": 0,
+        "last_observed": 0
+      },
+      "CSWorker": {
+        "peak_observed": 192,
+        "last_observed": 0
+      }
+    },
+    "delta_empty_observed_after_write_s": 0.09658638760447502
+  },
+  {
+    "freshness_upper_bound_ms": {
+      "p50": 696.5600252151489,
+      "p95": 1513.2031366229057,
+      "p99": 1572.4360458552837,
+      "max": 1616.8175525963306
+    },
+    "freshness_samples": 51,
+    "freshness_censored_positions": [],
+    "sampled_catchup_after_last_commit_s": 1.1470291577279568,
+    "committed": 100000,
+    "elapsed_s": 55.01131888106465,
+    "write_phase_s": 24.980714108794928,
+    "actual_write_rows_s": 4003.088124882432,
+    "write_latency_ms": {
+      "p50": 3.3606868237257004,
+      "p95": 6.101731210947037,
+      "p99": 11.55738800764083,
+      "max": 15.79621434211731
+    },
+    "schedule_lag_ms": {
+      "p50": 0.6940532475709915,
+      "p95": 0.8058216422796249,
+      "p99": 0.8498005941510199,
+      "max": 3.0754469335079193
+    },
+    "search_qps_during_write": 2032.9282733402943,
+    "search_latency_ms": {
+      "p50": 0.5157552659511566,
+      "p95": 1.3964222744107246,
+      "p99": 2.5678153708577125,
+      "max": 16.511693596839905
+    },
+    "recall_stable_prefix": 0.9229261392341114,
+    "stable_prefix_samples": 49485,
+    "errors": [],
+    "search_started_during_write_latency_ms": {
+      "p50": 0.5157738924026489,
+      "p95": 1.3964306563138962,
+      "p99": 2.5677813217043903,
+      "max": 16.511693596839905
+    },
+    "run": "perf5delta_delta_100k_4000",
+    "offered_rate": 4000,
+    "mode": "async",
+    "final_rows": 100000,
+    "final_recall": 0.9930000000000001,
+    "query_window_20k_to_80k": {
+      "seconds": 15.001401044428349,
+      "qps": 1607.6498407431927,
+      "latency_ms": {
+        "p50": 0.6455332040786743,
+        "p95": 1.5204943716526038,
+        "p99": 2.894895225763321,
+        "max": 16.511693596839905
+      },
+      "stable_recall": 0.952555431897954,
+      "samples": 24117
+    },
+    "average_cpu_cores_during_write": 4.605127898779563,
+    "average_cpu_cores_drain_tail": 0.9084509235822777,
+    "peak_rss_mib": 979.69140625,
+    "process_write_mib": 345.375,
+    "process_read_mib": 0.0,
+    "last_auxiliary_observation": {
+      "time_s": 53.33843420445919,
+      "committed": 100000,
+      "rows": {
+        "__idx_500003_idx": 0,
+        "__idx_500003_idx_index_id_table": 100000,
+        "__idx_500003_idx_index_snapshot_data_table": 0
+      },
+      "pending_freshness_samples": 0
+    },
+    "freshness_last_negative_ms": {
+      "p50": 195.90638019144535,
+      "p95": 989.2152110114693,
+      "p99": 1067.3363587632773,
+      "max": 1111.0502444207668
+    },
+    "server_affinity": [
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55
+    ],
+    "server_exe": "/home/k8s/data1/nijia.nj/test/vector-delta-perf-20261015/bin/seekdb-delta-perf5",
+    "final_auxiliary_rows": {
+      "__idx_500003_idx": 0,
+      "__idx_500003_idx_index_id_table": 100000,
+      "__idx_500003_idx_index_snapshot_data_table": 0
+    },
+    "background_worker_counts": {
+      "VecBuild": {
+        "peak_observed": 8,
+        "last_observed": 0
+      },
+      "VecDelta": {
+        "peak_observed": 1,
+        "last_observed": 1
+      },
+      "CSWorker": {
+        "peak_observed": 0,
+        "last_observed": 0
+      }
+    },
+    "delta_empty_observed_after_write_s": 1.692734681069851
+  }
+]

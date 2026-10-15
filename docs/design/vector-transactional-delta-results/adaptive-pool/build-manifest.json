@@ -1,0 +1,32 @@
+{
+  "source_commit": "71c3b60fd0d6611b0334fdc7e72a1297c643f12b",
+  "binary_built_before_commit": true,
+  "build": "source ~/.bashrc && make -j80 in build_release; objcopy --strip-debug",
+  "source_sha256": {
+    "src/observer/change_stream/ob_change_stream_mgr.cpp": "9bfecfee32903e077101434428af3256dc8a73784fd6d1903440efd7a35ca92f",
+    "src/observer/observer_source_inventory.bzl": "ae2d87e8b73abfa0fbf3eddfa2baad2337afda7d0f2b6e84ff11b7624d746d8f",
+    "src/observer/vector_index/ob_plugin_vector_index_adaptor.cpp": "1d3c0123ce13fa7be2ea2e5560e2149935686813480de0e0dee4f40d990319c9",
+    "src/observer/vector_index/ob_plugin_vector_index_utils.cpp": "8ff6ea7ff1ecbf5f7073eff7a0d23c25ef8f37d1950043964f8ff80f96ad6f98",
+    "src/observer/vector_index/ob_plugin_vector_index_utils.h": "0b1c0dde7cf9ba1123429727438a837b7765728585c084a76b3ea6629632d2ed",
+    "src/observer/vector_index/vector_delta_build_pool.cpp": "437e98ebfec642819f24ff36a46760b94be29621ff57b35421b0f44cd85a819f",
+    "src/observer/vector_index/vector_delta_build_pool.h": "b351be0fea5d32b9b330b851d8a37a7f4c93216cdabf2d85132f993ee5a05724",
+    "src/observer/vector_index/vector_delta_consumer.cpp": "2102f4f54221c96b015707b513f4dc22714d869d2cde1388c86370aee669434d",
+    "src/observer/vector_index/vector_delta_consumer.h": "023875a00e30649a47d2ae8a13b3d3aeb1ae31a39c73dbe66994b4af6be3ba3c",
+    "src/query/api/query/vector/ob_vector_index_adaptor.h": "12e333f006ba0047e9707f057c75b3df8e2e54397ed8c11472ac64de28e93600",
+    "unittest/sql/vector_transactional_delta/analyze.py": "662e34e37583bc3094503706ff0cc12cb0914c6d5e5467dae3ba62699f3ec51f",
+    "unittest/sql/vector_transactional_delta/perf_matrix.py": "1570f1141e4b46e930c13b9c2520824caf586fe33684ab10a3662d66d1ecb5a7",
+    "unittest/sql/vector_transactional_delta/stream_bench.py": "47c1c9e5ec7de6f62c3aaccda35fa8081dfa7b51781e0f058b17d9c475a6fa46"
+  },
+  "binaries": {
+    "seekdb-master-perf": "c0d59108f60496ecc7f4ea61e0049d096dce2f21bc81fdcae732db74b879ee01",
+    "seekdb-delta-perf2": "a7d75e1fa92b3cd13a52195aa421bb6aebf6576a9a7dbb2add3965ca5623727f",
+    "seekdb-delta-perf4": "1f3f4844765a2e721431c1304b595caf6a06538716eb395ef8ac2491cab09d23",
+    "seekdb-delta-perf5": "328dffd084a5115c7d4fd94a24b3b5e4ebf1c0627e73adb5c9b6cfeb3b2e06df"
+  },
+  "formal_runs": [
+    "perf5base_async_100k_1000",
+    "perf5delta_delta_100k_1000",
+    "perf5base_async_100k_4000",
+    "perf5delta_delta_100k_4000"
+  ]
+}

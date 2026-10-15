@@ -75,6 +75,13 @@ host load is sampled. This is a controlled experiment, not a hardware benchmark.
 
 ## Status (2026-10-15)
 
+- Follow-up: daily delta append now uses the existing adaptive simple thread pool,
+  with one coordinator and up to the configured CPU count of build workers. Both
+  1000/4000 rows/s runs drained and reached 99.3% final recall. This round ran
+  focused performance workloads only; it did not rerun recovery/standby gates.
+  See [adaptive-pool results](vector-transactional-delta-adaptive-pool.md), including
+  the remaining visibility lag and failed single-worker intermediate run.
+
 - Both binaries built from the pinned master. The original Namespace worktree
   and its running instances were not changed.
 - Baseline and prototype passed insert/update/delete, transaction rollback,
@@ -130,6 +137,10 @@ The consumer periodically scans schema and durable records; commit notifications
 and production scheduler integration are outside the current proof.
 
 ## Additional boundary and design findings
+
+The recovery-on-every-round and exclusive append lock findings below describe
+the original prototype. Their follow-up implementation and measurements are in
+[the adaptive-pool report](vector-transactional-delta-adaptive-pool.md).
 
 - `snapshot_boundary.py`: open a repeatable-read snapshot immediately after insert,
   before asynchronous index visibility, then delete from another connection.
