@@ -8,11 +8,11 @@
 
 | Ticket | 交付 | 阻塞于 | 状态 |
 | --- | --- | --- | --- |
-| [TF-1](https://github.com/oceanbase/seekdb/issues/1519) | 共同注册、FROM 调用及专属语法适配、绑定列和别名、SHOW/DESCRIBE、查询展开及缓存接入 | 无 | 待开始 |
-| [TF-2](https://github.com/oceanbase/seekdb/issues/1520) | 统一扫描接入；SQL/PL UNNEST、多输入与记录映射；GENERATOR 执行时参数、关联重扫及资源生命周期 | TF-1 | 待开始 |
-| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 调研中 |
+| [TF-1](https://github.com/oceanbase/seekdb/issues/1519) | 共同注册、FROM 调用及专属语法适配、绑定列和别名、SHOW/DESCRIBE、查询展开及缓存接入 | 无 | 实现中 |
+| [TF-2](https://github.com/oceanbase/seekdb/issues/1520) | 统一扫描接入；SQL/PL UNNEST、多输入与记录映射；GENERATOR 执行时参数、关联重扫及资源生命周期 | TF-1 | 实现中（与 TF-1 同分支） |
+| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 实现中 |
 | [TF-4](https://github.com/oceanbase/seekdb/issues/1522) | 系统信息函数接入，视图/SHOW/内部查询切换，移除自身 schema 创建/名字映射/bootstrap 落盘 | TF-1、TF-2、TF-3 | 待开始 |
-| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 待开始 |
+| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 实现中 |
 | [TF-6](https://github.com/oceanbase/seekdb/issues/1524) | 全部功能验收、生产编译、针对性回归、新实例 schema/磁盘对比、PR 审查与问题修复 | TF-1、TF-2、TF-3、TF-4、TF-5 | 待开始 |
 
 ```mermaid
@@ -43,6 +43,6 @@ flowchart LR
 
 - 最新 master 基线已获取；此前设计与研究文档随实现分支保存。
 - 调研笔记目录：`/data/1/nijia.nj/table-function-implementation-notes/`，供子代理共享，位于仓库之外。
-- [规格跟踪 issue](https://github.com/oceanbase/seekdb/issues/1518)；各任务链接见上表，草稿 PR 创建后补入。
+- [规格跟踪 issue](https://github.com/oceanbase/seekdb/issues/1518)；各任务链接见上表；[草稿 PR #1525](https://github.com/oceanbase/seekdb/pull/1525)。
 - 最新 master 的启用清单：143 个 VT、1664 个输出列、0 个 VT 索引、139 个系统视图。136 个有效手写工厂分支及 7 个生成 provider 覆盖全部 VT；另有 10 个已无定义的旧 ID 分支，不纳入迁移能力清单。
 - 设计基线中的 SQLite 生成扫描已在最新 master 改为 LocalStore/Rust 提供方；7 个生成 provider 包含 6 个 LocalStore snapshot cursor 和 1 个 Rust 配置目录，11 个真实本地存储定义必须保留。实现按最新数据源适配，不恢复旧 SQLite 实现。
