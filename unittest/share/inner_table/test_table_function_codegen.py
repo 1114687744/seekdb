@@ -72,6 +72,21 @@ class TableFunctionGenerationTest(unittest.TestCase):
             self.assertNotIn('ObInnerTableSchema::' + method, sources)
         self.assertIn('ObInnerTableSchema::all_table_schema(', sources)
 
+    def test_system_views_do_not_bind_removed_schema_names(self):
+        sources = '\n'.join(p.read_text() for p in self.share.glob('ob_inner_table_schema.*.cpp'))
+        for provider in self.manifest:
+            name = re.escape(provider['old_name'])
+            if not provider['old_name'].lower().startswith('__all_virtual_'):
+                database = 'mysql' if provider['old_name'] in ('user', 'db') else 'information_schema'
+                name = database + r'\.' + name
+            else:
+                name = r'(?:oceanbase\.)?' + name
+            self.assertIsNone(re.search(r'(?:FROM|JOIN|,)\s+' + name + r'(?=\s|[;,])',
+                                        sources, re.IGNORECASE), provider['old_name'])
+        # Preserve the column view's targeted lookup and the SQL visibility filters.
+        self.assertEqual(sources.count('information_columns(D.DATABASE_NAME, T.TABLE_NAME)'), 2)
+        self.assertIn("sys_privilege_check('table_acc', D.DATABASE_NAME, T.TABLE_NAME)", sources)
+
     def test_protected_catalogs_are_not_registered_as_public(self):
         for name in ('mysql_users', 'mysql_database_privileges'):
             descriptor = next(line for line in self.misc.splitlines() if ', "' + name + '",' in line)

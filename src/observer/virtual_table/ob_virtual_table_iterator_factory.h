@@ -25,6 +25,11 @@
 
 namespace oceanbase
 {
+namespace sql
+{
+// Observer supplies the program-owned system catalog to the SQL registry at startup.
+const TableFunctionDescriptor *get_system_table_functions(int64_t &count);
+}
 namespace common
 {
 class ObVTableScanParam;

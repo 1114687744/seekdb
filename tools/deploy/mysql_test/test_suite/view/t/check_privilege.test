@@ -17,7 +17,7 @@ use check_privilege_db;
 create table t1(id int, name char(20));
 
 # case 1: __all_virtual_information_columns
-select count(privileges)>10000 from oceanbase.__all_virtual_information_columns;
+select count(privileges)>10000 from information_columns();
 
 # case 2: __tenant_virtual_privilege_grant
 create user if not exists 'check_privilege_user';
