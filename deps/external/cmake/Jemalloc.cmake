@@ -20,8 +20,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   # devtools GNU ld is too old to read Ubuntu 24.04 glibc's .relr.dyn
   # sections, so allowing clang to select it makes configure report the
   # misleading "C compiler cannot create executables" error.
+  # Configure links tiny executables that it immediately runs. Serialize LLD's
+  # relocation scanning here: the bundled linker can crash or produce broken
+  # probes when scanning relocations in parallel. This does not limit make or
+  # Cargo compilation parallelism, nor the server's final link.
   list(APPEND _jemalloc_platform_env
-    "LDFLAGS=--ld-path=${OB_LD_BIN}")
+    "LDFLAGS=--ld-path=${OB_LD_BIN} -Wl,--threads=1")
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   # Configure must not execute iOS probes on the macOS build host.
