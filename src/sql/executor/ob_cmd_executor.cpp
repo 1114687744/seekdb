@@ -252,7 +252,6 @@ int ObCmdExecutor::execute(ObExecContext &ctx, ObICmd &cmd)
       }
       case stmt::T_INSTALL_PLUGIN:
       case stmt::T_UNINSTALL_PLUGIN: {
-        LOG_ERROR("plugin command executor entered", K(cmd.get_cmd_type()), KP(&cmd));
         // Plugin commands are represented by the existing ObEmptyQueryStmt
         // command object.  This follows the same static dispatch convention
         // as the other command executors and avoids an additional RTTI/object
