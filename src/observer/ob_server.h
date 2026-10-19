@@ -32,7 +32,7 @@
 #include "share/config/ob_config_manager.h"
 
 #include "share/tablet/ob_tablet_table_operator.h"
-#include "share/storage/ob_sqlite_connection_pool.h"
+#include "share/storage/local_store.h"
 #include "sql/ob_sql.h"
 #include "sql/das/ob_data_access_service.h"
 #include "sql/engine/px/ob_ddl_slice_store.h"
@@ -71,7 +71,7 @@
 #include "observer/ob_srv_network_frame.h"
 #include "observer/ob_service.h"
 #include "observer/ob_server_reload_config.h"
-#include "storage/slog_ckpt/ob_startup_accel_task_handler.h"
+#include "storage/meta_store/ob_startup_accel_task_handler.h"
 #include "storage/ddl/ob_ddl_heart_beat_task.h"
 
 #include "storage/ob_disk_usage_reporter.h"
@@ -256,7 +256,7 @@ public:
   static ObServer &get_instance();
 
 public:
-  int init(const ObServerOptions &opts, const ObPLogWriterCfg &log_cfg);
+  int init(const ObServerOptions &opts);
   void destroy();
 
   // Start OceanBase server, this function is blocked after invoking
@@ -404,7 +404,6 @@ private:
   void deinit_fts();
 
 public:
-  static int get_network_speed_from_config_file(int64_t &network_speed);
 public:
   volatile bool need_ctas_cleanup_; //true: ObCTASCleanUpTask should traverse all table schemas to find the one need be dropped
 private:
@@ -455,8 +454,8 @@ private:
   // The PL Engine
   pl::ObPL pl_engine_;
 
-  // Shared SQLite connection pool for meta database (config and tablet_meta tables)
-  share::ObSQLiteConnectionPool meta_db_pool_;
+  // Shared process-local persistent store
+  share::LocalStore local_store_;
 
   // Optional plugin runtime implementation is kept opaque from this header.
   std::unique_ptr<ObServerPluginRuntime> plugin_runtime_;

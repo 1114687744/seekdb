@@ -151,7 +151,7 @@ fn generate_bridge(parameters: &[Parameter], internal_state: &[Parameter]) -> St
              pub checker: &'static str,\n\
          }\n\
          #[cxx::bridge(namespace = \"oceanbase::config\")]\n\
-         mod bridge {\n\
+         pub(crate) mod bridge {\n\
              struct MomentTime {\n\
                  disabled: bool,\n\
                  hour: u8,\n\
@@ -168,9 +168,34 @@ fn generate_bridge(parameters: &[Parameter], internal_state: &[Parameter]) -> St
                  edit_level: String,\n\
                  default_value: String,\n\
              }\n\
+             struct Status {\n\
+                 ok: bool,\n\
+                 commit_uncertain: bool,\n\
+                 message: String,\n\
+             }\n\
+             unsafe extern \"C++\" {\n\
+                 include!(\"check_callback.h\");\n\
+                 include!(\"local/src/bridge.rs.h\");\n\
+                 #[namespace = \"oceanbase::local\"]\n\
+                 type Store = local::Store;\n\
+                 type CheckCallback;\n\
+                 fn check(self: &CheckCallback) -> i32;\n\
+             }\n\
              extern \"Rust\" {\n",
     );
     code.push_str("        fn parameter_count() -> usize;\n        fn parameter_row(index: usize) -> ParameterRow;\n        fn parameter_exists(name: &str) -> bool;\n        fn parameter_readonly(name: &str) -> bool;\n        fn parameter_default(name: &str) -> String;\n        fn parameter_valid(name: &str, value: &str) -> bool;\n        fn generation() -> i64;\n        fn server_create_time() -> i64;\n        fn server_role_info() -> String;\n");
+    code.push_str(
+        "        #[cxx_name = \"load_active\"]\n\
+                 fn load_active_status(store: &Store, startup: bool) -> Status;\n\
+                 #[cxx_name = \"save_bootstrap\"]\n\
+                 fn save_bootstrap_status(store: &Store) -> Status;\n\
+                 #[cxx_name = \"bootstrap_set\"]\n\
+                 fn bootstrap_set_status(name: &CxxString, value: &CxxString) -> Status;\n\
+                 #[cxx_name = \"update_internal_state\"]\n\
+                 fn update_internal_state_status(store: &Store, name: &CxxString, value: &CxxString) -> Status;\n\
+                 #[cxx_name = \"update_checked\"]\n\
+                 fn update_checked_status(store: &Store, name: &CxxString, value: &CxxString, reset: bool, callback: &CheckCallback) -> Status;\n",
+    );
     for parameter in parameters {
         if let Some(ty) = rust_type(&parameter.kind) {
             code.push_str(&format!("        fn {}() -> {ty};\n", parameter.name));
@@ -382,38 +407,18 @@ fn main() {
     .expect("cannot write generated CXX bridge");
     env::set_current_dir(&output_dir).expect("cannot enter generated source directory");
     cxx_build::bridge("generated_config.rs")
-        .flag_if_supported("-std=c++17")
+        .include(crate_dir.join("include"))
+        .std("c++17")
         .compile("config_cxx");
     env::set_current_dir(&crate_dir).expect("cannot restore crate directory");
-    if let Ok(header_dir) = env::var("CONFIG_HEADER_DIR") {
-        let header_dir = PathBuf::from(header_dir);
-        fs::create_dir_all(&header_dir).expect("cannot create CXX header directory");
-        let source = output_dir.join("cxxbridge/include/config/generated_config.rs.h");
-        let target = header_dir.join("config_bridge.h");
-        let bytes = fs::read(source).expect("cannot read generated CXX header");
-        if fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
-            fs::write(target, bytes).expect("cannot publish generated CXX header");
-        }
-        let target = header_dir.join("config_checkers.h");
-        let bytes = generate_cpp_checkers(&declared).into_bytes();
-        if fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
-            fs::write(target, bytes).expect("cannot publish generated checker header");
-        }
-    }
+    fs::write(
+        output_dir.join("config_checkers.h"),
+        generate_cpp_checkers(&declared),
+    )
+    .expect("cannot write generated checker header");
 
-    let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml"))
-        .expect("config cbindgen config failed");
-    cbindgen::Builder::new()
-        .with_src(crate_dir.join("src").join("ffi.rs"))
-        .with_config(config)
-        .generate()
-        .expect("config cbindgen failed")
-        .write_to_file(crate_dir.join("include").join("config.h"));
-
-    println!("cargo:rerun-if-changed=src/ffi.rs");
-    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=include/check_callback.h");
     println!("cargo:rerun-if-changed=parameters.yaml");
     println!("cargo:rerun-if-changed=internal_state.yaml");
-    println!("cargo:rerun-if-env-changed=CONFIG_HEADER_DIR");
     println!("cargo:rerun-if-env-changed=DEFAULT_LOG_LEVEL");
 }

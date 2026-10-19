@@ -199,7 +199,7 @@ int ObMediumLoop::update_report_scn_as_ls_leader(ObLS &ls, const ObScheduleTable
     if (OB_FAIL(ls.get_tablet_svr()->get_all_tablet_ids(true/*except_ls_inner_tablet*/, tablet_id_array))) {
     } else if (inner_table_merged_scn > ObBasicMergeScheduler::INIT_COMPACTION_SCN
         && OB_FAIL(ObTabletMetaTableCompactionOperator::batch_update_unequal_report_scn_tablet(
-            GCTX.meta_db_pool_, inner_table_merged_scn, tablet_id_array))) {
+            GCTX.local_store_, inner_table_merged_scn, tablet_id_array))) {
     }
   } else {
     ret = OB_LS_LOCATION_LEADER_NOT_EXIST;

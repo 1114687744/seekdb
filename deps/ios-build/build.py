@@ -14,7 +14,7 @@ from vsag_packages import PACKAGES as VSAG_PACKAGES
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKAGES = ("zlib", "openssl", "curl", "abseil", "s2", "roaring",
-                    "lzma", "libxml2", "protobuf-c", "sqlite",
+                    "lzma", "libxml2", "protobuf-c",
                     "icu", "openmp", "lapack", "vsag")
 
 PACKAGES = {
@@ -38,8 +38,6 @@ PACKAGES = {
         '6f6fb27f91bb65f9d7196e3c616901b3e18a7dea31ccc2ae857940b125faa780'),
     "protobuf-c": ('1.4.1', 'https://codeload.github.com/protobuf-c/protobuf-c/tar.gz/refs/tags/v1.4.1',
         '99be336cdb15dfc5827efe34e5ac9aaa962e2485db547dd254d2a122a7d23102'),
-    "sqlite": ('3.38.1', 'https://www.sqlite.org/2022/sqlite-amalgamation-3380100.zip',
-        '6fb55507d4517b5cbc80bd2db57b0cbe1b45880b28f2e4bd6dca4cfe3716a231'),
 
     "curl": ("8.12.1", "https://curl.se/download/curl-8.12.1.tar.gz",
              "7b40ea64947e0b440716a4d7f0b7aa56230a5341c8377d7b609649d4aea8dbcf"),
@@ -209,28 +207,19 @@ def build_cmake_package(name, source, build, prefix, sdk, options, environment):
     run(["cmake", "--install", build], ROOT, environment)
 
 
-def build_c_package(name, source, build, prefix, sdk, options, environment):
-    """Compile checked-in C runtimes without running host protocol generators."""
-    if name == "sqlite":
-        source = next(source.glob("sqlite-amalgamation-*"))
-        implementation = source / "sqlite3.c"
-        headers = [source / "sqlite3.h", source / "sqlite3ext.h"]
-        destination = prefix / "lib/sqlite/libsqlite3.a"
-        header_directory = prefix / "include"
-        flags = ["-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_RTREE"]
-    else:
-        implementation = source / "protobuf-c/protobuf-c.c"
-        headers = [source / "protobuf-c/protobuf-c.h"]
-        destination = prefix / "lib/libprotobuf-c.a"
-        header_directory = prefix / "include/protobuf-c"
-        flags = []
+def build_protobuf_c(source, build, prefix, sdk, options, environment):
+    """Compile the C runtime without running host protocol generators."""
+    implementation = source / "protobuf-c/protobuf-c.c"
+    headers = [source / "protobuf-c/protobuf-c.h"]
+    destination = prefix / "lib/libprotobuf-c.a"
+    header_directory = prefix / "include/protobuf-c"
     triple = "arm64-apple-ios" + options.deployment_target
     if options.simulator:
         triple += "-simulator"
-    obj = build / (name + ".o")
+    obj = build / "protobuf-c.o"
     archive = build / destination.name
     run(["xcrun", "clang", "-target", triple, "-isysroot", sdk, "-O2", "-fPIC",
-         "-I" + str(source), *flags, "-c", implementation, "-o", obj], ROOT, environment)
+         "-I" + str(source), "-c", implementation, "-o", obj], ROOT, environment)
     run(["xcrun", "ar", "rcs", archive, obj], ROOT, environment)
     verify_archive(archive, options.simulator, environment)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -344,7 +333,6 @@ PACKAGE_OUTPUTS = {
     "lzma": ("lib/liblzma.a", "include/lzma.h"),
     "libxml2": ("lib/libxml2.a", "include/libxml2/libxml/parser.h"),
     "protobuf-c": ("lib/libprotobuf-c.a", "include/protobuf-c/protobuf-c.h"),
-    "sqlite": ("lib/sqlite/libsqlite3.a", "include/sqlite3.h"),
     "icu": ("lib/libicuuc.a", "lib/libicui18n.a", "lib/libicudata.a", "include/unicode/utypes.h"),
     "openmp": ("lib/libomp.a", "include/omp.h"),
     "lapack": ("lib/liblapacke.a", "include/lapacke.h"),
@@ -435,8 +423,8 @@ def main():
             build_icu(source, build, prefix, sdk, options, environment)
         elif name in ("abseil", "s2", "roaring", "libxml2", "lzma", "lapack"):
             build_cmake_package(name, source, build, prefix, sdk, options, environment)
-        elif name in ("sqlite", "protobuf-c"):
-            build_c_package(name, source, build, prefix, sdk, options, environment)
+        elif name == "protobuf-c":
+            build_protobuf_c(source, build, prefix, sdk, options, environment)
         else:
             {"zlib": build_zlib, "openssl": build_openssl, "curl": build_curl}[name](
                 source, build, prefix, sdk, options, environment)

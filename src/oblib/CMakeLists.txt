@@ -12,13 +12,7 @@ if(WIN32)
   set(OPENSSL_INCLUDE_DIR "${OB_OPENSSL_DIR}/include")
   set(VCPKG_INCLUDE_DIR "${OB_VCPKG_DIR}/include")
   set(CURL_INCLUDE_DIR "${OB_VCPKG_DIR}/include")
-  # vcpkg puts sqlite3.h at include/sqlite3.h, but code uses <sqlite/sqlite3.h>
-  set(SQLITE_COMPAT_DIR "${CMAKE_BINARY_DIR}/compat_include")
-  file(MAKE_DIRECTORY "${SQLITE_COMPAT_DIR}/sqlite")
-  if(EXISTS "${OB_VCPKG_DIR}/include/sqlite3.h")
-    configure_file("${OB_VCPKG_DIR}/include/sqlite3.h"
-                   "${SQLITE_COMPAT_DIR}/sqlite/sqlite3.h" COPYONLY)
-  endif()
+
 endif()
 
 set(OB_HEADER_DEP_DIR "${DEP_DIR}")
@@ -31,7 +25,7 @@ target_include_directories(
   # The Rust SQL/NIO header is a core-owned FFI surface.  Keep it on the
   # oblib/core interface instead of a directory-wide include path so plugin
   # targets cannot inherit a core source-tree include by accident.
-  ${SQL_NIO_INCLUDE_DIR}
+  ${RUST_WORKSPACE_DIR}/sql-nio/include
   # Private source-only numerical algorithms shared with the GIS plugin.
   # This adds no core source-tree path to plugin targets.
   ${CMAKE_SOURCE_DIR}/include
@@ -53,7 +47,6 @@ target_include_directories(
   $<$<PLATFORM_ID:Windows>:${VCPKG_INCLUDE_DIR}>
   $<$<PLATFORM_ID:Windows>:${VCPKG_INCLUDE_DIR}/libxml2>
   $<$<PLATFORM_ID:Windows>:${CURL_INCLUDE_DIR}>
-  $<$<PLATFORM_ID:Windows>:${SQLITE_COMPAT_DIR}>
   $<$<PLATFORM_ID:Windows>:${OB_VSAG_DIR}/include>
   ${DEVTOOLS_DIR}
   ${DEVTOOLS_DIR}/include
@@ -150,25 +143,7 @@ if (OB_USE_CLANG)
       -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -D_NO_EXCEPTION
       -DOCI_LINK_RUNTIME
       -Wall -Wextra -Wformat -Werror
-      -Wno-deprecated -Wno-address-of-packed-member -Wno-sign-compare -Wno-tautological-compare
-      -Wno-psabi -Wno-c99-designator -Wno-int-in-bool-context -Wno-sizeof-array-div
-      -Wno-implicit-const-int-float-conversion -Wno-fortify-source -Wno-non-c-typedef-for-linkage
-      -Wno-uninitialized-const-reference -Wno-unused-function -Wno-atomic-alignment
-      -Wno-tautological-constant-out-of-range-compare -Wno-unused-parameter
-      -Wno-string-plus-int -Wno-misleading-indentation -Wno-unused-private-field
-      $<$<COMPILE_LANGUAGE:CXX>:-Wno-overloaded-virtual -Wno-reserved-user-defined-literal
-      -Wno-self-assign -Wno-inconsistent-missing-override -Wno-mismatched-tags -Wno-unused-variable
-      -Wno-invalid-offsetof -Wno-unevaluated-expression -Wno-constant-logical-operand>
-      $<$<COMPILE_LANGUAGE:C>:-Wno-unused-parameter>
-      -Wno-unused-but-set-variable -Wno-null-pointer-subtraction -Wno-compound-token-split-by-macro
-      -Wno-packed-non-pod -Wno-format -Wno-shorten-64-to-32 -Wno-unused-but-set-parameter -Wno-single-bit-bitfield-constant-conversion
-      ${ENUM_CONSTEXPR_WARNING_FLAG} -Wno-covered-switch-default
-      -Wno-bitwise-instead-of-logical -Wno-suggest-override -Wno-non-virtual-dtor -Wno-cast-qual
-      -Wno-unused-value -Wno-macro-redefined -Wno-reinterpret-base-class -Wno-register
-      -Wno-implicit-fallthrough -Wno-deprecated-non-prototype
-      -Wno-ambiguous-reversed-operator -Wno-invalid-partial-specialization
-      -Wno-string-concatenation
-      -Wno-vla ${VLA_WARN_FLAG})
+      ${SEEKDB_CLANG_DISABLED_WARNINGS} ${ENUM_CONSTEXPR_WARNING_FLAG} ${VLA_WARN_FLAG})
   endif()
   if(OB_MACOS27)
     include(CheckCXXCompilerFlag)
@@ -328,7 +303,7 @@ if(WIN32)
     ${VCPKG_LIB_DIR}/icuin.lib
     ${VCPKG_LIB_DIR}/icudt.lib
     ${VCPKG_LIB_DIR}/icuuc.lib
-    ${VCPKG_LIB_DIR}/sqlite3.lib
+    ${VCPKG_LIB_DIR}/protobuf-c.lib
     ${VCPKG_LIB_DIR}/pthreadVC3.lib
     ws2_32 crypt32 bcrypt userenv wldap32 advapi32
     ${ARCH_LDFLAGS}
@@ -342,12 +317,12 @@ else()
     ${DEP_DIR}/lib/libcrypto.a
     ${DEP_DIR}/lib/libroaring.a
     $<$<STREQUAL:"${ARCHITECTURE}","x86_64">:${DEP_DIR}/lib/libunwind.a>
-    ${DEP_DIR}/lib/sqlite/libsqlite3.a
     ${DEP_DIR}/lib/libz.a
     ${DEP_DIR}/lib/libicui18n.a
     $<$<PLATFORM_ID:iOS>:${DEP_DIR}/lib/libicudata.a>
     $<$<NOT:$<PLATFORM_ID:iOS>>:${DEP_DIR}/lib/libicustubdata.a>
     ${DEP_DIR}/lib/libicuuc.a
+    ${DEP_DIR}/lib/libprotobuf-c.a
     $<$<PLATFORM_ID:Linux>:-L${DEP_DIR}/var/usr/lib64 -L${DEP_DIR}/var/usr/lib -L${DEP_3RD_DIR}/usr/lib -L${DEP_3RD_DIR}/usr/lib64>
     ${LIBAIO_LINK_OPTION} $<$<NOT:$<BOOL:${ANDROID}>>:-lpthread> -ldl
     $<$<BOOL:${ANDROID}>:-llog>
@@ -356,6 +331,9 @@ else()
     ${ARCH_LDFLAGS}
   )
 endif()
+# Trace/log headers are used by the early allocator objects as well. Propagate
+# the generated cxx header and its build dependency through their shared base.
+target_link_libraries(oblib_base_without_pass INTERFACE logger)
 target_link_libraries(oblib_base INTERFACE oblib_base_without_pass oblib_pass)
 
 function(oblib_add_library target)

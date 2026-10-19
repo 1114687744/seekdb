@@ -21,7 +21,6 @@
 #include "ob_local_management_service.h"
 #include "config_bridge.h"
 #include "config_checkers.h"
-#include <utility>
 namespace oceanbase
 {
 using namespace common;
@@ -96,12 +95,6 @@ int ObAdminSetConfig::update_config(obcall::ObAdminSetConfigArg &arg)
   return ret;
 }
 
-int ObAdminSetConfig::checked_config_callback(void *context)
-{
-  auto *check = static_cast<std::pair<ObAdminSetConfig *, obcall::ObAdminSetConfigArg *> *>(context);
-  return check->first->verify_config(*check->second);
-}
-
 int ObAdminSetConfig::update_sys_config_(const obcall::ObAdminSetConfigItem &item,
                                          obcall::ObAdminSetConfigArg &arg)
 {
@@ -109,24 +102,16 @@ int ObAdminSetConfig::update_sys_config_(const obcall::ObAdminSetConfigItem &ite
   if (OB_ISNULL(GCTX.config_mgr_)) {
     ret = OB_INVALID_ARGUMENT;
   } else {
-    bool after_replace = false;
-    std::pair<ObAdminSetConfig *, obcall::ObAdminSetConfigArg *> check_context(this, &arg);
+    const config::CheckCallback check([&] { return verify_config(arg); });
     const int save_ret = GCTX.config_mgr_->update_checked(
         item.name_.ptr(), item.value_.ptr(), item.is_reset_,
-        checked_config_callback, &check_context, &after_replace);
-    if (OB_SUCCESS == save_ret || after_replace) {
-      // A durability error can follow a successful rename. In that case the
-      // visible file must still be loaded before returning the save error.
+        check);
+    if (OB_SUCCESS == save_ret) {
       int apply_ret = GCTX.config_mgr_->got_version();
       if (OB_SUCCESS == apply_ret) {
         apply_ret = GCTX.config_mgr_->reload_config();
       }
-      if (OB_SUCCESS != save_ret) {
-        ret = save_ret;
-        if (OB_SUCCESS != apply_ret) {
-          LOG_ERROR("reloading replaced config failed", K(apply_ret), K(item));
-        }
-      } else if (OB_SUCCESS != apply_ret) {
+      if (OB_SUCCESS != apply_ret) {
         ret = OB_INVALID_CONFIG;
         LOG_ERROR("instance parameter saved but could not be applied", K(apply_ret), K(item));
         LOG_USER_ERROR(OB_INVALID_CONFIG, "parameter was saved but could not be applied");

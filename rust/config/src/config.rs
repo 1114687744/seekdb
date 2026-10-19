@@ -14,8 +14,11 @@
 
 include!(concat!(env!("OUT_DIR"), "/generated_config.rs"));
 
+use crate::bridge::{
+    bootstrap_set_status, load_active_status, save_bootstrap_status, update_checked_status,
+    update_internal_state_status,
+};
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Mutex;
 
 static CONFIGURED: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
@@ -54,7 +57,7 @@ fn effective_text() -> &'static RwLock<BTreeMap<String, String>> {
 }
 
 fn invalid_value(name: &str) -> crate::Error {
-    crate::Error::new(0, Some(name.to_owned()), "invalid parameter value")
+    crate::Error::new(Some(name.to_owned()), "invalid parameter value")
 }
 
 fn parse_number_prefix<'a>(name: &str, input: &'a str) -> Result<(i64, &'a str), crate::Error> {
@@ -239,8 +242,8 @@ fn validate_moment(name: &str, value: &str) -> Result<(), crate::Error> {
 }
 
 fn validate_storable(name: &str, value: &str) -> Result<&'static ParameterMeta, crate::Error> {
-    let parameter = find(name)
-        .ok_or_else(|| crate::Error::new(0, Some(name.to_owned()), "unknown parameter"))?;
+    let parameter =
+        find(name).ok_or_else(|| crate::Error::new(Some(name.to_owned()), "unknown parameter"))?;
     if value.len() >= 64 * 1024 || value.contains(['\n', '\r', '\0']) {
         return Err(invalid_value(name));
     }
@@ -286,10 +289,9 @@ pub fn validate(name: &str, value: &str) -> Result<&'static ParameterMeta, crate
     Ok(parameter)
 }
 
-pub(crate) fn validate_file_entry(entry: &crate::Entry) -> Result<(), crate::Error> {
+pub(crate) fn validate_entry(entry: &crate::Entry) -> Result<(), crate::Error> {
     if entry.name.len() >= 128 || entry.value.len() >= 64 * 1024 {
         return Err(crate::Error::new(
-            entry.line,
             Some(entry.name.clone()),
             "configuration entry is too long",
         ));
@@ -310,15 +312,11 @@ pub(crate) fn validate_file_entry(entry: &crate::Entry) -> Result<(), crate::Err
         }
     } else {
         Err(crate::Error::new(
-            0,
             Some(entry.name.clone()),
             "unknown configuration key",
         ))
     };
-    result.map_err(|mut error| {
-        error.line = entry.line;
-        error
-    })
+    result
 }
 
 fn validate_role_state(name: &str, value: &str) -> Result<(), crate::Error> {
@@ -395,21 +393,25 @@ pub fn configured_value(name: &str) -> Option<String> {
     )
 }
 
-pub fn update_parameter(path: &Path, name: &str, value: Option<&str>) -> Result<(), crate::Error> {
-    update_parameter_checked(path, name, value, || Ok(()))
+pub fn update_parameter(
+    store: &kv::Store,
+    name: &str,
+    value: Option<&str>,
+) -> Result<(), crate::Error> {
+    update_parameter_checked(store, name, value, || Ok(()))
 }
 
 pub fn update_parameter_checked(
-    path: &Path,
+    store: &kv::Store,
     name: &str,
     value: Option<&str>,
     check: impl FnOnce() -> Result<(), crate::Error>,
 ) -> Result<(), crate::Error> {
-    let parameter = find(name)
-        .ok_or_else(|| crate::Error::new(0, Some(name.to_owned()), "unknown parameter"))?;
+    let parameter =
+        find(name).ok_or_else(|| crate::Error::new(Some(name.to_owned()), "unknown parameter"))?;
     let candidate = value.unwrap_or(parameter.default);
     validate(parameter.name, candidate)?;
-    crate::update_with_commit(path, parameter.name, value, check, || {
+    crate::update_with_commit(store, parameter.name, value, check, || {
         let mut configured = configured()
             .lock()
             .expect("configured config lock poisoned");
@@ -441,13 +443,13 @@ pub fn bootstrap_set(name: &str, value: &str) -> Result<(), crate::Error> {
     Ok(())
 }
 
-pub fn save_bootstrap(path: &Path) -> Result<(), crate::Error> {
+pub fn save_bootstrap(store: &kv::Store) -> Result<(), crate::Error> {
     let pending = bootstrap_dirty()
         .lock()
         .expect("bootstrap config lock poisoned")
         .clone();
     for (name, value) in pending {
-        update_parameter(path, &name, Some(&value))?;
+        update_parameter(store, &name, Some(&value))?;
         bootstrap_dirty()
             .lock()
             .expect("bootstrap config lock poisoned")
@@ -456,19 +458,22 @@ pub fn save_bootstrap(path: &Path) -> Result<(), crate::Error> {
     Ok(())
 }
 
-pub fn update_internal_state(path: &Path, name: &str, value: &str) -> Result<(), crate::Error> {
+pub fn update_internal_state(
+    store: &kv::Store,
+    name: &str,
+    value: &str,
+) -> Result<(), crate::Error> {
     let state = INTERNAL_STATE
         .iter()
         .find(|state| state.name.eq_ignore_ascii_case(name))
-        .ok_or_else(|| crate::Error::new(0, Some(name.to_owned()), "unknown internal state"))?;
+        .ok_or_else(|| crate::Error::new(Some(name.to_owned()), "unknown internal state"))?;
     let entry = crate::Entry {
         name: state.name.to_owned(),
         value: value.to_owned(),
-        line: 0,
     };
-    validate_file_entry(&entry)?;
+    validate_entry(&entry)?;
     crate::update_with_commit(
-        path,
+        store,
         state.name,
         Some(value),
         || Ok(()),
@@ -488,11 +493,11 @@ pub fn update_internal_state(path: &Path, name: &str, value: &str) -> Result<(),
     )
 }
 
-pub fn load_active(path: &Path, startup: bool) -> Result<(), crate::Error> {
+pub fn load_active(store: &kv::Store, startup: bool) -> Result<(), crate::Error> {
     let _guard = crate::lock_writers()?;
-    let entries = crate::load(path)?;
+    let entries = crate::load(store)?;
     for entry in &entries {
-        validate_file_entry(entry)?;
+        validate_entry(entry)?;
     }
     let create_time = entries
         .iter()
@@ -544,7 +549,7 @@ pub fn snapshot(names: &[&str]) -> Result<Vec<String>, crate::Error> {
         .iter()
         .map(|name| {
             effective_value(name)
-                .ok_or_else(|| crate::Error::new(0, Some((*name).to_owned()), "unknown parameter"))
+                .ok_or_else(|| crate::Error::new(Some((*name).to_owned()), "unknown parameter"))
         })
         .collect()
 }

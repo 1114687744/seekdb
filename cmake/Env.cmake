@@ -222,7 +222,7 @@ elseif(WIN32)
   set(OB_CXX "clang-cl")
   add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
 
-  # All bundled / vcpkg-provided vendor libraries (s2.lib, sqlite3.lib,
+  # All bundled / vcpkg-provided vendor libraries (s2.lib,
   # zlib.lib, ...) are built against the Release MSVC runtime. Using /MDd
   # in a Debug build makes MSVC STL set _ITERATOR_DEBUG_LEVEL=2, which
   # then trips #pragma detect_mismatch at link time against those

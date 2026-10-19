@@ -235,11 +235,6 @@ cc_library(
     includes = ["include"],
 )
 
-cc_library(
-    name = "sqlite_headers",
-    hdrs = glob(["include/sqlite/**/*." + extension for extension in HEADER_EXTENSIONS], allow_empty = True),
-    includes = ["include"],
-)
 
 cc_library(
     name = "vsag_headers",

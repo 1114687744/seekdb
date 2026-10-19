@@ -2,7 +2,7 @@
 # (OceanBase-lite) C++ server. Add new crates under `members`.
 [workspace]
 resolver = "2"
-members = ["config", "sql-nio", "plugin-runtime", "seekdb-host"]
+members = ["config", "kv", "local", "sql-nio", "logger", "seekdb-rust", "plugin-runtime", "seekdb-host"]
 exclude = ["extension-sdk"]
 
 # The `release` profile is what gets linked into the server build

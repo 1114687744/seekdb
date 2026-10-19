@@ -243,7 +243,7 @@ int ObMediumCompactionScheduleFunc::get_status_from_inner_table(
       tablet_id,
       ObTabletRuntimeInfo::SCN_STATUS_IDLE);
   if (OB_FAIL(ObTabletMetaTableCompactionOperator::get_status(
-          GCTX.meta_db_pool_, snapshot_info, ret_info))) {
+          GCTX.local_store_, snapshot_info, ret_info))) {
     if (OB_ENTRY_NOT_EXIST == ret) {
       ret = OB_SUCCESS; // first schedule medium snapshot
       ret_info.status_ = ObTabletRuntimeInfo::SCN_STATUS_IDLE;

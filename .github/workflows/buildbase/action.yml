@@ -20,7 +20,7 @@ runs:
     - name: Rust unit tests
       shell: bash
       working-directory: rust
-      run: cargo test --locked -p sql-nio
+      run: cargo test --workspace
 
     - name: Initialize release build
       shell: bash

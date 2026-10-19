@@ -274,7 +274,7 @@ def _source_path(record: Any, context: str) -> str:
 def _cmake_path(path: str) -> str:
     if path.startswith("src/share/inner_table/ob_inner_table_schema."):
         return "${CMAKE_BINARY_DIR}/generated/" + path[len("src/"):]
-    if path == "src/observer/virtual_table/ob_all_virtual_sqlite_tables.cpp":
+    if path == "src/observer/virtual_table/ob_all_virtual_local_tables.cpp":
         return "${CMAKE_BINARY_DIR}/generated/" + path[len("src/"):]
     return "${CMAKE_SOURCE_DIR}/" + path
 

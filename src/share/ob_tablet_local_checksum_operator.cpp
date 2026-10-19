@@ -20,7 +20,7 @@
 
 #include "share/ob_tablet_local_checksum_operator.h"
 #include "share/storage/ob_tablet_local_checksum_table_storage.h"
-#include "share/storage/ob_sqlite_connection.h"
+#include "share/storage/local_store.h"
 namespace oceanbase
 {
 namespace share
@@ -408,7 +408,6 @@ void ObTabletLocalChecksumItem::set_data_checksum_type()
   data_checksum_type_ = ObDataChecksumType::DATA_CHECKSUM_NORMAL_WITH_NORMAL_COLUMN;
 }
 
-
 int ObTabletLocalChecksumItem::assign(const ObTabletLocalChecksumItem &other)
 {
   int ret = OB_SUCCESS;
@@ -435,133 +434,85 @@ int ObTabletLocalChecksumItem::set_ckm_mem_attr()
 
 /****************************** ObTabletLocalChecksumOperator ******************************/
 
-int ObTabletLocalChecksumOperator::init(ObSQLiteConnectionPool *pool)
+int ObTabletLocalChecksumOperator::init(LocalStore *store)
 {
   int ret = OB_SUCCESS;
-  if (OB_ISNULL(pool)) {
+  if (OB_ISNULL(store)) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(storage_.init(pool))) {
+  } else if (OB_FAIL(storage_.init(store))) {
   }
   return ret;
 }
 
 int ObTabletLocalChecksumOperator::batch_update_with_trans(
-    ObSQLiteConnection *conn,
+    LocalTransaction &tx,
     const common::ObIArray<ObTabletLocalChecksumItem> &items)
 {
   int ret = OB_SUCCESS;
-  if (OB_ISNULL(conn)) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_UNLIKELY(items.count() <= 0)) {
+  if (OB_UNLIKELY(items.count() <= 0)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (!storage_.is_inited()) {
     ret = OB_NOT_INIT;
   } else {
-    // Use SQLite storage within the transaction
+    // Use local storage within the transaction
     // Note: The transaction is managed by the caller (ObTabletRuntimeMetaUpdater)
-    const char *upsert_sql =
-      "INSERT INTO __all_tablet_local_checksum "
-      "(tablet_id, compaction_scn, "
-      " row_count, data_checksum, column_checksums, b_column_checksums, "
-      " data_checksum_type) "
-      "VALUES (?, ?, ?, ?, ?, ?, ?) "
-      "ON CONFLICT(tablet_id) DO UPDATE SET "
-      "compaction_scn = excluded.compaction_scn, "
-      "row_count = excluded.row_count, "
-      "data_checksum = excluded.data_checksum, "
-      "column_checksums = excluded.column_checksums, "
-      "b_column_checksums = excluded.b_column_checksums, "
-      "data_checksum_type = excluded.data_checksum_type;";
 
-    ObSQLiteStmt *stmt = nullptr;
-    if (OB_FAIL(conn->prepare_execute(upsert_sql, stmt))) {
-    } else {
-      common::ObArenaAllocator allocator;
-      for (int64_t i = 0; OB_SUCC(ret) && i < items.count(); ++i) {
-        const ObTabletLocalChecksumItem &item = items.at(i);
-        // Convert column_meta to string
-        common::ObString column_checksums_str;
-        common::ObString b_column_checksums_str;
-        if (OB_UNLIKELY(!item.is_valid())) {
-          ret = OB_INVALID_ARGUMENT;
-          LOG_WARN("invalid local checksum item", K(ret), K(item));
+    common::ObArenaAllocator allocator;
+    for (int64_t i = 0; OB_SUCC(ret) && i < items.count(); ++i) {
+      const ObTabletLocalChecksumItem &item = items.at(i);
+      // Convert column_meta to string
+      common::ObString column_checksums_str;
+      common::ObString b_column_checksums_str;
+      if (OB_UNLIKELY(!item.is_valid())) {
+        ret = OB_INVALID_ARGUMENT;
+        LOG_WARN("invalid local checksum item", K(ret), K(item));
+      } else {
+        if (OB_FAIL(get_visible_column_meta(item.column_meta_, allocator, column_checksums_str))) {
         } else {
-          if (OB_FAIL(get_visible_column_meta(item.column_meta_, allocator, column_checksums_str))) {
-          } else {
-            common::ObObj obj;
-            if (OB_FAIL(item.column_meta_.get_str_obj(item.data_checksum_type_, allocator, obj, b_column_checksums_str))) {
-            }
-          }
-        }
-
-        if (OB_SUCC(ret)) {
-          auto binder = [&](ObSQLiteBinder &b) -> int {
-            b.bind_int64(item.tablet_id_.id());
-            b.bind_int64(item.compaction_scn_.get_val_for_inner_table_field());
-            b.bind_int64(item.row_count_);
-            b.bind_int64(item.data_checksum_);
-            if (column_checksums_str.empty()) {
-              b.bind_text("", 0);
-            } else {
-              b.bind_text(column_checksums_str.ptr(), column_checksums_str.length());
-            }
-            if (b_column_checksums_str.empty()) {
-              b.bind_blob(nullptr, 0);
-            } else {
-              b.bind_blob(b_column_checksums_str.ptr(), b_column_checksums_str.length());
-            }
-            b.bind_int64(static_cast<int64_t>(item.data_checksum_type_));
-            return OB_SUCCESS;
-          };
-
-          if (OB_FAIL(conn->step_execute(stmt, binder))) {
+          common::ObObj obj;
+          if (OB_FAIL(item.column_meta_.get_str_obj(item.data_checksum_type_, allocator, obj, b_column_checksums_str))) {
           }
         }
       }
 
-      // Finalize statement (but don't commit/rollback - caller manages transaction)
-      conn->finalize_execute(stmt);
+      if (OB_SUCC(ret)) {
+        const auto upsert_request = LocalRequest::upsert(tablet_checksum::schema())
+            .set(tablet_checksum::TabletId, item.tablet_id_.id())
+            .set(tablet_checksum::CompactionScn, item.compaction_scn_.get_val_for_inner_table_field())
+            .set(tablet_checksum::RowCount, item.row_count_)
+            .set(tablet_checksum::DataChecksum, item.data_checksum_)
+            .set(tablet_checksum::ColumnChecksums, LocalValue::text(column_checksums_str.empty() ? "" : column_checksums_str.ptr(), column_checksums_str.length()))
+            .set(tablet_checksum::BColumnChecksums, LocalValue::blob(b_column_checksums_str.empty() ? nullptr : b_column_checksums_str.ptr(), b_column_checksums_str.length()))
+            .set(tablet_checksum::DataChecksumType, static_cast<int64_t>(item.data_checksum_type_));
+
+        ret = tx.execute(upsert_request);
+      }
     }
   }
   return ret;
 }
 
 int ObTabletLocalChecksumOperator::batch_remove_with_trans(
-    ObSQLiteConnection *conn,
+    LocalTransaction &tx,
     const common::ObIArray<share::ObTabletRuntimeInfo> &tablet_infos)
 {
   int ret = OB_SUCCESS;
   const int64_t tablet_count = tablet_infos.count();
-  if (OB_ISNULL(conn)) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_UNLIKELY(tablet_count <= 0)) {
+  if (OB_UNLIKELY(tablet_count <= 0)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (!storage_.is_inited()) {
     ret = OB_NOT_INIT;
   } else {
-    const char *delete_sql =
-      "DELETE FROM __all_tablet_local_checksum "
-      "WHERE tablet_id = ?;";
+    for (int64_t i = 0; OB_SUCC(ret) && i < tablet_count; ++i) {
+      const ObTabletRuntimeInfo &tablet_info = tablet_infos.at(i);
+      if (OB_UNLIKELY(!tablet_info.primary_keys_are_valid())) {
+        ret = OB_INVALID_ARGUMENT;
+      } else {
+        const auto delete_request = LocalRequest::erase(tablet_checksum::schema())
+            .eq(tablet_checksum::TabletId, tablet_info.get_tablet_id().id());
 
-    ObSQLiteStmt *stmt = nullptr;
-    if (OB_FAIL(conn->prepare_execute(delete_sql, stmt))) {
-    } else {
-      for (int64_t i = 0; OB_SUCC(ret) && i < tablet_count; ++i) {
-        const ObTabletRuntimeInfo &tablet_info = tablet_infos.at(i);
-        if (OB_UNLIKELY(!tablet_info.primary_keys_are_valid())) {
-          ret = OB_INVALID_ARGUMENT;
-        } else {
-          auto binder = [&](ObSQLiteBinder &b) -> int {
-            b.bind_int64(tablet_info.get_tablet_id().id());
-            return OB_SUCCESS;
-          };
-
-          if (OB_FAIL(conn->step_execute(stmt, binder))) {
-          }
-        }
+        ret = tx.execute(delete_request);
       }
-      // Finalize statement (but don't commit/rollback - caller manages transaction)
-      conn->finalize_execute(stmt);
     }
   }
   return ret;

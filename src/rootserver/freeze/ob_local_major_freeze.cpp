@@ -263,7 +263,7 @@ int ObLocalMajorFreeze::clear_merge_error()
   } else if (OB_FAIL(major_merge_info_mgr_.get_global_merge_mgr().try_reload())) {
   } else {
     if (OB_FAIL(ObTabletMetaTableCompactionOperator::batch_update_status(
-        GCTX.meta_db_pool_))) {
+        GCTX.local_store_))) {
     }
 
     if (FAILEDx(major_merge_info_mgr_.get_global_merge_mgr().set_merge_status(error_type))) {

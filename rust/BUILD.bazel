@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//bazel:defs.bzl", cc_library = "seekdb_cc_library")
+load("@cargo_exports//:exports.bzl", "EXPORTS")
+load("//bazel:cargo.bzl", "cargo_workspace")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -20,113 +21,15 @@ exports_files(
     ["rust-toolchain.toml"],
     visibility = ["//deps/external:__pkg__"],
 )
+exports_files(["exports.json"])
 
-config_setting(
-    name = "windows",
-    constraint_values = ["@platforms//os:windows"],
-)
-
-# Track sources and build inputs for every crate in the workspace. Cargo only
-# runs when Bazel sees one of these inputs change.
-_RUST_INPUTS = glob(
-    ["**/*.rs", "**/*.toml", "**/*.yaml", "**/*.yml", "**/*.json", "*.lock"],
-    exclude = ["target/**"],
-    allow_empty = True,
-)
-
-# Cargo remains the authoritative Rust dependency resolver used by the
-# upstream CMake build.  Keep the action local and outside the sandbox until
-# Cargo dependencies are vendored: cargo currently updates the registry under
-# ~/.cargo, which Bazel's sandbox deliberately mounts read-only.
-genrule(
-    name = "_rust_static_unix",
-    srcs = _RUST_INPUTS,
-    outs = ["libseekdb_host.a", "unix/config_bridge.h", "unix/config_checkers.h"],
-    cmd = """
-set -eu
-export CARGO_TARGET_DIR="$(@D)/rust-cargo-target"
-export CONFIG_HEADER_DIR="$$PWD/$(@D)/unix"
-export DEFAULT_LOG_LEVEL=OB_LOG_LEVEL_ERROR
-cargo build --release --manifest-path "$(location Cargo.toml)" --package seekdb-host --features plugins
-cp "$$CARGO_TARGET_DIR/release/libseekdb_host.a" "$(@D)/libseekdb_host.a"
-""",
-    tags = [
-        "no-remote",
-        "no-sandbox",
-    ],
-    target_compatible_with = select({
-        ":windows": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
-)
-
-genrule(
-    name = "_rust_static_windows",
-    srcs = _RUST_INPUTS,
-    outs = ["seekdb_host.lib", "windows/config_bridge.h", "windows/config_checkers.h"],
-    cmd_bat = """
-set CARGO_TARGET_DIR=$(@D)\\rust-cargo-target
-set CONFIG_HEADER_DIR=%CD%\\$(@D)\\windows
-set DEFAULT_LOG_LEVEL=OB_LOG_LEVEL_ERROR
-cargo build --release --manifest-path "$(location Cargo.toml)" --package seekdb-host --features plugins
-copy /Y "%CARGO_TARGET_DIR%\\release\\seekdb_host.lib" "$(@D)\\seekdb_host.lib"
-""",
-    tags = [
-        "no-remote",
-        "no-sandbox",
-    ],
-    target_compatible_with = select({
-        ":windows": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
-)
-
-filegroup(
-    name = "sql_nio_archive",
-    srcs = select({
-        ":windows": ["seekdb_host.lib"],
-        "//conditions:default": ["libseekdb_host.a"],
-    }),
-    visibility = ["//src/observer:__pkg__"],
-)
-
-filegroup(
-    name = "config_archive",
-    srcs = select({
-        ":windows": ["seekdb_host.lib"],
-        "//conditions:default": ["libseekdb_host.a"],
-    }),
-    visibility = ["//src/observer:__pkg__"],
-)
-
-cc_library(
-    name = "sql_nio_headers",
-    hdrs = ["sql-nio/include/nio.h"],
-    includes = ["sql-nio/include"],
-    visibility = [
-        "//src/oblib:__pkg__",
-        "//src/observer:__pkg__",
-        "//src/query:__pkg__",
-        "//unittest/oblib:__pkg__",
-    ],
-)
-
-cc_library(
-    name = "config_headers",
-    hdrs = ["config/include/config.h"],
-    includes = ["config/include"],
-    visibility = ["//src/share:__pkg__", "//src/observer:__pkg__"],
-)
-
-cc_library(
-    name = "config_bridge_headers",
-    hdrs = select({
-        ":windows": ["windows/config_bridge.h", "windows/config_checkers.h"],
-        "//conditions:default": ["unix/config_bridge.h", "unix/config_checkers.h"],
-    }),
-    includes = select({
-        ":windows": ["windows"],
-        "//conditions:default": ["unix"],
-    }),
-    visibility = ["//src/share:__pkg__", "//src/observer:__pkg__", "//src/rootserver:__pkg__", "//src/sql:__subpackages__", "//src/storage:__pkg__", "//src/pl:__pkg__", "//src/standby:__pkg__"],
+# Cargo resolves dependencies and exports one production Rust runtime.
+cargo_workspace(
+    exports = EXPORTS,
+    cargo_args = "--features seekdb-rust/plugins",
+    srcs = glob(
+        ["**/*.rs", "**/*.h", "**/*.py", "**/*.toml", "**/*.yaml", "**/*.yml", "**/*.json", "*.lock"],
+        exclude = ["target/**"],
+        allow_empty = True,
+    ),
 )

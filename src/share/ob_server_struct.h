@@ -58,7 +58,7 @@ class ObServerPluginRuntime;
 namespace share
 {
 class ObTabletTableOperator;
-class ObSQLiteConnectionPool;
+class LocalStore;
 class ObRsMgr;
 class ObSchemaStatusProxy;
 
@@ -73,7 +73,7 @@ struct ObGlobalContext
   share::schema::ObMultiVersionSchemaService *schema_service_;
   common::ObConfigManager *config_mgr_;
   share::ObTabletTableOperator *tablet_operator_;
-  share::ObSQLiteConnectionPool *meta_db_pool_;
+  share::LocalStore *local_store_;
   common::ObMySQLProxy *sql_proxy_;
   common::ObMySQLProxy *ddl_sql_proxy_;
   common::ObInOutBandwidthThrottle *bandwidth_throttle_;

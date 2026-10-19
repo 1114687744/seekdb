@@ -79,7 +79,7 @@ int ObExprRegexContext::convert_to_regexp_utf16(ObIAllocator &alloc,
       }
       dst.assign_ptr(buf, static_cast<ObString::obstr_size_t>(dst_len));
     }
-  } else if (CS_TYPE_UTF8MB4_GENERAL_CI == src_coll || CS_TYPE_UTF8MB4_BIN == src_coll) {
+  } else if (CHARSET_UTF8MB4 == ObCharset::charset_type_by_coll(src_coll)) {
     int32_t u_len = 0;
     UErrorCode u_error_code = U_ZERO_ERROR;
     if (src.length() > INT32_MAX) {
@@ -153,7 +153,7 @@ int ObExprRegexContext::convert_from_regexp_utf16(ObIAllocator &alloc,
           }
           dst.assign_ptr(buf, u_len);
         }
-      } else if (CS_TYPE_UTF8MB4_GENERAL_CI == dst_coll || CS_TYPE_UTF8MB4_BIN == dst_coll) {
+      } else if (CHARSET_UTF8MB4 == ObCharset::charset_type_by_coll(dst_coll)) {
         int32_t utf8_len = 0;
         UErrorCode u_error_code = U_ZERO_ERROR;
         u_strToUTF8(NULL, 0, &utf8_len, u_buf, u_len, &u_error_code);

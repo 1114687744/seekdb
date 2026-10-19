@@ -27,6 +27,7 @@
 #include "sql/engine/expr/ob_expr_plsql_variable.h"
 #include "sql/engine/expr/ob_expr_uuid.h"
 #include "lib/locale/ob_locale_type.h"
+#include <inttypes.h>
 
 #include <string>
 
@@ -77,7 +78,6 @@ ObSpecialSysVarValues::ObSpecialSysVarValues()
   if (OB_SUCC(ret)) {
     pos = 0;
     tzset(); // init tzname
-    int64_t current_time_us = ObTimeUtility::current_time();
     bool is_neg = false;
     int64_t tz_hour = 0;
     int64_t tz_minuts = 0;
@@ -92,24 +92,23 @@ ObSpecialSysVarValues::ObSpecialSysVarValues()
     tz_hour = gmtoff / 3600;
     tz_minuts = (gmtoff % 3600) / 60;
 #else
-    struct tm tmp_tm;
-#ifdef __APPLE__
-    time_t current_time_t = static_cast<time_t>(current_time_us / 1000000L);
-    UNUSED(localtime_r(&current_time_t, &tmp_tm));
-#else
-    UNUSED(localtime_r(&current_time_us, &tmp_tm));
-#endif
-    if (tmp_tm.tm_gmtoff < 0) {
-      is_neg = true;
-      tmp_tm.tm_gmtoff = 0 - tmp_tm.tm_gmtoff;
+    struct tm tmp_tm = {};
+    const time_t current_time_t = static_cast<time_t>(ObTimeUtility::current_time() / 1000000);
+    if (nullptr == localtime_r(&current_time_t, &tmp_tm)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      if (tmp_tm.tm_gmtoff < 0) {
+        is_neg = true;
+        tmp_tm.tm_gmtoff = 0 - tmp_tm.tm_gmtoff;
+      }
+      tz_hour = tmp_tm.tm_gmtoff / 3600;
+      tz_minuts = (tmp_tm.tm_gmtoff % 3600) / 60;
     }
-    tz_hour = tmp_tm.tm_gmtoff / 3600;
-    tz_minuts = (tmp_tm.tm_gmtoff % 3600) % 60;
 #endif
-    if (OB_FAIL(databuff_printf(ObSpecialSysVarValues::system_time_zone_str_,
+    if (OB_SUCC(ret) && OB_FAIL(databuff_printf(ObSpecialSysVarValues::system_time_zone_str_,
                                 ObSpecialSysVarValues::SYSTEM_TIME_ZONE_MAX_LEN,
                                 pos,
-                                "%s%02ld:%02ld",
+                                "%s%02" PRId64 ":%02" PRId64,
                                 (is_neg ? "-" : "+"),
                                 tz_hour,
                                 tz_minuts))) {
@@ -123,7 +122,7 @@ ObSpecialSysVarValues::ObSpecialSysVarValues()
   } else if (OB_FAIL(databuff_printf(ObSpecialSysVarValues::default_coll_int_str_,
                                      ObSpecialSysVarValues::COLL_INT_STR_MAX_LEN,
                                      pos,
-                                     "%ld",
+                                     "%" PRId64,
                                      default_coll_int))) {
   }
 
@@ -1669,9 +1668,10 @@ int ObSysVarOnCheckFuncs::check_default_value_for_utf8mb4(ObExecContext &ctx,
       if (CS_TYPE_INVALID == (coll_type = ObCharset::collation_type(coll_name))) {
         ret = OB_ERR_UNKNOWN_COLLATION;
         LOG_USER_ERROR(OB_ERR_UNKNOWN_COLLATION, coll_name.length(), coll_name.ptr());
-      } else if (coll_type != CS_TYPE_UTF8MB4_GENERAL_CI) {
+      } else if (coll_type != CS_TYPE_UTF8MB4_GENERAL_CI
+                 && coll_type != CS_TYPE_UTF8MB4_UNICODE_CI) {
         ret = OB_NOT_SUPPORTED;
-        LOG_USER_ERROR(OB_NOT_SUPPORTED,"only utf8mb4_general_ci is supported, other collation");
+        LOG_USER_ERROR(OB_NOT_SUPPORTED,"only utf8mb4_general_ci and utf8mb4_unicode_ci are supported, other collation");
       } else {
         out_val.set_int(static_cast<int64_t>(coll_type));
       }
@@ -1688,9 +1688,10 @@ int ObSysVarOnCheckFuncs::check_default_value_for_utf8mb4(ObExecContext &ctx,
           ObString coll_name_str(val_buf);
           LOG_USER_ERROR(OB_ERR_UNKNOWN_COLLATION, coll_name_str.length(), coll_name_str.ptr());
         }
-      } else if (int64_val != 45) {
+      } else if (int64_val != CS_TYPE_UTF8MB4_GENERAL_CI
+                 && int64_val != CS_TYPE_UTF8MB4_UNICODE_CI) {
         ret = OB_NOT_SUPPORTED;
-        LOG_USER_ERROR(OB_NOT_SUPPORTED,"only utf8mb4_general_ci is supported, other collation");
+        LOG_USER_ERROR(OB_NOT_SUPPORTED,"only utf8mb4_general_ci and utf8mb4_unicode_ci are supported, other collation");
       } else {
         out_val = in_val;
       }

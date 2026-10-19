@@ -355,7 +355,7 @@ int ObGlobalMergeManagerBase::adjust_global_merge_info()
   SCN max_frozen_scn;
   if (OB_FAIL(check_inner_stat())) {
   } else if (OB_FAIL(ObTabletMetaTableCompactionOperator::get_min_compaction_scn(
-      GCTX.meta_db_pool_, min_compaction_scn))) {
+      GCTX.local_store_, min_compaction_scn))) {
   } else if (OB_UNLIKELY(min_compaction_scn < SCN::base_scn())) {
     ret = OB_ERR_UNEXPECTED;
   } else if (min_compaction_scn > SCN::base_scn()) {

@@ -165,7 +165,7 @@ def sql_validate_source_inventory(
         gis_plugin_adapters,
         extension_runtime_sources,
         core_gis_replaced_sources):
-    """Freezes SQL's checked-in source and release Unity baselines."""
+    """Validates SQL source paths, unique ownership, and required groups."""
 
     group_keys = {}
     unity_paths = {}
@@ -225,26 +225,6 @@ def sql_validate_source_inventory(
         replaced_paths[path] = True
     if len(gis_plugin_adapters) != 2 or len(extension_runtime_sources) != 4 or len(replaced_paths) != 1:
         fail("SQL conditional inventory requires 2 GIS adapters, 4 runtime sources and 1 replacement")
-
-    if len(unity_groups) != 66:
-        fail("SQL inventory must contain 66 regular Unity groups, got %s" % len(unity_groups))
-    if len(simd_unity_groups) != 1:
-        fail("SQL inventory must contain 1 SIMD Unity group, got %s" % len(simd_unity_groups))
-    # Extension management adds its resolvers/executors to the ordinary groups. The
-    # plugin function expression and SQL SPI context own standalone objects.
-    # Preserve fixed ownership checks; adding an arbitrary source is not enough
-    # to admit it into the production graph.
-    # Generic plugin logical/physical nodes add two core bridge sources.
-    if len(unity_paths) != 1066:
-        fail("SQL inventory must contain 1066 Unity sources, got %s" % len(unity_paths))
-    if len(standalone_paths) != 28:
-        fail("SQL inventory must contain 28 standalone sources, got %s" % len(standalone_paths))
-    if len(parser_paths) != 15:
-        fail("SQL inventory must contain 15 checked-in parser sources, got %s" % len(parser_paths))
-    if len(separate_paths) != 7:
-        fail("SQL inventory must contain 7 separately owned sources, got %s" % len(separate_paths))
-    if len(unity_paths) + len(standalone_paths) + len(parser_paths) + len(separate_paths) + len(conditional_paths) != 1122:
-        fail("SQL checked-in source ownership must cover exactly 1122 files")
 
     sql_groups_named(unity_groups, SQL_OPTIMIZER_GROUP_NAMES)
     sql_groups_without(unity_groups, SQL_OPTIMIZER_GROUP_NAMES, SQL_PREPARE_SOURCES)

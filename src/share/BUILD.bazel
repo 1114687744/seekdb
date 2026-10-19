@@ -482,13 +482,12 @@ cc_library(
 )
 
 cc_library(
-    name = "sqlite_storage_interface",
+    name = "local_storage_interface",
     hdrs = [
-        "storage/ob_sqlite_connection.h",
-        "storage/ob_sqlite_connection_pool.h",
+        "storage/local_store.h",
     ],
-    srcs = ["storage/ob_sqlite_table_schema.h"],
     deps = [
+        "//rust:local",
         ":_generated_inner_table_headers",
         "//src/oblib:oblib_foundation",
     ],
@@ -529,9 +528,9 @@ seekdb_semantic_unity_cc_library(
         "//src/oblib:oblib_foundation",
         "//src/oblib:oblib_mysql_client_domain",
         "//rust:config_headers",
-        "//rust:config_bridge_headers",
     ],
     implementation_deps = [
+        "//rust:local",
         ":cluster_version_interface",
         ":error_codes",
         ":io",
@@ -948,19 +947,10 @@ cc_library(
     ],
 )
 
-_TASK_CONTROL_UNITY_GROUP = share_select_unity_sources(
-    SHARE_UNITY_GROUPS,
-    "task_control",
-    ["src/share/ob_task_define.cpp"],
-)
-
-seekdb_semantic_unity_cc_library(
+cc_library(
     name = "task_control",
-    owner_package = "src/share",
-    unity_groups = [_TASK_CONTROL_UNITY_GROUP],
-    public_hdrs = [
+    hdrs = [
         "ob_force_print_log.h",
-        "ob_task_define.h",
     ],
     deps = ["//src/oblib:oblib_foundation"],
     features = ["layering_check"],
@@ -1404,6 +1394,7 @@ _INNER_TABLE_SCHEMA_CPP_OUTS = inner_table_schema_cpp_outputs(
     SHARE_UNITY_GROUPS,
 )
 _INNER_TABLE_SCHEMA_HEADER_OUTS = [
+    _INNER_TABLE_GENERATED_DIR + "/local_table_schema.h",
     _INNER_TABLE_GENERATED_DIR + "/ob_inner_table_schema.h",
     _INNER_TABLE_GENERATED_DIR + "/ob_inner_table_schema_constants.h",
     _INNER_TABLE_GENERATED_DIR + "/ob_inner_table_schema_misc.ipp",
@@ -1411,9 +1402,9 @@ _INNER_TABLE_SCHEMA_HEADER_OUTS = [
 _INNER_TABLE_SCHEMA_DATA_OUTS = [
     _INNER_TABLE_GENERATED_DIR + "/table_id_to_name",
 ]
-_SQLITE_VIRTUAL_TABLE_OUTS = [
-    _OBSERVER_GENERATED_DIR + "/ob_all_virtual_sqlite_tables.cpp",
-    _OBSERVER_GENERATED_DIR + "/ob_all_virtual_sqlite_tables.h",
+_LOCAL_VIRTUAL_TABLE_OUTS = [
+    _OBSERVER_GENERATED_DIR + "/ob_all_virtual_local_tables.cpp",
+    _OBSERVER_GENERATED_DIR + "/ob_all_virtual_local_tables.h",
 ]
 _EXPECTED_GENERATED_OUTPUTS = sorted(
     [
@@ -1426,7 +1417,7 @@ _EXPECTED_GENERATED_OUTPUTS = sorted(
     ] +
     [
         "observer/" + output[len(_OBSERVER_GENERATED_DIR) + 1:]
-        for output in _SQLITE_VIRTUAL_TABLE_OUTS
+        for output in _LOCAL_VIRTUAL_TABLE_OUTS
     ],
 )
 _EXPECTED_GENERATED_OUTPUT_ARGS = " ".join([
@@ -1445,7 +1436,7 @@ genrule(
         _INNER_TABLE_SCHEMA_CPP_OUTS +
         _INNER_TABLE_SCHEMA_HEADER_OUTS +
         _INNER_TABLE_SCHEMA_DATA_OUTS +
-        _SQLITE_VIRTUAL_TABLE_OUTS
+        _LOCAL_VIRTUAL_TABLE_OUTS
     ),
     cmd = """
       PYTHONDONTWRITEBYTECODE=1 python3 \
@@ -1490,9 +1481,18 @@ cc_library(
 )
 
 cc_library(
-    name = "_generated_sqlite_virtual_table_headers",
+    name = "local_table_schema",
+    hdrs = [_INNER_TABLE_GENERATED_DIR + "/local_table_schema.h"],
+    include_prefix = "share/inner_table",
+    strip_include_prefix = _INNER_TABLE_GENERATED_DIR,
+    deps = [":local_storage_interface"],
+    visibility = ["//src:__subpackages__"],
+)
+
+cc_library(
+    name = "_generated_local_virtual_table_headers",
     hdrs = [
-        _OBSERVER_GENERATED_DIR + "/ob_all_virtual_sqlite_tables.h",
+        _OBSERVER_GENERATED_DIR + "/ob_all_virtual_local_tables.h",
     ],
     include_prefix = "observer/virtual_table",
     strip_include_prefix = _OBSERVER_GENERATED_DIR,
@@ -1506,9 +1506,9 @@ filegroup(
 )
 
 filegroup(
-    name = "generated_sqlite_virtual_table_source",
+    name = "generated_local_virtual_table_source",
     srcs = [
-        _OBSERVER_GENERATED_DIR + "/ob_all_virtual_sqlite_tables.cpp",
+        _OBSERVER_GENERATED_DIR + "/ob_all_virtual_local_tables.cpp",
     ],
     visibility = ["//src/observer:__subpackages__"],
 )
@@ -1548,6 +1548,7 @@ _SHARE_NATIVE_UNITY_SOURCES = share_unity_group_sources(
 )
 
 _SHARE_RUNTIME_DEPS = [
+    ":local_table_schema",
     ":_generated_inner_table_headers",
     ":_generated_inner_table_short_headers",
     ":cache",
@@ -1593,7 +1594,7 @@ _SHARE_RUNTIME_DEPS = [
     ":seekdb_runtime_foundation",
     ":semistruct",
     ":sequence_option",
-    ":sqlite_storage_interface",
+    ":local_storage_interface",
     ":storage_cache_policy",
     ":system_variable_metadata",
     ":table_load_protocol",
@@ -1628,7 +1629,6 @@ _SHARE_RUNTIME_DEPS = [
     "@seekdb_3rd_headers//:rapidjson_headers",
     "@seekdb_3rd_headers//:roaring_headers",
     "@seekdb_3rd_headers//:s2_headers",
-    "@seekdb_3rd_headers//:sqlite_headers",
     "@seekdb_3rd_headers//:zlib_headers",
 ]
 
@@ -1751,14 +1751,10 @@ seekdb_semantic_unity_cc_library(
     ),
     group_implementation_deps = share_runtime_group_oblib_deps(
         _SHARE_RUNTIME_UNITY_GROUPS,
-        {
-            "ob_share_redolog_0": [":config"],
-        },
     ),
     implementation_deps = [
         ":_share_implementation_headers",
         "//rust:config_headers",
-        "//rust:config_bridge_headers",
     ] + _SHARE_RUNTIME_COMPILE_DEPS,
     features = ["layering_check"],
     tags = ["manual"],

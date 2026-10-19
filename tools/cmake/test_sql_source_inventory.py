@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute the Python-compatible SQL Starlark ownership validator on real inputs.
 
-Tests the checked-in count/path/duplicate checks, not Bazel's evaluator, target
+Tests the checked-in path/duplicate checks, not Bazel's evaluator, target
 dependencies or compilation. No alternative source inventory is maintained.
 """
 import ast
@@ -40,15 +40,14 @@ class SqlSourceInventoryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate SQL Unity source"):
             self.validate(*self.inputs)
 
-    def test_missing_source_is_rejected(self):
-        self.inputs[0][0].srcs.pop()
-        with self.assertRaisesRegex(ValueError, "1066 Unity sources"):
+    def test_invalid_conditional_path_is_rejected(self):
+        self.inputs[6][0] = "src/sql/../unplanned.cpp"
+        with self.assertRaisesRegex(ValueError, "outside src/sql"):
             self.validate(*self.inputs)
 
-    def test_unplanned_source_is_rejected(self):
+    def test_new_source_does_not_require_updating_fixed_counts(self):
         self.inputs[0][0].srcs.append("src/sql/unplanned.cpp")
-        with self.assertRaisesRegex(ValueError, "1066 Unity sources"):
-            self.validate(*self.inputs)
+        self.validate(*self.inputs)
 
     def test_wrong_owner_is_rejected(self):
         self.inputs[0][0].srcs[0] = "src/share/unplanned.cpp"

@@ -100,11 +100,11 @@ ObAdminJobTableOperator::ObAdminJobTableOperator()
 int ObAdminJobTableOperator::init()
 {
   int ret = OB_SUCCESS;
-  if (OB_ISNULL(GCTX.meta_db_pool_)) {
+  if (OB_ISNULL(GCTX.local_store_)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_UNLIKELY(inited_)) {
     ret = OB_INIT_TWICE;
-  } else if (OB_FAIL(storage_.init(GCTX.meta_db_pool_))) {
+  } else if (OB_FAIL(storage_.init(GCTX.local_store_))) {
   } else {
     inited_ = true;
     LOG_INFO("admin job table operator inited");

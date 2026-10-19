@@ -106,9 +106,9 @@ int ObDDLTabletScheduler::init(const uint64_t table_id,
       part_tablets.reuse();
       partition_names.reuse();
       if (OB_FAIL(ObDDLUtil::get_tablet_data_size(
-          *GCTX.meta_db_pool_, ref_data_table_tablets.at(i), tablet_data_size))) {
+          *GCTX.local_store_, ref_data_table_tablets.at(i), tablet_data_size))) {
       } else if (OB_FAIL(ObDDLUtil::get_tablet_data_row_cnt(
-          *GCTX.meta_db_pool_, ref_data_table_tablets.at(i), tablet_data_row_cnt))) {
+          *GCTX.local_store_, ref_data_table_tablets.at(i), tablet_data_row_cnt))) {
       } else if (OB_FAIL(tablet_id_to_data_size_.set_refactored(ref_data_table_tablets.at(i).id(), tablet_data_size, true /* overwrite */))) {
       } else if (OB_FAIL(tablet_id_to_data_row_cnt_.set_refactored(ref_data_table_tablets.at(i).id(), tablet_data_row_cnt, true /* overwrite */))) {
       } else if (OB_FAIL(part_tablets.push_back(tablets.at(i)))) {
