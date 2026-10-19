@@ -13,8 +13,15 @@ def profile(manifest: pathlib.Path, source: pathlib.Path) -> dict:
         return {"profile": "public", "headers": [], "exports": []}
     try:
         import tomllib
-    except ImportError as error:
-        raise ValueError("explicit native profiles require Python 3.11+ (tomllib)") from error
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError as error:
+            raise ValueError(
+                "explicit native profiles require tomllib or tomli; "
+                "on Python < 3.11 install tomli with the build interpreter: "
+                "python3 -m pip install tomli==2.2.1"
+            ) from error
     data = tomllib.loads(text)
     selected = data.get("api_profile", "public")
     headers, exports = data.get("server_headers", []), data.get("exports", [])

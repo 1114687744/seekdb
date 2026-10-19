@@ -158,6 +158,18 @@ jobs:
           export SEEKDB_TASK_DIR="$GITHUB_WORKSPACE/seekdb_build/${{ github.run_id }}"
           .github/script/seekdb/prepare.sh
 
+      - name: Prepare Python TOML parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_PYTHON="$(command -v python3)"
+          if ! "$BUILD_PYTHON" -c 'import tomllib' 2>/dev/null; then
+            "$BUILD_PYTHON" -m pip install --user 'tomli==2.2.1'
+            "$BUILD_PYTHON" -c 'import tomli; print(tomli.__version__)'
+          fi
+          "$BUILD_PYTHON" --version
+          echo "SEEKDB_BUILD_PYTHON=$BUILD_PYTHON" >> "$GITHUB_ENV"
+
       - name: Compile
         id: compile
         shell: bash

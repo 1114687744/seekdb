@@ -3,6 +3,12 @@
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
+
+try:
+    import tomllib as toml_parser
+except ModuleNotFoundError:
+    import tomli as toml_parser
 
 from plugin_profile import profile
 from plugin_boundary_check import check_plugin_includes, check_core_includes
@@ -32,6 +38,26 @@ class ProfileTest(unittest.TestCase):
         selected = self.select('api_profile="server-dev"\nserver_headers=["sql/private.h"]\nexports=["probe"]')
         self.assertEqual(selected["headers"], ["sql/private.h"])
         self.assertEqual(selected["exports"], ["probe"])
+
+    def test_tomli_fallback(self):
+        with mock.patch.dict("sys.modules", {"tomllib": None, "tomli": toml_parser}):
+            selected = self.select('api_profile="server-dev"\nserver_headers=["sql/private.h"]')
+            self.assertEqual(selected["profile"], "server-dev")
+            self.assertEqual(selected["headers"], ["sql/private.h"])
+            with self.assertRaises(ValueError):
+                self.select('api_profile="unknown"')
+            with self.assertRaises(ValueError):
+                self.select('api_profile=')
+
+    def test_missing_toml_parser(self):
+        with mock.patch.dict("sys.modules", {"tomllib": None, "tomli": None}):
+            with self.assertRaisesRegex(ValueError, "pip install tomli"):
+                self.select('api_profile="server-dev"')
+            self.assertEqual(self.select('plugin_id="example"')["profile"], "public")
+
+    def test_stdlib_parser_needs_no_tomli(self):
+        with mock.patch.dict("sys.modules", {"tomllib": toml_parser, "tomli": None}):
+            self.assertEqual(self.select('api_profile="public"')["profile"], "public")
 
     def test_invalid_declarations(self):
         cases = ['api_profile="unknown"', 'api_profile=4',

@@ -2,7 +2,7 @@
 # Compile: initialize and build seekdb.
 # Required env: GITHUB_WORKSPACE, SEEKDB_TASK_DIR
 # Optional: FORWARDING_HOST, MAKE_ARGS, DEP_CACHE_DIR, CCACHE_DIR,
-#           SEEKDB_CCACHE_MAX_SIZE
+#           SEEKDB_CCACHE_MAX_SIZE, SEEKDB_BUILD_PYTHON
 
 if [[ -f ~/.bashrc ]]; then
   # shellcheck disable=SC1090
@@ -66,8 +66,12 @@ else
   fi
 
   phase_start=$SECONDS
+  python_cmake_args=()
+  if [[ -n "${SEEKDB_BUILD_PYTHON:-}" ]]; then
+    python_cmake_args+=("-DPython3_EXECUTABLE=$SEEKDB_BUILD_PYTHON")
+  fi
   set +e
-  bash "$WORKSPACE/build.sh" "$BUILD_TARGET" -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF 2>&1 | tee "$TASK_DIR/compile_configure.output"
+  bash "$WORKSPACE/build.sh" "$BUILD_TARGET" -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF "${python_cmake_args[@]}" 2>&1 | tee "$TASK_DIR/compile_configure.output"
   phase_ret=${PIPESTATUS[0]}
   set -e
   echo "[compile.sh] configure elapsed=$((SECONDS - phase_start))s"
