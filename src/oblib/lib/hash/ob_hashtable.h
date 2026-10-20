@@ -256,6 +256,14 @@ struct ObHashTableBucket : public MProtect
 #endif
   }
 
+#ifdef _WIN32
+  ~ObHashTableBucket()
+  {
+    destroy_hash_cond(cond);
+    destroy_hash_lock(lock);
+  }
+#endif
+
   typedef ObHashTableBucketNodeIterator<_value_type, _lock_type, _cond_type> iterator;
   typedef ObHashTableBucketNodeConstIterator<_value_type, _lock_type, _cond_type> const_iterator;
   iterator node_begin()
@@ -864,7 +872,7 @@ public:
       allocer_ = NULL;
       //delete[] buckets_;
       //buckets_ = NULL;
-      hash::destroy(buckets_, *bucket_allocer_);
+      hash::destroy(buckets_, *bucket_allocer_, bucket_num_);
       bucket_num_ = 0;
       size_ = 0;
     }
@@ -1327,7 +1335,7 @@ public:
           }
         }
       }
-      hash::destroy(old_buckets, *bucket_allocer_);
+      hash::destroy(old_buckets, *bucket_allocer_, old_bucket_num);
     }
 
     return ret;

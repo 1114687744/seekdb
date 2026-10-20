@@ -102,6 +102,15 @@ template <typename T> inline void init_hash_lock(T &lock) { (void)lock; }
 inline void init_hash_cond(pthread_cond_t &cond) { pthread_cond_init(&cond, NULL); }
 template <typename T> inline void init_hash_cond(T &cond) { (void)cond; }
 
+#ifdef _WIN32
+// PThreads4W synchronization objects own kernel handles in addition to memory.
+inline void destroy_hash_lock(pthread_rwlock_t &lock) { pthread_rwlock_destroy(&lock); }
+inline void destroy_hash_lock(pthread_mutex_t &lock) { pthread_mutex_destroy(&lock); }
+template <typename T> inline void destroy_hash_lock(T &lock) { (void)lock; }
+inline void destroy_hash_cond(pthread_cond_t &cond) { pthread_cond_destroy(&cond); }
+template <typename T> inline void destroy_hash_cond(T &cond) { (void)cond; }
+#endif
+
 namespace oceanbase
 {
 namespace common
@@ -1003,7 +1012,7 @@ class BigArrayTemp
   class Block
   {
   public:
-    Block() : array_(NULL), allocer_(NULL) {}
+    Block() : array_(NULL), allocer_(NULL), item_count_(0) {}
     ~Block() { destroy(); }
   public:
     int create(const int64_t array_size, Allocer *allocer)
@@ -1026,16 +1035,23 @@ class BigArrayTemp
         memset(array_, 0, array_size * sizeof(T));
 #endif
         allocer_ = allocer;
+        item_count_ = array_size;
       }
       return ret;
     }
     void destroy()
     {
       if (NULL != allocer_ && NULL != array_) {
+#ifdef _WIN32
+        for (int64_t i = 0; i < item_count_; ++i) {
+          array_[i].~T();
+        }
+#endif
         allocer_->free(array_);
       }
       array_ = NULL;
       allocer_ = NULL;
+      item_count_ = 0;
     }
   public:
     T &operator[](const int64_t pos)
@@ -1051,6 +1067,7 @@ class BigArrayTemp
   private:
     T *array_;
     Allocer *allocer_;
+    int64_t item_count_;
   };
 public:
   typedef BigArrayTag ArrayTag;
@@ -1255,21 +1272,30 @@ bool do_inited(const Array &array, NormalPointerTag)
 }
 
 template <class Array, class BucketAllocator>
-void destroy(Array &array, BucketAllocator &alloc)
+void destroy(Array &array, BucketAllocator &alloc, const int64_t item_count)
 {
-  do_destroy(array, typename ArrayTraits<Array>::ArrayTag(), alloc);
+  do_destroy(array, typename ArrayTraits<Array>::ArrayTag(), alloc, item_count);
 }
 
 template <class Array, class BucketAllocator>
-void do_destroy(Array &array, BigArrayTag, BucketAllocator &)
+void do_destroy(Array &array, BigArrayTag, BucketAllocator &, const int64_t item_count)
 {
+  UNUSED(item_count);
   array.destroy();
 }
 
 template <class Array, class BucketAllocator>
-void do_destroy(Array &array, NormalPointerTag, BucketAllocator &alloc)
+void do_destroy(Array &array, NormalPointerTag, BucketAllocator &alloc, const int64_t item_count)
 {
   if (NULL != array) {
+#ifdef _WIN32
+    typedef typename std::remove_pointer<Array>::type ItemType;
+    for (int64_t i = 0; i < item_count; ++i) {
+      array[i].~ItemType();
+    }
+#else
+    UNUSED(item_count);
+#endif
     alloc.free(array);
     array = NULL;
   }
@@ -1406,6 +1432,9 @@ public:
         HASH_WRITE_LOG_RET(HASH_FATAL, OB_ERR_UNEXPECTED, "SimpleAllocer memory leak");
       }
     }
+#ifdef _WIN32
+    destroy_hash_lock(lock_);
+#endif
   }
   void set_leak_check(const bool check) { leak_check_ = check; }
   void set_attr(const ObMemAttr &attr) { allocer_.set_attr(attr); }
