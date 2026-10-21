@@ -106,6 +106,7 @@ template <typename T> inline void init_hash_cond(T &cond) { (void)cond; }
 // PThreads4W synchronization objects own kernel handles in addition to memory.
 inline void destroy_hash_lock(pthread_rwlock_t &lock) { pthread_rwlock_destroy(&lock); }
 inline void destroy_hash_lock(pthread_mutex_t &lock) { pthread_mutex_destroy(&lock); }
+inline void destroy_hash_lock(pthread_spinlock_t &lock) { pthread_spin_destroy(&lock); }
 template <typename T> inline void destroy_hash_lock(T &lock) { (void)lock; }
 inline void destroy_hash_cond(pthread_cond_t &cond) { pthread_cond_destroy(&cond); }
 template <typename T> inline void destroy_hash_cond(T &cond) { (void)cond; }
