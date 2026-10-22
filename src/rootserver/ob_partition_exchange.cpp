@@ -332,9 +332,6 @@ int ObPartitionExchange::do_exchange_partitions_(
       }
     }
   }
-  if (OB_SUCC(ret)) {
-    DEBUG_SYNC(AFTER_EXCHANGE_PARTITION_BINDING_UPDATE);
-  }
   if (trans.is_started()) {
     int temp_ret = OB_SUCCESS;
     if (OB_SUCCESS != (temp_ret = trans.end(OB_SUCC(ret)))) {
