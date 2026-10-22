@@ -67,5 +67,6 @@ await db.close();
 
 - `storage: 'memory'` 把数据目录放在 Wasm 内存中，每次打开都是空的。`storage: 'opfs'` 把它放在 origin private file system 的 `seekdb` 目录中，需要浏览器支持 OPFS 和 Web Locks，同一个 origin 同时只能有一个页面打开。
 - `query` 依次产生 `columns`、`row` 和 `complete` 事件。行中每一列的值是该列文本的 `Uint8Array` 字节，SQL NULL 为 `null`。
+- `compiledModule` 可选，传入由 `wasmURL` 编译出的 `WebAssembly.Module`，或者一个最终得到它的 promise，引擎就不再自己下载和编译。页面可以像 shell 那样，先调用 `WebAssembly.compileStreaming(fetch(wasmURL))`，再去加载其余的 API。如果这个 promise 失败，引擎会自己加载 `wasmURL`。
 - 每次 `Database.open` 都会启动新的 Worker 和引擎。`close()` 等待引擎关闭并保留 OPFS 数据；`discard()` 立即终止 Worker，OPFS 模式下还会删除存储的文件；`Database.clearPersistentStorage()` 不打开引擎，直接删除存储的 OPFS 文件。
 - 不会打开 TCP 端口，只能通过 `connect()` 连接。
