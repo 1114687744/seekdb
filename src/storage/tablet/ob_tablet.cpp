@@ -46,6 +46,7 @@
 #include "storage/tablet/ob_tablet_mds_table_mini_merger.h"
 #include "share/ob_tablet_local_checksum_operator.h"
 #include "share/ob_structured_event_logger.h"
+#include "share/ob_debug_sync.h"
 namespace oceanbase
 {
 using namespace memtable;
@@ -5369,6 +5370,7 @@ int ObTablet::check_schema_version_with_cache(const int64_t schema_version)
           // released, that binding may refer to a different logical table.  Let SQL
           // retry with the schema published by the binding transaction instead.
           ret = OB_SCHEMA_EAGAIN;
+          DEBUG_SYNC(TABLET_BINDING_NOT_COMMITTED);
         }
 
         if (OB_SUCC(ret)) {
