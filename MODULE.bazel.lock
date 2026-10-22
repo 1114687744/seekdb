@@ -200,7 +200,7 @@
         "bzlTransitiveDigest": "grRzR3MqOylPNlcddE5beIC8HKzWu9eL8gHtSDAiIps=",
         "usagesDigest": "C88oWWRSwl985DWTNoqa3RJhrmyPEurpg8bTGjwBxHo=",
         "recordedInputs": [
-          "FILE:@@//bazel/sdk_sources/dependencies.json 9450c546a43710f663cb3eb09bebca6e6a2b6221d81e8d36e1d66218863b2d65"
+          "FILE:@@//bazel/sdk_sources/dependencies.json d92fae9114af51f1f4a85bab53686cbae0832adfa6f9250319d18409f96cfdbe"
         ],
         "generatedRepoSpecs": {
           "sdk_abseil": {

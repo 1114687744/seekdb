@@ -6,7 +6,6 @@ package(default_visibility = ["//visibility:public"])
 exports_files(glob(["*.BUILD"]) + [
     "dependencies.json",
     "prepare.py",
-    "icu/embed_data.py",
     "openblas/blas_abi.h",
     "openmp/kmp_config.h",
 ])

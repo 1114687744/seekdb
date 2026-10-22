@@ -484,20 +484,11 @@ cc_library(
     deps = [":common"],
 )
 
-genrule(
-    name = "unicode_data",
-    srcs = [
-        "source/data/in/icudt69l.dat",
-        "@seekdb//bazel/sdk_sources:dependencies.json",
-    ],
-    outs = ["icudt69l.c"],
-    cmd = "python3 $(location @seekdb//bazel/sdk_sources:icu/embed_data.py) $(location source/data/in/icudt69l.dat) $(location @seekdb//bazel/sdk_sources:dependencies.json) $@",
-    tools = ["@seekdb//bazel/sdk_sources:icu/embed_data.py"],
-)
-
 cc_library(
     name = "data",
-    srcs = [":unicode_data"],
+    srcs = ["source/stubdata/stubdata.cpp"] + glob(["source/common/unicode/*.h"]),
+    copts = ["-std=c++11"],
+    includes = ["source/common"],
     linkstatic = True,
 )
 
