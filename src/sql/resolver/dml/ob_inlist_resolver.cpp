@@ -366,6 +366,11 @@ int ObInListResolver::check_inlist_distinct_threshold(const ParseNode &in_list,
   int ret = OB_SUCCESS;
   is_enable = true;  // legacy: rewrite when the raw element count reaches the threshold
   const int64_t row_cnt = in_list.num_child_;
+  // Keep the comparison work bounded so a pathological but legal query cannot
+  // spend an unbounded amount of time in the resolver; beyond the budget we
+  // simply keep the legacy behavior.
+  const int64_t max_cmp_cnt = 4000000;
+  int64_t cmp_cnt = 0;
   // Count the distinct constants of a single-column IN list. A value may be a
   // plain literal (T_INT) or an already parameterized constant (T_QUESTIONMARK),
   // in which case the real value lives in the param store.
@@ -379,21 +384,33 @@ int ObInListResolver::check_inlist_distinct_threshold(const ParseNode &in_list,
       return OB_SUCCESS;
     } else if (T_INT == child->type_) {
       key.set_int(child->value_);
-    } else if (T_QUESTIONMARK == child->type_ && NULL != param_store) {
+    } else if (T_QUESTIONMARK == child->type_ && NULL != param_store
+               && child->value_ >= 0 && child->value_ < param_store->count()) {
       key = param_store->at(child->value_);
     } else {
-      // Unsupported element type: keep the legacy behavior.
+      // The value is not available (e.g. an empty param store while preparing a
+      // statement) or the element type is unsupported: keep the legacy behavior.
       is_enable = true;
       return OB_SUCCESS;
     }
     bool found = false;
-    for (int64_t j = 0; j < distinct_vals.count(); ++j) {
-      if (distinct_vals.at(j) == key) {
+    for (int64_t j = 0; OB_SUCC(ret) && !found && j < distinct_vals.count(); ++j) {
+      const ObObj &existing = distinct_vals.at(j);
+      if (existing.get_type() != key.get_type()) {
+        // ObObj::operator== requires identical types; never risk a mixed-type
+        // comparison, keep the legacy behavior instead.
+        is_enable = true;
+        return OB_SUCCESS;
+      } else if (++cmp_cnt > max_cmp_cnt) {
+        // Too much work: give up on the optimization instead of slowing down the
+        // resolver for a huge list.
+        is_enable = true;
+        return OB_SUCCESS;
+      } else if (existing == key) {
         found = true;
-        break;
       }
     }
-    if (!found) {
+    if (OB_SUCC(ret) && !found) {
       if (OB_FAIL(distinct_vals.push_back(key))) {
         // allocation failure: fall back to the legacy behavior
         ret = OB_SUCCESS;
