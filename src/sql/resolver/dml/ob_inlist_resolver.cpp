@@ -307,7 +307,10 @@ int ObInListResolver::check_inlist_rewrite_enable(const ParseNode &in_list,
     }
     if (OB_SUCC(ret)) {
       if (in_list.num_child_ < threshold) {
-      } else {
+        // keep the compact IN predicate
+      } else if (OB_FAIL(check_inlist_distinct_threshold(in_list, threshold, param_store, is_enable))) {
+        // the distinct check is best-effort; fall back to the legacy behavior
+        ret = OB_SUCCESS;
         is_enable = true;
       }
     }
@@ -351,6 +354,59 @@ int ObInListResolver::check_inlist_rewrite_enable(const ParseNode &in_list,
       }
       is_question_mark = rewrite_info.is_question_mark_;
     }
+  }
+  return ret;
+}
+
+int ObInListResolver::check_inlist_distinct_threshold(const ParseNode &in_list,
+                                                      const int64_t threshold,
+                                                      const ParamStore *param_store,
+                                                      bool &is_enable)
+{
+  int ret = OB_SUCCESS;
+  is_enable = true;  // legacy: rewrite when the raw element count reaches the threshold
+  const int64_t row_cnt = in_list.num_child_;
+  // Count the distinct constants of a single-column IN list. A value may be a
+  // plain literal (T_INT) or an already parameterized constant (T_QUESTIONMARK),
+  // in which case the real value lives in the param store.
+  ObSEArray<ObObj, 64> distinct_vals;
+  int64_t distinct_cnt = 0;
+  for (int64_t i = 0; OB_SUCC(ret) && i < row_cnt && distinct_cnt < threshold; ++i) {
+    const ParseNode *child = in_list.children_[i];
+    ObObj key;
+    if (OB_ISNULL(child)) {
+      is_enable = true;
+      return OB_SUCCESS;
+    } else if (T_INT == child->type_) {
+      key.set_int(child->value_);
+    } else if (T_QUESTIONMARK == child->type_ && NULL != param_store) {
+      key = param_store->at(child->value_);
+    } else {
+      // Unsupported element type: keep the legacy behavior.
+      is_enable = true;
+      return OB_SUCCESS;
+    }
+    bool found = false;
+    for (int64_t j = 0; j < distinct_vals.count(); ++j) {
+      if (distinct_vals.at(j) == key) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      if (OB_FAIL(distinct_vals.push_back(key))) {
+        // allocation failure: fall back to the legacy behavior
+        ret = OB_SUCCESS;
+        is_enable = true;
+        return ret;
+      }
+      ++distinct_cnt;
+    }
+  }
+  if (OB_SUCC(ret) && distinct_cnt < threshold) {
+    // The IN list collapses to fewer than `threshold` distinct values, so a
+    // VALUES TABLE + join is wasteful; keep the compact predicate instead.
+    is_enable = false;
   }
   return ret;
 }

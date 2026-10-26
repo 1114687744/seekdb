@@ -106,6 +106,14 @@ private:
                                      int64_t col_idx,
                                      ObInListsResolverHelper &helper,
                                      InListRewriteInfo &rewrite_info);
+  // Best-effort distinct-value check used to decide whether a large IN list
+  // actually benefits from the VALUES TABLE rewrite. A list that collapses to
+  // fewer than `threshold` distinct constants is kept as a compact predicate.
+  // Values may be plain literals or already parameterized constants.
+  static int check_inlist_distinct_threshold(const ParseNode &in_list,
+                                             const int64_t threshold,
+                                             const ParamStore *param_store,
+                                             bool &is_enable);
   static int check_can_merge_inlists(const ParseNode *last_in_node,
                                      const ParseNode *cur_in_node,
                                      ObInListsResolverHelper &helper,
