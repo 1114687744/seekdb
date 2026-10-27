@@ -71,37 +71,54 @@ void ObStopWordChecker::destroy()
   }
 }
 
+int ObStopWordChecker::exist_refactored(const ObFTWord &word, bool &is_stopword)
+{
+  int ret = OB_SUCCESS;
+  ret = stopword_set_.exist_refactored(word);
+  if (OB_HASH_NOT_EXIST == ret) {
+    is_stopword = false;
+    ret = OB_SUCCESS;
+  } else if (OB_HASH_EXIST == ret) {
+    is_stopword = true;
+    ret = OB_SUCCESS;
+  } else if (OB_SUCC(ret)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+  }
+  return ret;
+}
+
 int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
 {
   int ret = OB_SUCCESS;
-  
-  
-  common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
   if (OB_UNLIKELY(!inited_)) {
     ret = OB_NOT_INIT;
   } else if (OB_UNLIKELY(word.empty())) {
     ret = OB_INVALID_ARGUMENT;
   } else {
-    common::ObString cmp_str;
-    // do nothing set out with in if type is the same.
-    if (OB_FAIL(common::ObCharset::charset_convert(
-                                       allocator,
-                                       word.get_word().get_string(),
-                                       word.get_collation_type(),
-                                       stopword_type_.get_collation_type(),
-                                       cmp_str))) {
+    const common::ObString &src_str = word.get_word().get_string();
+    const common::ObCollationType src_coll = word.get_collation_type();
+    const common::ObCollationType dst_coll = stopword_type_.get_collation_type();
+    if (common::ObCharset::charset_type_by_coll(src_coll)
+        == common::ObCharset::charset_type_by_coll(dst_coll)) {
+      // Same charset type (e.g. utf8mb4 column vs utf8mb4 stopword list): the
+      // conversion below is the identity mapping, so skip both the per-token
+      // ObArenaAllocator construction and the copy. This is the hot path of
+      // tokenize() and of every fulltext index build.
+      ObFTWord converted(src_str.length(), src_str.ptr(), stopword_type_);
+      ret = exist_refactored(converted, is_stopword);
     } else {
-      ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
-      ret = stopword_set_.exist_refactored(converted);
-      if (OB_HASH_NOT_EXIST == ret) {
-        is_stopword = false;
-        ret = OB_SUCCESS;
-      } else if (OB_HASH_EXIST == ret) {
-        is_stopword = true;
-        ret = OB_SUCCESS;
-      } else if (OB_SUCC(ret)) {
-        ret = OB_ERR_UNEXPECTED;
+      common::ObString cmp_str;
+      common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+      if (OB_FAIL(common::ObCharset::charset_convert(
+                                       allocator,
+                                       src_str,
+                                       src_coll,
+                                       dst_coll,
+                                       cmp_str))) {
       } else {
+        ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
+        ret = exist_refactored(converted, is_stopword);
       }
     }
   }
