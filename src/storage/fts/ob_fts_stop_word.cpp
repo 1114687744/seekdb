@@ -141,7 +141,10 @@ ObAddWord::ObAddWord(
     stopword_cnt_(0),
     min_token_size_(property.min_token_size_),
     max_token_size_(property.max_token_size_),
-    flag_(flag)
+    flag_(flag),
+    cs_info_(common::ObCharset::get_charset(meta.get_collation_type())),
+    cased_buf_pos_(nullptr),
+    cased_buf_end_(nullptr)
 {
 }
 
@@ -175,24 +178,65 @@ bool ObAddWord::is_min_max_word(const int64_t c_len) const
   return flag_.min_max_word() && (c_len < min_token_size_ || c_len > max_token_size_);
 }
 
+int ObAddWord::get_cased_word_buf(const int64_t len, char *&buf)
+{
+  int ret = OB_SUCCESS;
+  buf = nullptr;
+  if (OB_UNLIKELY(len <= 0)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_NOT_NULL(cased_buf_pos_) && len <= cased_buf_end_ - cased_buf_pos_) {
+    buf = cased_buf_pos_;
+    cased_buf_pos_ += len;
+  } else if (OB_UNLIKELY(len >= CASED_WORD_BUFFER_SIZE)) {
+    // Rare: one word longer than a whole chunk, give it its own allocation.
+    if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(len)))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    }
+  } else if (OB_ISNULL(cased_buf_pos_ = static_cast<char *>(allocator_.alloc(CASED_WORD_BUFFER_SIZE)))) {
+    cased_buf_end_ = nullptr;
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    cased_buf_end_ = cased_buf_pos_ + CASED_WORD_BUFFER_SIZE;
+    buf = cased_buf_pos_;
+    cased_buf_pos_ += len;
+  }
+  return ret;
+}
+
 int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
 {
   int ret = OB_SUCCESS;
+  const ObString src_str = src.get_word().get_string();
   if (OB_UNLIKELY(src.empty())) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (flag_.casedown()) {
+  } else if (!flag_.casedown()) {
+    dst = src;
+  } else if (OB_ISNULL(cs_info_) || OB_UNLIKELY(0 == cs_info_->casedn_multiply)) {
+    // Unknown collation (or degenerate conversion info): the generic path below
+    // reproduces the exact previous behavior, including its error code.
     ObString dst_str;
-    if (OB_FAIL(ObCharset::tolower(
-                    word_meta_.get_collation_type(),
-                    src.get_word().get_string(),
-                    dst_str,
-                    allocator_))) {
+    if (OB_FAIL(common::ObCharset::tolower(word_meta_.get_collation_type(), src_str, dst_str, allocator_))) {
     } else {
-      ObFTWord tmp(dst_str.length(), dst_str.ptr(), word_meta_);
-      dst = tmp;
+      dst = ObFTWord(dst_str.length(), dst_str.ptr(), word_meta_);
     }
   } else {
-    dst = src;
+    // Same conversion as ObCharset::tolower(): convert into `allocator_` memory
+    // and keep `size` bytes of it, except that the word buffer is carved out of
+    // a bigger chunk so a document does not pay one arena allocation per word,
+    // and the charset info is the one cached by the constructor instead of a
+    // get_charset() call per word.
+    const int64_t mult = static_cast<int64_t>(cs_info_->casedn_multiply);
+    const int64_t dst_len = static_cast<int64_t>(src_str.length()) * mult;
+    char *buf = nullptr;
+    if (OB_FAIL(get_cased_word_buf(dst_len, buf))) {
+    } else {
+      const size_t size = cs_info_->cset->casedn(cs_info_,
+                                                 const_cast<char *>(src_str.ptr()),
+                                                 static_cast<size_t>(src_str.length()),
+                                                 buf,
+                                                 static_cast<size_t>(dst_len));
+      dst = ObFTWord(static_cast<int64_t>(size), buf, word_meta_);
+    }
   }
   return ret;
 }
