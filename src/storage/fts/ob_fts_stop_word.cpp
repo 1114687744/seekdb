@@ -230,8 +230,15 @@ int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
     char *buf = nullptr;
     if (OB_FAIL(get_cased_word_buf(dst_len, buf))) {
     } else {
+      char *cased_src = const_cast<char *>(src_str.ptr());
+      if (1 == mult) {
+        // Match ObCharset::tolower(): some handlers require in-place conversion,
+        // and the binary handler does not write its destination at all.
+        MEMCPY(buf, src_str.ptr(), src_str.length());
+        cased_src = buf;
+      }
       const size_t size = cs_info_->cset->casedn(cs_info_,
-                                                 const_cast<char *>(src_str.ptr()),
+                                                 cased_src,
                                                  static_cast<size_t>(src_str.length()),
                                                  buf,
                                                  static_cast<size_t>(dst_len));
