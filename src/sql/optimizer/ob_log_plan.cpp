@@ -12082,9 +12082,9 @@ int ObLogPlan::check_match_score_free(const ObLogTableScan *table_scan,
              || match_against->is_es_match()
              || match_against->get_columns_boosts().count() > 0
              || table_scan->has_func_lookup()
-             || table_scan->get_index_back()
              || table_scan->is_vec_idx_scan()
              || table_scan->use_index_merge()
+             || !stmt->get_order_items().empty()
              || stmt->has_vec_approx()
              || nullptr != stmt->get_first_vector_expr()) {
     // keep scoring
