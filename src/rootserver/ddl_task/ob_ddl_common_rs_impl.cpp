@@ -570,9 +570,9 @@ int ObDDLTaskUtil::generate_build_replica_sql(const int64_t data_table_id,
           // build spends most of its time comparing utf8mb4 strings. Turning on the
           // order preserving encoding lets each row be encoded once and every following
           // comparison become a memcmp over the encoded key.
-          const bool use_encoded_sortkey =
-              (dest_table_schema->is_fts_index_aux() || dest_table_schema->is_fts_doc_word_aux())
-              && can_encode_fts_build_sortkey(*dest_table_schema);
+          // EXPERIMENT(A/B): keep the FTS auxiliary build sorts on the raw keys so the
+          // effect of the order preserving encoding can be measured in isolation.
+          const bool use_encoded_sortkey = false;
           const char *newsort_value = use_encoded_sortkey ? "true" : "false";
           LOG_INFO("generate build replica sql", K(use_encoded_sortkey), K(dest_table_id),
                    "dest_table", dest_table_name);
