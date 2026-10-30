@@ -115,13 +115,17 @@ int ObTextDaaTIter::union_next_rows(const int64_t capacity, int64_t &count)
     ret = OB_ITER_END;
   } else {
     const int64_t dim_cnt = dim_iters_->count();
+    const int64_t should_match = static_cast<ObSRDaaTInnerProductRelevanceCollector *>(
+        relevance_collector_)->minimum_should_match();
     const int64_t real_capacity = MIN(capacity, iter_param_->max_batch_size_);
     while (OB_SUCC(ret) && count < real_capacity) {
       // advance the dimensions consumed by the previous output document
       for (int64_t i = 0; OB_SUCC(ret) && i < next_round_cnt_; ++i) {
         const int64_t iter_idx = next_round_iter_idxes_[i];
-        ObISRDaaTDimIter *dim_iter = dim_iters_->at(iter_idx);
-        if (OB_FAIL(dim_iter->get_next_row())) {
+        ObTextRetrievalDaaTTokenIter *dim_iter =
+            static_cast<ObTextRetrievalDaaTTokenIter *>(dim_iters_->at(iter_idx));
+        if (dim_iter->advance_cached_id(iter_domain_ids_[iter_idx])) {
+        } else if (OB_FAIL(dim_iter->get_next_row())) {
           if (OB_ITER_END == ret) {
             ret = OB_SUCCESS;
             iter_domain_ids_[iter_idx] = nullptr;
@@ -154,15 +158,10 @@ int ObTextDaaTIter::union_next_rows(const int64_t capacity, int64_t &count)
       } else if (nullptr == min_id) {
         ret = OB_ITER_END;
       } else {
-        bool is_valid = true;
-        double unused_relevance = 0.0;
-        for (int64_t i = 0; OB_SUCC(ret) && i < next_round_cnt_; ++i) {
-          if (OB_FAIL(relevance_collector_->collect_one_dim(next_round_iter_idxes_[i], 0.0))) {
-          }
-        }
-        if (OB_FAIL(ret)) {
-        } else if (OB_FAIL(relevance_collector_->get_result(unused_relevance, is_valid))) {
-        } else if (is_valid && OB_FAIL(cache_result(count, *min_id, 0.0))) {
+        // Natural-language score-free retrieval only needs the number of
+        // matched dimensions, not a virtual relevance-collection round.
+        const bool is_valid = next_round_cnt_ >= should_match;
+        if (is_valid && OB_FAIL(cache_result(count, *min_id, 0.0))) {
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
           }
         }
